@@ -23,6 +23,8 @@ class Permission(StrEnum):
     RESEARCH_READ = "research:read"
     RESEARCH_RUN = "research:run"
     RESEARCH_MANAGE = "research:manage"
+    RESEARCH_APPROVE = "research:approve"
+    SECRETS_MANAGE = "secrets:manage"
     AUDIT_READ = "audit:read"
     BILLING_READ = "billing:read"
     BILLING_MANAGE = "billing:manage"
@@ -46,6 +48,8 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
             Permission.RESEARCH_READ,
             Permission.RESEARCH_RUN,
             Permission.RESEARCH_MANAGE,
+            Permission.RESEARCH_APPROVE,
+            Permission.SECRETS_MANAGE,
             Permission.AUDIT_READ,
             Permission.BILLING_READ,
         }

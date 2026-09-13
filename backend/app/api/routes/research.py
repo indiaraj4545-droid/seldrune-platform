@@ -5,12 +5,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 
 from backend.app.api.dependencies import CurrentUserDep, SessionDep, require_org_permission
-from backend.app.core.rbac import Permission
+from backend.app.core.rbac import Permission, has_permission
 from backend.app.core.research import ConnectorStatus, ResearchStatus
 from backend.app.models.membership import Membership
 from backend.app.models.research_connector import ResearchConnector
 from backend.app.models.research_session import ResearchSession
 from backend.app.models.research_source import ResearchSource
+from backend.app.models.secret_reference import SecretReference
 from backend.app.schemas.research import (
     ResearchConnectorCreate,
     ResearchConnectorPublic,
@@ -23,6 +24,7 @@ from backend.app.schemas.research import (
 )
 from backend.app.services.audit import record_audit
 from backend.app.services.research_engine import (
+    ResearchConnectorRegistry,
     ResearchDocument,
     ResearchEngineError,
     execute_research_session,
@@ -85,6 +87,31 @@ def _validate_connector_ids(
         raise HTTPException(status_code=404, detail="One or more research connectors not found")
 
 
+def _validate_reference(
+    session: SessionDep,
+    organization_id: UUID,
+    reference_id: UUID | None,
+) -> None:
+    if reference_id is None:
+        return
+    found = session.scalar(
+        select(SecretReference.id).where(
+            SecretReference.id == reference_id,
+            SecretReference.organization_id == organization_id,
+        )
+    )
+    if found is None:
+        raise HTTPException(status_code=404, detail="Runtime reference not found")
+
+
+def _normalized_hosts(values: list[str]) -> list[str]:
+    return sorted({value.strip().lower() for value in values if value.strip()})
+
+
+def _normalized_repositories(values: list[str]) -> list[str]:
+    return sorted({value.strip() for value in values if value.strip()})
+
+
 @router.post(
     "/{organization_id}/research/connectors",
     response_model=ResearchConnectorPublic,
@@ -99,6 +126,16 @@ def create_connector(
 ) -> ResearchConnector:
     if _contains_secret_key(payload.config):
         raise HTTPException(status_code=400, detail="Connector secrets cannot be stored in config")
+    provider = payload.provider.strip().lower()
+    if provider not in ResearchConnectorRegistry().providers():
+        raise HTTPException(status_code=400, detail="Research provider is not installed")
+    _validate_reference(session, organization_id, payload.secret_reference_id)
+    hosts = _normalized_hosts(payload.allowed_hosts)
+    repositories = _normalized_repositories(payload.allowed_repositories)
+    if provider == "web" and not hosts:
+        raise HTTPException(status_code=400, detail="Web connector requires allowed_hosts")
+    if provider == "github" and not repositories:
+        raise HTTPException(status_code=400, detail="GitHub connector requires allowed_repositories")
     existing = session.scalar(
         select(ResearchConnector).where(
             ResearchConnector.organization_id == organization_id,
@@ -110,13 +147,19 @@ def create_connector(
     connector = ResearchConnector(
         organization_id=organization_id,
         created_by_user_id=current_user.id,
+        secret_reference_id=payload.secret_reference_id,
         name=payload.name,
         slug=payload.slug,
         description=payload.description,
-        provider=payload.provider.strip().lower(),
+        provider=provider,
         status=ConnectorStatus.ACTIVE.value,
+        approval_mode=payload.approval_mode,
+        max_requests_per_run=payload.max_requests_per_run,
+        allowed_hosts=hosts,
+        allowed_repositories=repositories,
         config_json=payload.config,
         metadata_json=payload.metadata,
+        is_live=provider in {"web", "github"},
     )
     session.add(connector)
     session.flush()
@@ -127,7 +170,12 @@ def create_connector(
         action="research.connector.created",
         resource_type="research_connector",
         resource_id=str(connector.id),
-        details={"provider": connector.provider, "slug": connector.slug},
+        details={
+            "provider": connector.provider,
+            "slug": connector.slug,
+            "approval_mode": connector.approval_mode,
+            "is_live": connector.is_live,
+        },
     )
     session.commit()
     session.refresh(connector)
@@ -249,7 +297,7 @@ def execute_session(
     organization_id: UUID,
     session_id: UUID,
     payload: ResearchExecuteRequest,
-    _membership: ResearchRunDep,
+    membership: ResearchRunDep,
     current_user: CurrentUserDep,
     session: SessionDep,
 ) -> ResearchExecutionResponse:
@@ -264,6 +312,7 @@ def execute_session(
             actor_user_id=current_user.id,
             connector_ids=ids,
             max_results_per_connector=payload.max_results_per_connector,
+            allow_approval_required=has_permission(membership.role, Permission.RESEARCH_APPROVE),
         )
     except ResearchEngineError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

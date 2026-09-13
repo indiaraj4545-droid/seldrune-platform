@@ -9,6 +9,7 @@ from backend.app.models.organization import Organization
 from backend.app.models.research_connector import ResearchConnector
 from backend.app.models.research_session import ResearchSession
 from backend.app.models.research_source import ResearchSource
+from backend.app.models.secret_reference import SecretReference
 from backend.app.models.task import Task, TaskEvent
 from backend.app.models.tool_definition import ToolDefinition
 from backend.app.models.tool_run import ToolRun
@@ -27,6 +28,7 @@ __all__ = [
     "ResearchConnector",
     "ResearchSession",
     "ResearchSource",
+    "SecretReference",
     "Task",
     "TaskEvent",
     "ToolDefinition",

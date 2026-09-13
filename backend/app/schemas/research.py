@@ -10,6 +10,11 @@ class ResearchConnectorCreate(BaseModel):
     slug: str = Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$", max_length=100)
     description: str | None = None
     provider: str = Field(min_length=2, max_length=40)
+    secret_reference_id: UUID | None = None
+    approval_mode: str = Field(default="never", pattern=r"^(never|always)$")
+    max_requests_per_run: int = Field(default=10, ge=1, le=50)
+    allowed_hosts: list[str] = Field(default_factory=list, max_length=50)
+    allowed_repositories: list[str] = Field(default_factory=list, max_length=50)
     config: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -19,11 +24,17 @@ class ResearchConnectorPublic(BaseModel):
     id: UUID
     organization_id: UUID
     created_by_user_id: UUID | None
+    secret_reference_id: UUID | None
     name: str
     slug: str
     description: str | None
     provider: str
     status: str
+    approval_mode: str
+    max_requests_per_run: int
+    allowed_hosts: list[str]
+    allowed_repositories: list[str]
+    is_live: bool
     config_json: dict[str, Any]
     metadata_json: dict[str, Any]
     created_at: datetime
