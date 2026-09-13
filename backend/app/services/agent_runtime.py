@@ -16,6 +16,7 @@ from backend.app.models.agent import Agent
 from backend.app.models.model_invocation import ModelInvocation
 from backend.app.models.task import Task, TaskEvent
 from backend.app.services.audit import record_audit
+from backend.app.services.knowledge import build_agent_context, remember_task_result
 from backend.app.services.model_gateway import ModelGateway
 from backend.app.services.task_engine import transition_task
 
@@ -48,9 +49,12 @@ def _build_instructions(agent: Agent) -> str:
     )
 
 
-def _build_input(task: Task) -> str:
+def _build_input(task: Task, knowledge_context: str = "") -> str:
     payload = json.dumps(task.input_data, sort_keys=True, default=str)
-    return f"Task: {task.title}\nObjective: {task.objective}\nContext: {payload}"
+    base = f"Task: {task.title}\nObjective: {task.objective}\nContext: {payload}"
+    if knowledge_context:
+        return f"{base}\n\n{knowledge_context}"
+    return base
 
 
 def _estimate_cost(agent: Agent, input_tokens: int, output_tokens: int) -> float | None:
@@ -88,6 +92,13 @@ def execute_agent_task(
     max_output_tokens = int(
         agent.runtime_config.get("max_output_tokens", settings.model_max_output_tokens)
     )
+    knowledge_context, context_refs = build_agent_context(
+        session,
+        task=task,
+        agent_id=agent.id,
+        limit=settings.knowledge_retrieval_limit,
+        max_chars=settings.knowledge_context_max_chars,
+    )
     invocation = ModelInvocation(
         organization_id=task.organization_id,
         task_id=task.id,
@@ -105,7 +116,11 @@ def execute_agent_task(
             actor_user_id=actor_user_id,
             actor_agent_id=agent.id,
             event_type="agent.runtime.started",
-            details={"provider": provider.value, "model": model},
+            details={
+                "provider": provider.value,
+                "model": model,
+                "context_refs": context_refs,
+            },
         )
     )
     record_audit(
@@ -115,7 +130,12 @@ def execute_agent_task(
         action="agent.runtime.started",
         resource_type="task",
         resource_id=str(task.id),
-        details={"agent_id": str(agent.id), "provider": provider.value, "model": model},
+        details={
+            "agent_id": str(agent.id),
+            "provider": provider.value,
+            "model": model,
+            "context_refs": context_refs,
+        },
     )
     session.commit()
 
@@ -124,7 +144,7 @@ def execute_agent_task(
         provider=provider,
         model=model,
         instructions=_build_instructions(agent),
-        input_text=_build_input(task),
+        input_text=_build_input(task, knowledge_context),
         max_output_tokens=max_output_tokens,
         metadata={"task_id": str(task.id), "agent_id": str(agent.id)},
     )
@@ -179,12 +199,21 @@ def execute_agent_task(
             "provider": result.provider.value,
             "model": result.model,
             "response_id": result.response_id,
+            "context_refs": context_refs,
             "usage": {
                 "input_tokens": result.usage.input_tokens,
                 "output_tokens": result.usage.output_tokens,
                 "total_tokens": result.usage.total_tokens,
             },
         },
+    )
+    remember_task_result(
+        session,
+        task=task,
+        agent_id=agent.id,
+        created_by_user_id=actor_user_id,
+        result_text=result.output_text,
+        context_refs=context_refs,
     )
     session.add(
         TaskEvent(
@@ -197,6 +226,7 @@ def execute_agent_task(
                 "provider": result.provider.value,
                 "model": result.model,
                 "total_tokens": result.usage.total_tokens,
+                "context_refs": context_refs,
             },
         )
     )
@@ -212,6 +242,7 @@ def execute_agent_task(
             "provider": result.provider.value,
             "model": result.model,
             "total_tokens": result.usage.total_tokens,
+            "context_refs": context_refs,
         },
     )
     session.commit()
