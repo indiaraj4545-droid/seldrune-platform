@@ -5,7 +5,12 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from backend.app.core.config import settings
-from backend.app.core.modeling import InvocationStatus, ModelGatewayError, ModelProvider, ModelRequest
+from backend.app.core.modeling import (
+    InvocationStatus,
+    ModelGatewayError,
+    ModelProvider,
+    ModelRequest,
+)
 from backend.app.core.tasking import AgentStatus, TaskStatus
 from backend.app.models.agent import Agent
 from backend.app.models.model_invocation import ModelInvocation
