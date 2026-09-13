@@ -22,7 +22,9 @@ class OrchestrationRun(Base):
     )
     objective: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="planned", index=True)
-    planner_version: Mapped[str] = mapped_column(String(64), nullable=False, default="deterministic-v1")
+    planner_version: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="deterministic-v1"
+    )
     context: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     summary: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
