@@ -1,0 +1,214 @@
+import json
+from datetime import UTC, datetime
+from uuid import UUID
+
+from sqlalchemy.orm import Session
+
+from backend.app.core.config import settings
+from backend.app.core.modeling import InvocationStatus, ModelGatewayError, ModelProvider, ModelRequest
+from backend.app.core.tasking import AgentStatus, TaskStatus
+from backend.app.models.agent import Agent
+from backend.app.models.model_invocation import ModelInvocation
+from backend.app.models.task import Task, TaskEvent
+from backend.app.services.audit import record_audit
+from backend.app.services.model_gateway import ModelGateway
+from backend.app.services.task_engine import transition_task
+
+
+class AgentRuntimeError(RuntimeError):
+    pass
+
+
+def _resolve_provider(agent: Agent) -> ModelProvider:
+    value = str(agent.runtime_config.get("provider", settings.model_provider)).lower()
+    try:
+        return ModelProvider(value)
+    except ValueError as exc:
+        raise AgentRuntimeError(f"Unsupported model provider: {value}") from exc
+
+
+def _resolve_model(agent: Agent) -> str:
+    return str(agent.runtime_config.get("model", settings.model_default)).strip()
+
+
+def _build_instructions(agent: Agent) -> str:
+    custom = agent.runtime_config.get("instructions")
+    if isinstance(custom, str) and custom.strip():
+        return custom.strip()
+    capabilities = ", ".join(agent.capabilities) or "general execution"
+    return (
+        f"You are {agent.name}, an Agentic AI operating inside Seldrune. "
+        f"Your capabilities are: {capabilities}. Complete the assigned objective clearly, "
+        "state assumptions, and return an actionable result."
+    )
+
+
+def _build_input(task: Task) -> str:
+    payload = json.dumps(task.input_data, sort_keys=True, default=str)
+    return f"Task: {task.title}\nObjective: {task.objective}\nContext: {payload}"
+
+
+def _estimate_cost(agent: Agent, input_tokens: int, output_tokens: int) -> float | None:
+    input_rate = agent.runtime_config.get("input_cost_per_million")
+    output_rate = agent.runtime_config.get("output_cost_per_million")
+    if input_rate is None or output_rate is None:
+        return None
+    try:
+        return round(
+            (input_tokens / 1_000_000) * float(input_rate)
+            + (output_tokens / 1_000_000) * float(output_rate),
+            8,
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def execute_agent_task(
+    session: Session,
+    *,
+    task: Task,
+    agent: Agent,
+    actor_user_id: UUID,
+    gateway: ModelGateway | None = None,
+) -> Task:
+    if agent.status != AgentStatus.ACTIVE.value:
+        raise AgentRuntimeError("Assigned agent is disabled")
+    if task.assigned_agent_id != agent.id:
+        raise AgentRuntimeError("Task is not assigned to this agent")
+    if TaskStatus(task.status) is not TaskStatus.ASSIGNED:
+        raise AgentRuntimeError("Only assigned tasks can be executed")
+
+    provider = _resolve_provider(agent)
+    model = _resolve_model(agent)
+    max_output_tokens = int(
+        agent.runtime_config.get("max_output_tokens", settings.model_max_output_tokens)
+    )
+    invocation = ModelInvocation(
+        organization_id=task.organization_id,
+        task_id=task.id,
+        agent_id=agent.id,
+        provider=provider.value,
+        model=model,
+        status=InvocationStatus.RUNNING.value,
+    )
+    session.add(invocation)
+    transition_task(task, TaskStatus.RUNNING)
+    session.add(
+        TaskEvent(
+            organization_id=task.organization_id,
+            task_id=task.id,
+            actor_user_id=actor_user_id,
+            actor_agent_id=agent.id,
+            event_type="agent.runtime.started",
+            details={"provider": provider.value, "model": model},
+        )
+    )
+    record_audit(
+        session,
+        organization_id=task.organization_id,
+        actor_user_id=actor_user_id,
+        action="agent.runtime.started",
+        resource_type="task",
+        resource_id=str(task.id),
+        details={"agent_id": str(agent.id), "provider": provider.value, "model": model},
+    )
+    session.commit()
+
+    model_gateway = gateway or ModelGateway(settings)
+    request = ModelRequest(
+        provider=provider,
+        model=model,
+        instructions=_build_instructions(agent),
+        input_text=_build_input(task),
+        max_output_tokens=max_output_tokens,
+        metadata={"task_id": str(task.id), "agent_id": str(agent.id)},
+    )
+
+    try:
+        result, latency_ms = model_gateway.generate(request)
+    except ModelGatewayError as exc:
+        message = str(exc)
+        invocation.status = InvocationStatus.FAILED.value
+        invocation.error_message = message
+        invocation.completed_at = datetime.now(UTC)
+        transition_task(task, TaskStatus.FAILED, error_message=message)
+        session.add(
+            TaskEvent(
+                organization_id=task.organization_id,
+                task_id=task.id,
+                actor_user_id=actor_user_id,
+                actor_agent_id=agent.id,
+                event_type="agent.runtime.failed",
+                details={"provider": provider.value, "model": model, "error": message},
+            )
+        )
+        record_audit(
+            session,
+            organization_id=task.organization_id,
+            actor_user_id=actor_user_id,
+            action="agent.runtime.failed",
+            resource_type="task",
+            resource_id=str(task.id),
+            details={"agent_id": str(agent.id), "error": message},
+        )
+        session.commit()
+        raise AgentRuntimeError(message) from exc
+
+    invocation.status = InvocationStatus.SUCCEEDED.value
+    invocation.provider_response_id = result.response_id
+    invocation.input_tokens = result.usage.input_tokens
+    invocation.output_tokens = result.usage.output_tokens
+    invocation.total_tokens = result.usage.total_tokens
+    invocation.estimated_cost_usd = _estimate_cost(
+        agent,
+        result.usage.input_tokens,
+        result.usage.output_tokens,
+    )
+    invocation.latency_ms = latency_ms
+    invocation.completed_at = datetime.now(UTC)
+    transition_task(
+        task,
+        TaskStatus.SUCCEEDED,
+        output_data={
+            "text": result.output_text,
+            "provider": result.provider.value,
+            "model": result.model,
+            "response_id": result.response_id,
+            "usage": {
+                "input_tokens": result.usage.input_tokens,
+                "output_tokens": result.usage.output_tokens,
+                "total_tokens": result.usage.total_tokens,
+            },
+        },
+    )
+    session.add(
+        TaskEvent(
+            organization_id=task.organization_id,
+            task_id=task.id,
+            actor_user_id=actor_user_id,
+            actor_agent_id=agent.id,
+            event_type="agent.runtime.completed",
+            details={
+                "provider": result.provider.value,
+                "model": result.model,
+                "total_tokens": result.usage.total_tokens,
+            },
+        )
+    )
+    record_audit(
+        session,
+        organization_id=task.organization_id,
+        actor_user_id=actor_user_id,
+        action="agent.runtime.completed",
+        resource_type="task",
+        resource_id=str(task.id),
+        details={
+            "agent_id": str(agent.id),
+            "provider": result.provider.value,
+            "model": result.model,
+            "total_tokens": result.usage.total_tokens,
+        },
+    )
+    session.commit()
+    session.refresh(task)
+    return task
