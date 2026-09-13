@@ -4,7 +4,6 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
 from uuid import UUID
 
 from sqlalchemy import or_, select
@@ -169,7 +168,9 @@ def build_agent_context(
         lines.append(line)
         refs.append(hit.ref)
         used += len(line)
-    lines.append("Use this context only when relevant and preserve the references in your reasoning.")
+    lines.append(
+        "Use this context only when relevant and preserve the references in your reasoning."
+    )
     return "\n".join(lines), refs
 
 
