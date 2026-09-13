@@ -10,11 +10,17 @@ from backend.app.core.rbac import Permission
 from backend.app.models.membership import Membership
 from backend.app.models.orchestration import OrchestrationRun, OrchestrationStep
 from backend.app.schemas.orchestration import (
+    AutonomousExecutionRequest,
+    AutonomousExecutionResponse,
     OrchestrationCreate,
     OrchestrationRunPublic,
     OrchestrationStepPublic,
 )
 from backend.app.services.audit import record_audit
+from backend.app.services.autonomous_execution import (
+    AutonomousExecutionError,
+    execute_orchestration_autonomously,
+)
 from backend.app.services.orchestrator import create_orchestration_run, refresh_orchestration_status
 
 router = APIRouter(prefix="/organizations", tags=["orchestrations"])
@@ -149,3 +155,38 @@ def refresh_orchestration(
     session.commit()
     session.refresh(run)
     return _to_public(session, run)
+
+
+@router.post(
+    "/{organization_id}/orchestrations/{run_id}/execute",
+    response_model=AutonomousExecutionResponse,
+)
+def execute_orchestration(
+    organization_id: UUID,
+    run_id: UUID,
+    payload: AutonomousExecutionRequest,
+    _membership: OrchestrationDep,
+    current_user: CurrentUserDep,
+    session: SessionDep,
+) -> AutonomousExecutionResponse:
+    run = _get_run(session, organization_id, run_id)
+    try:
+        report = execute_orchestration_autonomously(
+            session,
+            run=run,
+            actor_user_id=current_user.id,
+            stop_on_failure=payload.stop_on_failure,
+            max_steps=payload.max_steps,
+            max_retries_per_step=payload.max_retries_per_step,
+            max_upstream_text_chars=payload.max_upstream_text_chars,
+        )
+    except AutonomousExecutionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+
+    return AutonomousExecutionResponse(
+        run=_to_public(session, run),
+        execution=report,
+    )

@@ -18,6 +18,24 @@ class OrchestrationCreate(BaseModel):
     plan: list[PlanStepInput] | None = None
 
 
+class AutonomousExecutionRequest(BaseModel):
+    stop_on_failure: bool = True
+    max_steps: int = Field(default=50, ge=1, le=100)
+    max_retries_per_step: int = Field(default=0, ge=0, le=2)
+    max_upstream_text_chars: int = Field(default=4000, ge=500, le=20000)
+
+
+class AutonomousExecutionReport(BaseModel):
+    mode: str
+    executed_steps: int
+    skipped_succeeded_steps: int
+    retried_steps: int
+    failed_steps: int
+    blocked_steps: int
+    halted_reason: str | None
+    last_sequence: int | None
+
+
 class OrchestrationStepPublic(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -48,3 +66,8 @@ class OrchestrationRunPublic(BaseModel):
     created_at: datetime
     updated_at: datetime
     steps: list[OrchestrationStepPublic] = Field(default_factory=list)
+
+
+class AutonomousExecutionResponse(BaseModel):
+    run: OrchestrationRunPublic
+    execution: AutonomousExecutionReport
