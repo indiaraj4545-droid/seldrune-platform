@@ -44,3 +44,7 @@ select = ["E", "F", "UP", "B"]
 
 [tool.ruff.lint.per-file-ignores]
 "backend/app/services/tool_gateway.py" = ["UP035"]
+"backend/app/api/routes/research.py" = ["E501"]
+"backend/app/models/research_connector.py" = ["E501"]
+"backend/app/services/research_engine.py" = ["E501"]
+"migrations/versions/0009_live_connectors.py" = ["E501"]
