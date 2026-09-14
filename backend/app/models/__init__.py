@@ -6,6 +6,12 @@ from backend.app.models.memory import MemoryItem
 from backend.app.models.model_invocation import ModelInvocation
 from backend.app.models.orchestration import OrchestrationRun, OrchestrationStep
 from backend.app.models.organization import Organization
+from backend.app.models.organization_kernel import (
+    Department,
+    DepartmentDelegation,
+    OrganizationGoal,
+    OrganizationProject,
+)
 from backend.app.models.research_connector import ResearchConnector
 from backend.app.models.research_session import ResearchSession
 from backend.app.models.research_source import ResearchSource
@@ -18,6 +24,8 @@ from backend.app.models.user import User
 __all__ = [
     "Agent",
     "AuditLog",
+    "Department",
+    "DepartmentDelegation",
     "KnowledgeEntry",
     "Membership",
     "MemoryItem",
@@ -25,6 +33,8 @@ __all__ = [
     "OrchestrationRun",
     "OrchestrationStep",
     "Organization",
+    "OrganizationGoal",
+    "OrganizationProject",
     "ResearchConnector",
     "ResearchSession",
     "ResearchSource",
