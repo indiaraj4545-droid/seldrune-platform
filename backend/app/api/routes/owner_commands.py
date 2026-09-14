@@ -17,6 +17,7 @@ from backend.app.schemas.orchestration import (
 )
 from backend.app.services.audit import record_audit
 from backend.app.services.autonomous_execution import execute_orchestration_autonomously
+from backend.app.services.evidence_execution import prepare_orchestration_research
 from backend.app.services.founding_agents import ensure_founding_agents
 from backend.app.services.live_planner import build_live_plan
 from backend.app.services.orchestrator import create_orchestration_run, refresh_orchestration_status
@@ -92,9 +93,13 @@ def list_owner_commands(
     organization_id: UUID, membership: OwnerDep, session: SessionDep
 ) -> list[OrchestrationRunPublic]:
     _require_owner(membership)
-    runs = list(session.scalars(select(OrchestrationRun).where(
-        OrchestrationRun.organization_id == organization_id
-    ).order_by(OrchestrationRun.created_at.desc())))
+    runs = list(
+        session.scalars(
+            select(OrchestrationRun)
+            .where(OrchestrationRun.organization_id == organization_id)
+            .order_by(OrchestrationRun.created_at.desc())
+        )
+    )
     commands = [run for run in runs if _is_owner_command(run)]
     for run in commands:
         refresh_orchestration_status(session, run)
@@ -115,7 +120,10 @@ def get_owner_dashboard(
     response_model=dict[str, Any],
 )
 def get_owner_command_brief(
-    organization_id: UUID, run_id: UUID, membership: OwnerDep, session: SessionDep
+    organization_id: UUID,
+    run_id: UUID,
+    membership: OwnerDep,
+    session: SessionDep,
 ) -> dict[str, Any]:
     _require_owner(membership)
     run = _get_run(session, organization_id, run_id)
@@ -131,20 +139,33 @@ def get_owner_command_brief(
     response_model=OrchestrationRunPublic,
 )
 def approve_owner_command(
-    organization_id: UUID, run_id: UUID, membership: OwnerDep,
-    current_user: CurrentUserDep, session: SessionDep,
+    organization_id: UUID,
+    run_id: UUID,
+    membership: OwnerDep,
+    current_user: CurrentUserDep,
+    session: SessionDep,
 ) -> OrchestrationRunPublic:
     _require_owner(membership)
     run = _get_run(session, organization_id, run_id)
     if not _is_owner_command(run):
         raise HTTPException(status_code=404, detail="Owner command not found")
-    run.context = {**run.context, "owner_command": {
-        **run.context["owner_command"], "approval_status": "approved",
-        "approved_by": str(current_user.id),
-    }}
-    record_audit(session, organization_id=organization_id, actor_user_id=current_user.id,
-                 action="owner_command.approved", resource_type="orchestration",
-                 resource_id=str(run.id), details={})
+    run.context = {
+        **run.context,
+        "owner_command": {
+            **run.context["owner_command"],
+            "approval_status": "approved",
+            "approved_by": str(current_user.id),
+        },
+    }
+    record_audit(
+        session,
+        organization_id=organization_id,
+        actor_user_id=current_user.id,
+        action="owner_command.approved",
+        resource_type="orchestration",
+        resource_id=str(run.id),
+        details={},
+    )
     session.commit()
     session.refresh(run)
     return _to_public(session, run)
@@ -155,8 +176,12 @@ def approve_owner_command(
     response_model=AutonomousExecutionResponse,
 )
 def execute_owner_command(
-    organization_id: UUID, run_id: UUID, payload: AutonomousExecutionRequest,
-    membership: OwnerDep, current_user: CurrentUserDep, session: SessionDep,
+    organization_id: UUID,
+    run_id: UUID,
+    payload: AutonomousExecutionRequest,
+    membership: OwnerDep,
+    current_user: CurrentUserDep,
+    session: SessionDep,
 ) -> AutonomousExecutionResponse:
     _require_owner(membership)
     run = _get_run(session, organization_id, run_id)
@@ -165,9 +190,17 @@ def execute_owner_command(
         raise HTTPException(status_code=404, detail="Owner command not found")
     if command.get("approval_status") != "approved":
         raise HTTPException(status_code=409, detail="Owner command requires approval")
+    prepare_orchestration_research(
+        session,
+        run=run,
+        actor_user_id=current_user.id,
+    )
     report = execute_orchestration_autonomously(
-        session, run=run, actor_user_id=current_user.id,
-        stop_on_failure=payload.stop_on_failure, max_steps=payload.max_steps,
+        session,
+        run=run,
+        actor_user_id=current_user.id,
+        stop_on_failure=payload.stop_on_failure,
+        max_steps=payload.max_steps,
         max_retries_per_step=payload.max_retries_per_step,
         max_upstream_text_chars=payload.max_upstream_text_chars,
     )
