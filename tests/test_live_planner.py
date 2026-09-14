@@ -5,6 +5,7 @@ from backend.app.services import live_planner
 class SuccessfulPlannerGateway:
     def generate(self, request):
         assert request.metadata["purpose"] == "owner_command_planning"
+        assert request.metadata["adaptive_planning"] is False
         schema = request.response_schema["properties"]["steps"]
         assert schema["minItems"] == 3
         assert schema["maxItems"] == 3
@@ -36,7 +37,7 @@ def test_live_planner_accepts_structured_model_plan(monkeypatch) -> None:
         "Create exactly three planning steps without external actions.",
         gateway=SuccessfulPlannerGateway(),
     )
-    assert result.planner_version == "live-model-v2"
+    assert result.planner_version == "live-model-v3-adaptive"
     assert len(result.steps) == 3
     assert [step.required_capabilities for step in result.steps] == [
         ["research"],
@@ -44,6 +45,7 @@ def test_live_planner_accepts_structured_model_plan(monkeypatch) -> None:
         ["architecture"],
     ]
     assert result.metadata["usage"]["total_tokens"] == 120
+    assert result.metadata["adaptive_planning"]["applied"] is False
 
 
 def test_live_planner_falls_back_with_exact_requested_count(monkeypatch) -> None:
@@ -64,6 +66,6 @@ def test_live_planner_falls_back_with_exact_requested_count(monkeypatch) -> None
         "Create exactly three planning steps for an automation.",
         gateway=InvalidGateway(),
     )
-    assert result.planner_version == "deterministic-v2"
+    assert result.planner_version == "deterministic-v3-adaptive"
     assert result.metadata["mode"] == "fallback"
     assert len(result.steps) == 3
