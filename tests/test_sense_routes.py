@@ -89,3 +89,61 @@ def test_sense_review_requires_owner_override(client, monkeypatch) -> None:
         json={},
     )
     assert executed.status_code == 200
+
+
+def test_sense_uses_successful_similar_outcome_memory(client, monkeypatch) -> None:
+    token, organization_id = register_owner(client)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    class LivePlan:
+        planner_version = "live-model-v2"
+        metadata = {"mode": "live", "provider": "openai", "model": "test-live-model"}
+        steps = [
+            PlannedStep(
+                "Analyze payment automation",
+                "Analyze a payment automation workflow",
+                ["analysis"],
+                80,
+            )
+        ]
+
+    monkeypatch.setattr(
+        "backend.app.api.routes.owner_commands.build_live_plan",
+        lambda objective: LivePlan,
+    )
+
+    first = client.post(
+        f"/api/v1/organizations/{organization_id}/owner-commands",
+        headers=headers,
+        json={"objective": "Analyze payment automation workflow"},
+    )
+    assert first.status_code == 201
+    first_id = first.json()["id"]
+    assert client.post(
+        f"/api/v1/organizations/{organization_id}/owner-commands/{first_id}/approve",
+        headers=headers,
+    ).status_code == 200
+    assert client.post(
+        f"/api/v1/organizations/{organization_id}/owner-commands/{first_id}/execute",
+        headers=headers,
+        json={},
+    ).status_code == 200
+
+    second = client.post(
+        f"/api/v1/organizations/{organization_id}/owner-commands",
+        headers=headers,
+        json={"objective": "Analyze payment automation workflow improvements"},
+    )
+    assert second.status_code == 201
+    second_id = second.json()["id"]
+
+    sense = client.get(
+        f"/api/v1/organizations/{organization_id}/owner-commands/{second_id}/sense",
+        headers=headers,
+    )
+    assert sense.status_code == 200
+    memory = sense.json()["signals"]["outcome_memory"]
+    assert memory["sample_count"] >= 1
+    assert memory["success_rate"] == 1.0
+    assert memory["score_adjustment"] > 0
+    assert memory["reason"] == "similar_history_positive"
