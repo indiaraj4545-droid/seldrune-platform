@@ -67,8 +67,10 @@ def assess_orchestration(
         score += 20
         reasons.append("live_planner")
     elif planner_mode == "fallback":
-        score -= 10
+        score -= 5
         reasons.append("fallback_planner")
+    else:
+        reasons.append("planner_state_unknown")
 
     if assignment_ratio == 1.0 and total_steps:
         score += 15
@@ -88,17 +90,24 @@ def assess_orchestration(
         score += 5
         reasons.append("research_evidence_available")
     if blocked_connectors > 0:
-        score -= 25
-        blockers.append("research_connector_requires_approval")
+        score -= 5
+        reasons.append("connector_action_safely_blocked")
     if failed_tasks or previous_failed:
         score -= 15
         reasons.append("prior_execution_failure")
 
     score = max(0, min(100, score))
+    requires_review = (
+        "weak_agent_fit" in reasons
+        or planner_mode == "unknown"
+        or score < 55
+        or bool(failed_tasks)
+        or bool(previous_failed)
+    )
     if blockers:
         decision = "HOLD"
         recommended_action = "Resolve blockers before execution"
-    elif planner_mode == "fallback" or score < 65 or failed_tasks or previous_failed:
+    elif requires_review:
         decision = "REVIEW"
         recommended_action = "Owner review is recommended before execution"
     else:
