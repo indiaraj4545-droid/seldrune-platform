@@ -14,6 +14,7 @@ from backend.app.schemas.orchestration import (
 from backend.app.services.audit import record_audit
 from backend.app.services.autonomous_execution import execute_orchestration_autonomously
 from backend.app.services.evidence_execution import prepare_orchestration_research
+from backend.app.services.outcome_memory import record_orchestration_outcome
 from backend.app.services.sense_engine import assess_orchestration
 
 router = APIRouter(prefix="/organizations", tags=["sense-layer"])
@@ -142,4 +143,5 @@ def execute_owner_command_with_sense(
         max_retries_per_step=payload.max_retries_per_step,
         max_upstream_text_chars=payload.max_upstream_text_chars,
     )
+    record_orchestration_outcome(session, run=run, actor_user_id=current_user.id)
     return AutonomousExecutionResponse(run=_to_public(session, run), execution=report)
