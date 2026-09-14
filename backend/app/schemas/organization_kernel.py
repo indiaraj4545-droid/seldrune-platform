@@ -67,7 +67,10 @@ class GoalUpdate(BaseModel):
     department_id: UUID | None = None
     parent_goal_id: UUID | None = None
     owner_agent_id: UUID | None = None
-    status: str | None = Field(default=None, pattern=r"^(planned|active|achieved|blocked|cancelled)$")
+    status: str | None = Field(
+        default=None,
+        pattern=r"^(planned|active|achieved|blocked|cancelled)$",
+    )
     priority: int | None = Field(default=None, ge=0, le=100)
     target_metric: str | None = Field(default=None, max_length=160)
     target_value: float | None = None
@@ -122,7 +125,10 @@ class ProjectUpdate(BaseModel):
     department_id: UUID | None = None
     goal_id: UUID | None = None
     lead_agent_id: UUID | None = None
-    status: str | None = Field(default=None, pattern=r"^(planned|active|paused|completed|cancelled)$")
+    status: str | None = Field(
+        default=None,
+        pattern=r"^(planned|active|paused|completed|cancelled)$",
+    )
     priority: int | None = Field(default=None, ge=0, le=100)
     budget_limit_usd: float | None = Field(default=None, ge=0)
     budget_spent_usd: float | None = Field(default=None, ge=0)
