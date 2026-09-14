@@ -15,7 +15,8 @@ ADAPTIVE_PLANNING_VERSION = "adaptive-planning-v1"
 _STOPWORDS = {"a", "an", "and", "for", "in", "of", "on", "the", "to", "with"}
 _RECOMMENDATION_ADVISORIES = {
     "prefer_high_fit_agent_routes_for_similar_capabilities": (
-        "Keep steps narrow and capability-specific so downstream routing can select a high-fit agent."
+        "Keep steps narrow and capability-specific so downstream routing can select "
+        "a high-fit agent."
     ),
     "raise_routing_quality_before_similar_execution": (
         "Avoid broad multi-purpose steps; separate work so each step has one primary capability."
@@ -33,13 +34,16 @@ _RECOMMENDATION_ADVISORIES = {
         "Preserve a research or evidence-gathering step when it is relevant to the objective."
     ),
     "prefer_live_planning_for_similar_work_when_available": (
-        "Make assumptions and evidence requirements explicit because prior fallback planning underperformed."
+        "Make assumptions and evidence requirements explicit because prior fallback planning "
+        "underperformed."
     ),
     "reuse_the_current_execution_pattern": (
-        "Reuse the successful high-level execution pattern where it still fits the owner's objective."
+        "Reuse the successful high-level execution pattern where it still fits the owner's "
+        "objective."
     ),
     "require_review_before_retry": (
-        "Include a validation or review checkpoint before repeating a previously weak execution pattern."
+        "Include a validation or review checkpoint before repeating a previously weak "
+        "execution pattern."
     ),
 }
 _CAUTION_ADVISORIES = {
