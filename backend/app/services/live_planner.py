@@ -62,10 +62,14 @@ def _explicit_step_count(objective: str) -> int | None:
 
 
 def _fallback_plan(objective: str, count: int | None) -> list[PlannedStep]:
-    step_count = count or (5 if any(
-        term in objective.lower()
-        for term in ("app", "automation", "build", "create", "software", "system")
-    ) else 3)
+    step_count = count or (
+        5
+        if any(
+            term in objective.lower()
+            for term in ("app", "automation", "build", "create", "software", "system")
+        )
+        else 3
+    )
     return [
         PlannedStep(title, f"{action}: {objective}", [capability], priority)
         for title, action, capability, priority in _FALLBACK_TEMPLATES[:step_count]
@@ -135,21 +139,168 @@ def _plan_schema(expected_count: int | None) -> dict[str, Any]:
     }
 
 
+def _guidance_summary(guidance: dict[str, Any] | None) -> dict[str, Any]:
+    if not guidance or not guidance.get("applied"):
+        return {
+            "applied": False,
+            "sample_count": 0,
+            "historical_success_rate": None,
+            "confidence": 0.0,
+            "preferred_capabilities": [],
+            "caution_capabilities": [],
+            "advisories": [],
+            "adaptations": [],
+        }
+    return {
+        "version": guidance.get("version"),
+        "applied": True,
+        "sample_count": int(guidance.get("sample_count") or 0),
+        "reflection_sample_count": int(guidance.get("reflection_sample_count") or 0),
+        "outcome_sample_count": int(guidance.get("outcome_sample_count") or 0),
+        "historical_success_rate": guidance.get("historical_success_rate"),
+        "confidence": guidance.get("confidence"),
+        "preferred_capabilities": list(guidance.get("preferred_capabilities") or [])[:5],
+        "caution_capabilities": list(guidance.get("caution_capabilities") or [])[:5],
+        "recommendations": list(guidance.get("recommendations") or [])[:5],
+        "recurring_cautions": list(guidance.get("recurring_cautions") or [])[:5],
+        "advisories": list(guidance.get("advisories") or [])[:6],
+        "adaptations": [],
+    }
+
+
+def _apply_adaptive_overlay(
+    steps: list[PlannedStep],
+    *,
+    objective: str,
+    expected_count: int | None,
+    guidance: dict[str, Any] | None,
+) -> tuple[list[PlannedStep], list[str]]:
+    if not guidance or not guidance.get("applied"):
+        return steps, []
+
+    preferred = set(guidance.get("preferred_capabilities") or [])
+    adapted: list[PlannedStep] = []
+    priority_bumped = False
+    for step in steps:
+        capability = step.required_capabilities[0] if step.required_capabilities else ""
+        bump = 5 if capability in preferred else 0
+        if bump:
+            priority_bumped = True
+        adapted.append(
+            PlannedStep(
+                step.title,
+                step.objective,
+                list(step.required_capabilities),
+                min(100, step.priority + bump),
+            )
+        )
+
+    adaptations: list[str] = []
+    if priority_bumped:
+        adaptations.append("preferred_capability_priority_boost")
+
+    recommendations = set(guidance.get("recommendations") or [])
+    recurring_cautions = set(guidance.get("recurring_cautions") or [])
+    caution_capabilities = set(guidance.get("caution_capabilities") or [])
+    success_rate = guidance.get("historical_success_rate")
+    sample_count = int(guidance.get("sample_count") or 0)
+
+    needs_research = "preserve_research_preflight_for_similar_work" in recommendations
+    needs_validation = bool(
+        "review_failed_capabilities_before_repeating_similar_work" in recommendations
+        or "task_failures_were_observed" in recurring_cautions
+        or "execution_encountered_blocked_steps" in recurring_cautions
+        or caution_capabilities
+        or (
+            sample_count >= 2
+            and isinstance(success_rate, (int, float))
+            and success_rate < 0.5
+        )
+    )
+    capabilities = {
+        capability
+        for step in adapted
+        for capability in step.required_capabilities
+    }
+
+    if expected_count is None:
+        if needs_research and "research" not in capabilities and len(adapted) < 8:
+            adapted.insert(
+                0,
+                PlannedStep(
+                    "Re-establish evidence",
+                    f"Collect current evidence and constraints before proceeding with: {objective}",
+                    ["research"],
+                    85,
+                ),
+            )
+            capabilities.add("research")
+            adaptations.append("research_step_added_from_history")
+        if needs_validation and "validation" not in capabilities and len(adapted) < 8:
+            adapted.append(
+                PlannedStep(
+                    "Validate learned risks",
+                    f"Validate historical failure risks and acceptance criteria for: {objective}",
+                    ["validation"],
+                    35,
+                )
+            )
+            adaptations.append("validation_step_added_from_history")
+    elif (needs_research and "research" not in capabilities) or (
+        needs_validation and "validation" not in capabilities
+    ):
+        adaptations.append("owner_step_count_preserved_over_history")
+
+    return adapted, adaptations
+
+
+def _planner_input(objective: str, guidance: dict[str, Any] | None) -> str:
+    summary = _guidance_summary(guidance)
+    if not summary["applied"]:
+        return f"Owner objective:\n{objective}"
+    bounded = {
+        "sample_count": summary["sample_count"],
+        "historical_success_rate": summary["historical_success_rate"],
+        "confidence": summary["confidence"],
+        "preferred_capabilities": summary["preferred_capabilities"],
+        "caution_capabilities": summary["caution_capabilities"],
+        "advisories": summary["advisories"],
+    }
+    return (
+        f"Owner objective:\n{objective}\n\n"
+        "Seldrune learned planning guidance (advisory only; the owner's explicit constraints "
+        f"always win):\n{json.dumps(bounded, separators=(',', ':'))}"
+    )
+
+
 def build_live_plan(
     objective: str,
     *,
     gateway: ModelGateway | None = None,
+    adaptive_guidance: dict[str, Any] | None = None,
 ) -> PlanResult:
     expected_count = _explicit_step_count(objective)
+    guidance_metadata = _guidance_summary(adaptive_guidance)
     try:
         provider = ModelProvider(settings.model_provider)
     except ValueError:
         provider = ModelProvider.MOCK
     if provider is ModelProvider.MOCK:
-        return PlanResult(
+        steps, adaptations = _apply_adaptive_overlay(
             _fallback_plan(objective, expected_count),
-            "deterministic-v2",
-            {"mode": "fallback", "reason": "Mock provider is configured"},
+            objective=objective,
+            expected_count=expected_count,
+            guidance=adaptive_guidance,
+        )
+        guidance_metadata["adaptations"] = adaptations
+        return PlanResult(
+            steps,
+            "deterministic-v3-adaptive",
+            {
+                "mode": "fallback",
+                "reason": "Mock provider is configured",
+                "adaptive_planning": guidance_metadata,
+            },
         )
 
     request = ModelRequest(
@@ -158,19 +309,31 @@ def build_live_plan(
         instructions=(
             "You are Seldrune's governed planning engine. Convert the owner's objective "
             "into the smallest sufficient sequence of executable steps. Obey explicit "
-            "step-count and no-external-action constraints. Do not claim work happened."
+            "step-count and no-external-action constraints. Seldrune may provide bounded "
+            "learned guidance from prior outcomes; use it only when relevant and never let "
+            "it override the owner's explicit instruction. Do not claim work happened."
         ),
-        input_text=f"Owner objective:\n{objective}",
+        input_text=_planner_input(objective, adaptive_guidance),
         max_output_tokens=min(settings.model_max_output_tokens, 1200),
-        metadata={"purpose": "owner_command_planning"},
+        metadata={
+            "purpose": "owner_command_planning",
+            "adaptive_planning": bool(guidance_metadata["applied"]),
+        },
         response_schema=_plan_schema(expected_count),
     )
     try:
         result, latency_ms = (gateway or ModelGateway(settings)).generate(request)
         steps = _validate_steps(_json_payload(result.output_text), expected_count)
+        steps, adaptations = _apply_adaptive_overlay(
+            steps,
+            objective=objective,
+            expected_count=expected_count,
+            guidance=adaptive_guidance,
+        )
+        guidance_metadata["adaptations"] = adaptations
         return PlanResult(
             steps,
-            "live-model-v2",
+            "live-model-v3-adaptive",
             {
                 "mode": "live",
                 "provider": result.provider.value,
@@ -182,16 +345,25 @@ def build_live_plan(
                     "output_tokens": result.usage.output_tokens,
                     "total_tokens": result.usage.total_tokens,
                 },
+                "adaptive_planning": guidance_metadata,
             },
         )
     except (ModelGatewayError, ValueError, TypeError) as exc:
-        return PlanResult(
+        steps, adaptations = _apply_adaptive_overlay(
             _fallback_plan(objective, expected_count),
-            "deterministic-v2",
+            objective=objective,
+            expected_count=expected_count,
+            guidance=adaptive_guidance,
+        )
+        guidance_metadata["adaptations"] = adaptations
+        return PlanResult(
+            steps,
+            "deterministic-v3-adaptive",
             {
                 "mode": "fallback",
                 "provider": provider.value,
                 "model": settings.model_default,
                 "reason": str(exc)[:160],
+                "adaptive_planning": guidance_metadata,
             },
         )
