@@ -150,9 +150,12 @@ def build_execution_reflection(session: Session, *, run: OrchestrationRun) -> di
         cautions.append("runtime_errors_were_recorded")
 
     if not recommendations:
-        recommendations.append(
-            "reuse_the_current_execution_pattern" if run.status == "succeeded" else "require_review_before_retry"
+        recommendation = (
+            "reuse_the_current_execution_pattern"
+            if run.status == "succeeded"
+            else "require_review_before_retry"
         )
+        recommendations.append(recommendation)
 
     return {
         "version": REFLECTION_VERSION,
@@ -345,10 +348,13 @@ def recall_reflection_signal(
             or "task_failures_were_observed" in recurring_cautions
         )
     )
+    capability_success_rate = (
+        round(success_rate, 3) if isinstance(success_rate, float) else None
+    )
 
     return {
         "sample_count": len(matches),
-        "capability_success_rate": round(success_rate, 3) if isinstance(success_rate, float) else None,
+        "capability_success_rate": capability_success_rate,
         "score_adjustment": score_adjustment,
         "reason": reason,
         "review_recommended": review_recommended,
