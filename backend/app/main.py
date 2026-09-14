@@ -8,6 +8,7 @@ from backend.app.api.routes.auth import router as auth_router
 from backend.app.api.routes.console import router as console_router
 from backend.app.api.routes.knowledge import router as knowledge_router
 from backend.app.api.routes.orchestrations import router as orchestrations_router
+from backend.app.api.routes.organization_kernel import router as organization_kernel_router
 from backend.app.api.routes.organizations import router as organizations_router
 from backend.app.api.routes.owner_commands import router as owner_commands_router
 from backend.app.api.routes.research import router as research_router
@@ -33,6 +34,7 @@ def create_app() -> FastAPI:
         status_router,
         auth_router,
         organizations_router,
+        organization_kernel_router,
         agent_tasks_router,
         orchestrations_router,
         sense_router,
