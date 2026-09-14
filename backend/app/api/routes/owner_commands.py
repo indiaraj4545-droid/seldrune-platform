@@ -15,6 +15,7 @@ from backend.app.schemas.orchestration import (
     OrchestrationCreate,
     OrchestrationRunPublic,
 )
+from backend.app.services.adaptive_planning import build_adaptive_planning_guidance
 from backend.app.services.audit import record_audit
 from backend.app.services.autonomous_execution import execute_orchestration_autonomously
 from backend.app.services.evidence_execution import prepare_orchestration_research
@@ -54,7 +55,15 @@ def create_owner_command(
         organization_id=organization_id,
         created_by_user_id=current_user.id,
     )
-    planned = build_live_plan(payload.objective)
+    adaptive_guidance = build_adaptive_planning_guidance(
+        session,
+        organization_id=organization_id,
+        objective=payload.objective,
+    )
+    planned = build_live_plan(
+        payload.objective,
+        adaptive_guidance=adaptive_guidance,
+    )
     context = {
         **payload.context,
         "owner_command": {"approval_status": "awaiting_approval", "approved_by": None},
