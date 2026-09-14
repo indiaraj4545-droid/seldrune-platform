@@ -8,6 +8,7 @@ def test_command_monitor_assets_are_served() -> None:
         page = client.get("/console-assets/command-monitor.html")
         assert page.status_code == 200
         assert "Seldrune Command Monitor" in page.text
+        assert "SENSE LAYER" in page.text
         assert "/console-assets/command-monitor.js" in page.text
 
         script = client.get("/console-assets/command-monitor.js")
@@ -15,3 +16,6 @@ def test_command_monitor_assets_are_served() -> None:
         assert "Routing confidence" in script.text
         assert "model-invocations" in script.text
         assert "owner-commands" in script.text
+        assert "Seldrune Sense" in script.text
+        assert "/sense/override" in script.text
+        assert "Approve Sense override" in script.text
