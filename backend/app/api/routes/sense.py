@@ -7,7 +7,10 @@ from backend.app.api.dependencies import CurrentUserDep, SessionDep, require_org
 from backend.app.api.routes.orchestrations import _get_run, _to_public
 from backend.app.core.rbac import Permission, Role
 from backend.app.models.membership import Membership
-from backend.app.schemas.orchestration import AutonomousExecutionRequest, AutonomousExecutionResponse
+from backend.app.schemas.orchestration import (
+    AutonomousExecutionRequest,
+    AutonomousExecutionResponse,
+)
 from backend.app.services.audit import record_audit
 from backend.app.services.autonomous_execution import execute_orchestration_autonomously
 from backend.app.services.evidence_execution import prepare_orchestration_research
@@ -58,7 +61,10 @@ def override_sense_review(
     command = _owner_command(run)
     assessment = assess_orchestration(session, run=run)
     if assessment.decision == "HOLD":
-        raise HTTPException(status_code=409, detail="Sense HOLD cannot be overridden; resolve blockers")
+        raise HTTPException(
+            status_code=409,
+            detail="Sense HOLD cannot be overridden; resolve blockers",
+        )
     run.context = {
         **(run.context or {}),
         "owner_command": {
