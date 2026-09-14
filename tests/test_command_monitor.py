@@ -17,5 +17,7 @@ def test_command_monitor_assets_are_served() -> None:
         assert "model-invocations" in script.text
         assert "owner-commands" in script.text
         assert "Seldrune Sense" in script.text
+        assert "Outcome memory" in script.text
+        assert "outcome_memory" in script.text
         assert "/sense/override" in script.text
         assert "Approve Sense override" in script.text

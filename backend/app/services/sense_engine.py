@@ -10,9 +10,10 @@ from sqlalchemy.orm import Session
 from backend.app.models.orchestration import OrchestrationRun, OrchestrationStep
 from backend.app.models.task import Task
 from backend.app.services.audit import record_audit
+from backend.app.services.outcome_memory import recall_outcome_signal
 
 
-SENSE_VERSION = "sense-v1"
+SENSE_VERSION = "sense-v2-memory"
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,7 @@ def assess_orchestration(
     planner = (run.context or {}).get("planner", {})
     research = (run.summary or {}).get("research_preflight", {})
     previous = (run.summary or {}).get("autonomous_execution", {})
+    memory_signal = recall_outcome_signal(session, run=run)
 
     total_steps = len(steps)
     assigned_steps = sum(step.assigned_agent_id is not None for step in steps)
@@ -96,13 +98,27 @@ def assess_orchestration(
         score -= 15
         reasons.append("prior_execution_failure")
 
+    memory_adjustment = int(memory_signal.get("score_adjustment") or 0)
+    score += memory_adjustment
+    memory_reason = str(memory_signal.get("reason") or "no_similar_history")
+    if memory_reason != "no_similar_history":
+        reasons.append(memory_reason)
+
     score = max(0, min(100, score))
+    memory_sample_count = int(memory_signal.get("sample_count") or 0)
+    memory_success_rate = memory_signal.get("success_rate")
+    negative_history = (
+        memory_sample_count >= 2
+        and isinstance(memory_success_rate, (int, float))
+        and memory_success_rate <= 0.3
+    )
     requires_review = (
         "weak_agent_fit" in reasons
         or planner_mode == "unknown"
         or score < 55
         or bool(failed_tasks)
         or bool(previous_failed)
+        or negative_history
     )
     if blockers:
         decision = "HOLD"
@@ -129,6 +145,7 @@ def assess_orchestration(
             "blocked_connectors": blocked_connectors,
             "failed_tasks": failed_tasks,
             "previous_failed_steps": previous_failed,
+            "outcome_memory": memory_signal,
         },
         recommended_action=recommended_action,
     )
