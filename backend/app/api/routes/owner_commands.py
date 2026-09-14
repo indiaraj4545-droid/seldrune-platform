@@ -23,6 +23,9 @@ from backend.app.services.founding_agents import ensure_founding_agents
 from backend.app.services.live_planner import build_live_plan
 from backend.app.services.orchestrator import create_orchestration_run, refresh_orchestration_status
 from backend.app.services.owner_dashboard import build_decision_brief, build_owner_dashboard
+from backend.app.services.playbook_engine import consolidate_playbooks
+from backend.app.services.playbook_guidance import build_playbook_guidance
+from backend.app.services.playbook_overlay import merge_playbook
 
 router = APIRouter(prefix="/organizations", tags=["owner-command-center"])
 OwnerDep = Annotated[Membership, Depends(require_org_permission(Permission.ORG_MANAGE))]
@@ -55,11 +58,22 @@ def create_owner_command(
         organization_id=organization_id,
         created_by_user_id=current_user.id,
     )
+    consolidate_playbooks(
+        session,
+        organization_id=organization_id,
+        actor_user_id=current_user.id,
+    )
+    playbook_guidance = build_playbook_guidance(
+        session,
+        organization_id=organization_id,
+        objective=payload.objective,
+    )
     adaptive_guidance = build_adaptive_planning_guidance(
         session,
         organization_id=organization_id,
         objective=payload.objective,
     )
+    adaptive_guidance = merge_playbook(adaptive_guidance, playbook_guidance)
     planned = build_live_plan(
         payload.objective,
         adaptive_guidance=adaptive_guidance,
@@ -68,6 +82,7 @@ def create_owner_command(
         **payload.context,
         "owner_command": {"approval_status": "awaiting_approval", "approved_by": None},
         "planner": planned.metadata,
+        "operational_playbook": playbook_guidance,
     }
     run = create_orchestration_run(
         session,
@@ -89,6 +104,7 @@ def create_owner_command(
             "approval_status": "awaiting_approval",
             "planner_version": planned.planner_version,
             "planner": planned.metadata,
+            "operational_playbook": playbook_guidance,
             "step_count": len(planned.steps),
         },
     )

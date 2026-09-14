@@ -19,6 +19,9 @@ def test_command_monitor_assets_are_served() -> None:
         assert "Seldrune Sense" in script.text
         assert "Adaptive planning" in script.text
         assert "adaptive_planning" in script.text
+        assert "Operational playbook" in script.text
+        assert "operational_playbook" in script.text
+        assert "Promoted playbooks" in script.text
         assert "Outcome memory" in script.text
         assert "outcome_memory" in script.text
         assert "Reflection memory" in script.text
