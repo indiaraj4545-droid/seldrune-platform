@@ -34,13 +34,30 @@ def test_sense_endpoint_reports_go_for_live_well_matched_plan(client, monkeypatc
     assert sense.json()["score"] >= 65
 
 
-def test_sense_review_requires_owner_override(client) -> None:
+def test_sense_review_requires_owner_override(client, monkeypatch) -> None:
     token, organization_id = register_owner(client)
     headers = {"Authorization": f"Bearer {token}"}
+
+    class WeakFitPlan:
+        planner_version = "live-model-v2"
+        metadata = {"mode": "live", "provider": "openai", "model": "test-live-model"}
+        steps = [
+            PlannedStep(
+                "Cross-domain analysis",
+                "Analyze using research and analysis capabilities",
+                ["analysis", "research"],
+                80,
+            )
+        ]
+
+    monkeypatch.setattr(
+        "backend.app.api.routes.owner_commands.build_live_plan",
+        lambda objective: WeakFitPlan,
+    )
     created = client.post(
         f"/api/v1/organizations/{organization_id}/owner-commands",
         headers=headers,
-        json={"objective": "Analyze a simple opportunity"},
+        json={"objective": "Analyze a cross-domain opportunity"},
     )
     assert created.status_code == 201
     run_id = created.json()["id"]
