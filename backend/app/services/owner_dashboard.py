@@ -8,6 +8,7 @@ from backend.app.models.agent import Agent
 from backend.app.models.model_invocation import ModelInvocation
 from backend.app.models.orchestration import OrchestrationRun, OrchestrationStep
 from backend.app.models.task import Task
+from backend.app.services.outcome_verification import assess_command_outcome
 
 
 def _commands(session: Session, organization_id: UUID) -> list[OrchestrationRun]:
@@ -168,11 +169,17 @@ def build_decision_brief(session: Session, run: OrchestrationRun) -> dict[str, A
         if task_status in {"failed", "missing"}:
             risks.append(f"Step {step.sequence} is {task_status}: {step.title}")
 
+    outcome = assess_command_outcome(session, run=run).to_dict()
+    if run.status == "succeeded" and not outcome["promotable"]:
+        risks.extend(outcome["reasons"])
+
     approval = run.context["owner_command"].get("approval_status")
     if approval != "approved":
         next_action = "Review the plan and approve the command"
     elif run.status in {"planned", "active"}:
         next_action = "Execute or resume the approved command"
+    elif run.status == "succeeded" and not outcome["promotable"]:
+        next_action = "Resolve or rerun the unverified outcome before promotion"
     else:
         next_action = "Review outcomes and choose the next objective"
     planner = (run.context or {}).get("planner", {})
@@ -183,6 +190,7 @@ def build_decision_brief(session: Session, run: OrchestrationRun) -> dict[str, A
         "status": run.status,
         "approval_status": approval,
         "promotion": run.context["owner_command"].get("promotion"),
+        "outcome": outcome,
         "planner": planner,
         "readiness": "blocked" if risks else "ready",
         "progress": {
