@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.app.models.organization_kernel import (
@@ -24,7 +24,10 @@ _FOUNDING_DEPARTMENTS = (
     (
         "Research & Intelligence",
         "research-intelligence",
-        "Continuously discover evidence, opportunities, risks, clients, markets, and better methods.",
+        (
+            "Continuously discover evidence, opportunities, risks, clients, markets, "
+            "and better methods."
+        ),
         90,
     ),
     (
@@ -81,6 +84,13 @@ def ensure_founding_departments(
     return created
 
 
+def _is_overdue(due_at: datetime | None, now: datetime) -> bool:
+    if due_at is None:
+        return False
+    comparable = due_at if due_at.tzinfo is not None else due_at.replace(tzinfo=UTC)
+    return comparable < now
+
+
 def build_organization_snapshot(session: Session, organization_id: UUID) -> dict[str, Any]:
     departments = list(
         session.scalars(
@@ -124,10 +134,17 @@ def build_organization_snapshot(session: Session, organization_id: UUID) -> dict
     resource_limit = sum(project.resource_limit_units for project in active_projects)
     resource_used = sum(project.resource_used_units for project in active_projects)
     now = datetime.now(UTC)
-    overdue_projects = [
+    overdue_projects = [project for project in active_projects if _is_overdue(project.due_at, now)]
+    over_budget_projects = [
         project
         for project in active_projects
-        if project.due_at is not None and project.due_at < now
+        if project.budget_limit_usd > 0 and project.budget_spent_usd > project.budget_limit_usd
+    ]
+    over_capacity_projects = [
+        project
+        for project in active_projects
+        if project.resource_limit_units > 0
+        and project.resource_used_units > project.resource_limit_units
     ]
 
     return {
@@ -139,6 +156,8 @@ def build_organization_snapshot(session: Session, organization_id: UUID) -> dict
             "projects": len(projects),
             "active_projects": len(active_projects),
             "overdue_projects": len(overdue_projects),
+            "over_budget_projects": len(over_budget_projects),
+            "over_capacity_projects": len(over_capacity_projects),
             "open_delegations": len(open_delegations),
         },
         "resources": {
@@ -172,16 +191,13 @@ def build_organization_snapshot(session: Session, organization_id: UUID) -> dict
             "overdue_project_ratio": round(len(overdue_projects) / len(active_projects), 3)
             if active_projects
             else 0.0,
+            "over_budget_project_ratio": round(len(over_budget_projects) / len(active_projects), 3)
+            if active_projects
+            else 0.0,
+            "over_capacity_project_ratio": round(
+                len(over_capacity_projects) / len(active_projects), 3
+            )
+            if active_projects
+            else 0.0,
         },
     }
-
-
-def department_project_count(session: Session, department_id: UUID) -> int:
-    return int(
-        session.scalar(
-            select(func.count()).select_from(OrganizationProject).where(
-                OrganizationProject.department_id == department_id
-            )
-        )
-        or 0
-    )
