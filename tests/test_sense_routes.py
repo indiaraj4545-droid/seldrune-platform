@@ -15,7 +15,7 @@ def test_sense_endpoint_reports_go_for_live_well_matched_plan(client, monkeypatc
 
     monkeypatch.setattr(
         "backend.app.api.routes.owner_commands.build_live_plan",
-        lambda objective: LivePlan,
+        lambda objective, **kwargs: LivePlan,
     )
     created = client.post(
         f"/api/v1/organizations/{organization_id}/owner-commands",
@@ -52,7 +52,7 @@ def test_sense_review_requires_owner_override(client, monkeypatch) -> None:
 
     monkeypatch.setattr(
         "backend.app.api.routes.owner_commands.build_live_plan",
-        lambda objective: WeakFitPlan,
+        lambda objective, **kwargs: WeakFitPlan,
     )
     created = client.post(
         f"/api/v1/organizations/{organization_id}/owner-commands",
@@ -109,7 +109,7 @@ def test_sense_uses_successful_similar_outcome_and_reflection_memory(client, mon
 
     monkeypatch.setattr(
         "backend.app.api.routes.owner_commands.build_live_plan",
-        lambda objective: LivePlan,
+        lambda objective, **kwargs: LivePlan,
     )
 
     first = client.post(
