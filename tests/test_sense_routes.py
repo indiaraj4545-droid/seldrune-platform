@@ -91,7 +91,7 @@ def test_sense_review_requires_owner_override(client, monkeypatch) -> None:
     assert executed.status_code == 200
 
 
-def test_sense_uses_successful_similar_outcome_memory(client, monkeypatch) -> None:
+def test_sense_uses_successful_similar_outcome_and_reflection_memory(client, monkeypatch) -> None:
     token, organization_id = register_owner(client)
     headers = {"Authorization": f"Bearer {token}"}
 
@@ -123,11 +123,17 @@ def test_sense_uses_successful_similar_outcome_memory(client, monkeypatch) -> No
         f"/api/v1/organizations/{organization_id}/owner-commands/{first_id}/approve",
         headers=headers,
     ).status_code == 200
-    assert client.post(
+    executed = client.post(
         f"/api/v1/organizations/{organization_id}/owner-commands/{first_id}/execute",
         headers=headers,
         json={},
-    ).status_code == 200
+    )
+    assert executed.status_code == 200
+    reflection = executed.json()["run"]["summary"]["reflection"]
+    assert reflection["version"] == "reflection-v1"
+    assert "orchestration_completed_successfully" in reflection["strengths"]
+    assert reflection["capability_performance"]["analysis"]["succeeded"] == 1
+    assert reflection["recommendations"]
 
     second = client.post(
         f"/api/v1/organizations/{organization_id}/owner-commands",
@@ -142,8 +148,17 @@ def test_sense_uses_successful_similar_outcome_memory(client, monkeypatch) -> No
         headers=headers,
     )
     assert sense.status_code == 200
-    memory = sense.json()["signals"]["outcome_memory"]
+    signals = sense.json()["signals"]
+    memory = signals["outcome_memory"]
     assert memory["sample_count"] >= 1
     assert memory["success_rate"] == 1.0
     assert memory["score_adjustment"] > 0
     assert memory["reason"] == "similar_history_positive"
+
+    reflection_memory = signals["reflection_memory"]
+    assert reflection_memory["sample_count"] >= 1
+    assert reflection_memory["capability_success_rate"] == 1.0
+    assert reflection_memory["score_adjustment"] > 0
+    assert reflection_memory["reason"] == "reflection_lessons_positive"
+    assert reflection_memory["lessons"]
+    assert signals["learning_adjustment"] > 0

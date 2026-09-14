@@ -19,5 +19,9 @@ def test_command_monitor_assets_are_served() -> None:
         assert "Seldrune Sense" in script.text
         assert "Outcome memory" in script.text
         assert "outcome_memory" in script.text
+        assert "Reflection memory" in script.text
+        assert "reflection_memory" in script.text
+        assert "Seldrune reflection" in script.text
+        assert "Learning adjustment" in script.text
         assert "/sense/override" in script.text
         assert "Approve Sense override" in script.text

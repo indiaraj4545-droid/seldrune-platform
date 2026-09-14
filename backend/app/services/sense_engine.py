@@ -11,9 +11,10 @@ from backend.app.models.orchestration import OrchestrationRun, OrchestrationStep
 from backend.app.models.task import Task
 from backend.app.services.audit import record_audit
 from backend.app.services.outcome_memory import recall_outcome_signal
+from backend.app.services.reflection_engine import recall_reflection_signal
 
 
-SENSE_VERSION = "sense-v2-memory"
+SENSE_VERSION = "sense-v3-reflection"
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,7 @@ def assess_orchestration(
     research = (run.summary or {}).get("research_preflight", {})
     previous = (run.summary or {}).get("autonomous_execution", {})
     memory_signal = recall_outcome_signal(session, run=run)
+    reflection_signal = recall_reflection_signal(session, run=run)
 
     total_steps = len(steps)
     assigned_steps = sum(step.assigned_agent_id is not None for step in steps)
@@ -98,11 +100,17 @@ def assess_orchestration(
         score -= 15
         reasons.append("prior_execution_failure")
 
-    memory_adjustment = int(memory_signal.get("score_adjustment") or 0)
-    score += memory_adjustment
+    outcome_adjustment = int(memory_signal.get("score_adjustment") or 0)
+    reflection_adjustment = int(reflection_signal.get("score_adjustment") or 0)
+    learning_adjustment = max(-12, min(12, outcome_adjustment + reflection_adjustment))
+    score += learning_adjustment
+
     memory_reason = str(memory_signal.get("reason") or "no_similar_history")
     if memory_reason != "no_similar_history":
         reasons.append(memory_reason)
+    reflection_reason = str(reflection_signal.get("reason") or "no_reflection_history")
+    if reflection_reason != "no_reflection_history":
+        reasons.append(reflection_reason)
 
     score = max(0, min(100, score))
     memory_sample_count = int(memory_signal.get("sample_count") or 0)
@@ -112,6 +120,7 @@ def assess_orchestration(
         and isinstance(memory_success_rate, (int, float))
         and memory_success_rate <= 0.3
     )
+    reflection_review = bool(reflection_signal.get("review_recommended"))
     requires_review = (
         "weak_agent_fit" in reasons
         or planner_mode == "unknown"
@@ -119,6 +128,7 @@ def assess_orchestration(
         or bool(failed_tasks)
         or bool(previous_failed)
         or negative_history
+        or reflection_review
     )
     if blockers:
         decision = "HOLD"
@@ -146,6 +156,8 @@ def assess_orchestration(
             "failed_tasks": failed_tasks,
             "previous_failed_steps": previous_failed,
             "outcome_memory": memory_signal,
+            "reflection_memory": reflection_signal,
+            "learning_adjustment": learning_adjustment,
         },
         recommended_action=recommended_action,
     )
