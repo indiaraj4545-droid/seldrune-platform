@@ -521,6 +521,10 @@ def test_approval_reserves_and_execution_reconciles_project_budget(client) -> No
         json={},
     )
     assert executed.status_code == 200
+    execution = executed.json()["execution"]
+    assert execution["budget_reservation_usd"] == reservation["amount_usd"]
+    assert execution["halted_reason"] != "budget_reservation_exceeded"
+    assert execution["recorded_cost_usd"] <= reservation["amount_usd"]
     completed = client.get(f"{base}/projects", headers=headers).json()[0]
     reconciled = completed["metadata_json"]["delivery_budget_reconciliation"]
     assert reconciled["command_id"] == command["id"]
