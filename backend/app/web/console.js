@@ -243,10 +243,29 @@ function renderAgentPerformance(performance) {
   });
 }
 
+function renderRuntimeStatus(status) {
+  const badge = $('#runtime-status');
+  const database = status.checks?.database?.status || 'unknown';
+  const provider = status.checks?.model_provider || {};
+  badge.className = `runtime-status ${status.ready ? 'runtime-ready' : 'runtime-degraded'}`;
+  badge.querySelector('strong').textContent =
+    status.ready ? 'Runtime ready' : 'Runtime degraded';
+  $('#runtime-version').textContent = [
+    `v${status.version}`,
+    status.environment,
+    `DB ${database}`,
+    provider.live_ai ? `Live AI · ${provider.model}` : `${provider.provider} · ${provider.status}`,
+  ].join(' · ');
+}
+
 async function load() {
   if (!state.org) return;
   try {
-    const dashboard = await api('/owner-dashboard');
+    const [dashboard, runtimeStatus] = await Promise.all([
+      api('/owner-dashboard'),
+      request('/status'),
+    ]);
+    renderRuntimeStatus(runtimeStatus);
     $('#total').textContent = dashboard.command_counts.total;
     $('#pending').textContent = dashboard.command_counts.awaiting_approval;
     $('#progress').textContent =
@@ -272,6 +291,10 @@ async function load() {
     renderAgentPerformance(dashboard.agent_performance);
     renderCommands(dashboard.recent_commands);
   } catch (error) {
+    const badge = $('#runtime-status');
+    badge.className = 'runtime-status runtime-degraded';
+    badge.querySelector('strong').textContent = 'Runtime check failed';
+    $('#runtime-version').textContent = error.message;
     toast(error.message);
   }
 }
