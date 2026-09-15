@@ -14,6 +14,8 @@ def test_owner_console_is_served() -> None:
         assert "ORGANIZATION TREASURY" in response.text
         assert "treasury-allocated" in response.text
         assert "treasury-available" in response.text
+        assert "AGENT PERFORMANCE OBSERVATORY" in response.text
+        assert "agent-performance-list" in response.text
 
 
 def test_owner_console_assets_are_served() -> None:
@@ -37,3 +39,6 @@ def test_owner_console_assets_are_served() -> None:
         assert "treasury-utilization" in script.text
         assert "allocated_budget_usd" in script.text
         assert "reserved_budget_usd" in script.text
+        assert "renderAgentPerformance" in script.text
+        assert "Cost / success" in script.text
+        assert "Avg latency" in script.text

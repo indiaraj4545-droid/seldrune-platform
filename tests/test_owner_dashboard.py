@@ -24,6 +24,11 @@ def test_owner_dashboard_and_decision_brief(client) -> None:
     assert body["execution"]["total_steps"] == 3
     assert body["execution"]["matched_steps"] == 3
     assert body["usage"]["total_tokens"] == 0
+    performance = body["agent_performance"]
+    assert performance["agent_count"] == 5
+    assert performance["active_agent_count"] == 5
+    assert len(performance["ranked_agents"]) == 5
+    assert all(item["success_rate"] is None for item in performance["ranked_agents"])
     assert body["treasury"] == {
         "project_count": 0,
         "metered_project_count": 0,
@@ -105,3 +110,38 @@ def test_owner_dashboard_aggregates_project_treasury(client) -> None:
     assert treasury["available_budget_usd"] == 8 - reserved
     assert treasury["utilization"] == round((2 + reserved) / 10, 4)
     assert treasury["overcommitted"] is False
+
+
+def test_agent_performance_observatory_uses_execution_evidence(client) -> None:
+    token, organization_id = register_owner(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    base = f"/api/v1/organizations/{organization_id}"
+    command = client.post(
+        f"{base}/owner-commands",
+        headers=headers,
+        json={"objective": "Research, analyze, and design a verified automation offer"},
+    ).json()
+    approved = client.post(
+        f"{base}/owner-commands/{command['id']}/approve",
+        headers=headers,
+    )
+    assert approved.status_code == 200
+    executed = client.post(
+        f"{base}/owner-commands/{command['id']}/execute",
+        headers=headers,
+        json={},
+    )
+    assert executed.status_code == 200
+
+    dashboard = client.get(f"{base}/owner-dashboard", headers=headers)
+    assert dashboard.status_code == 200
+    performance = dashboard.json()["agent_performance"]
+    ranked = performance["ranked_agents"]
+    assert performance["agent_count"] == 5
+    assert sum(item["succeeded_tasks"] for item in ranked) == len(command["steps"])
+    evidenced = [item for item in ranked if item["completed_tasks"] > 0]
+    assert evidenced
+    assert all(item["success_rate"] == 1 for item in evidenced)
+    assert all(item["failed_tasks"] == 0 for item in evidenced)
+    assert all(item["total_tokens"] > 0 for item in evidenced)
+    assert all(item["average_latency_ms"] is not None for item in evidenced)
