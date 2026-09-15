@@ -7,8 +7,10 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from backend.app.core.config import settings
 from backend.app.core.tasking import TaskStatus
 from backend.app.models.agent import Agent
+from backend.app.models.model_invocation import ModelInvocation
 from backend.app.models.orchestration import OrchestrationRun, OrchestrationStep
 from backend.app.models.task import Task, TaskEvent
 from backend.app.services.agent_runtime import AgentRuntimeError, execute_agent_task
@@ -20,6 +22,52 @@ from backend.app.services.orchestrator import refresh_orchestration_status
 
 class AutonomousExecutionError(RuntimeError):
     pass
+
+
+def _runtime_budget_reservation(run: OrchestrationRun) -> float | None:
+    governor = (run.context or {}).get("portfolio_governor") or {}
+    reservation = governor.get("budget_reservation") or {}
+    if reservation.get("status") != "active":
+        return None
+    try:
+        return max(float(reservation.get("amount_usd", 0)), 0)
+    except (TypeError, ValueError):
+        return None
+
+
+def _recorded_run_cost(
+    session: Session,
+    *,
+    steps: list[OrchestrationStep],
+) -> float:
+    task_ids = [step.task_id for step in steps]
+    if not task_ids:
+        return 0.0
+    invocations = session.scalars(
+        select(ModelInvocation).where(ModelInvocation.task_id.in_(task_ids))
+    )
+    fallback = settings.project_estimated_cost_per_step_usd
+    return round(
+        sum(
+            float(invocation.estimated_cost_usd)
+            if invocation.estimated_cost_usd is not None
+            else fallback
+            for invocation in invocations
+            if invocation.status == "succeeded"
+        ),
+        8,
+    )
+
+
+def runtime_budget_allows_next_step(
+    *,
+    reservation_usd: float | None,
+    recorded_cost_usd: float,
+    estimated_next_step_usd: float,
+) -> bool:
+    if reservation_usd is None:
+        return True
+    return recorded_cost_usd + estimated_next_step_usd <= reservation_usd + 1e-8
 
 
 def _compact_output(
@@ -142,6 +190,9 @@ def execute_orchestration_autonomously(
         "blocked_steps": 0,
         "halted_reason": None,
         "last_sequence": None,
+        "budget_reservation_usd": _runtime_budget_reservation(run),
+        "recorded_cost_usd": 0.0,
+        "estimated_next_step_usd": settings.project_estimated_cost_per_step_usd,
     }
     upstream: list[dict[str, Any]] = []
 
@@ -219,6 +270,33 @@ def execute_orchestration_autonomously(
             report["last_sequence"] = step.sequence
             break
 
+        recorded_cost = _recorded_run_cost(session, steps=steps)
+        report["recorded_cost_usd"] = recorded_cost
+        if not runtime_budget_allows_next_step(
+            reservation_usd=report["budget_reservation_usd"],
+            recorded_cost_usd=recorded_cost,
+            estimated_next_step_usd=report["estimated_next_step_usd"],
+        ):
+            report["blocked_steps"] += 1
+            report["halted_reason"] = "budget_reservation_exceeded"
+            report["last_sequence"] = step.sequence
+            record_audit(
+                session,
+                organization_id=run.organization_id,
+                actor_user_id=actor_user_id,
+                action="orchestration.budget_circuit_breaker.triggered",
+                resource_type="orchestration",
+                resource_id=str(run.id),
+                details={
+                    "recorded_cost_usd": recorded_cost,
+                    "estimated_next_step_usd": report["estimated_next_step_usd"],
+                    "budget_reservation_usd": report["budget_reservation_usd"],
+                    "blocked_sequence": step.sequence,
+                },
+            )
+            session.commit()
+            break
+
         if upstream:
             task.input_data = {
                 **(task.input_data or {}),
@@ -280,6 +358,7 @@ def execute_orchestration_autonomously(
         if stop_on_failure:
             break
 
+    report["recorded_cost_usd"] = _recorded_run_cost(session, steps=steps)
     refresh_orchestration_status(session, run)
     run.summary = {
         **(run.summary or {}),
