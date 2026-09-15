@@ -16,6 +16,8 @@ def test_owner_console_is_served() -> None:
         assert "treasury-available" in response.text
         assert "AGENT PERFORMANCE OBSERVATORY" in response.text
         assert "agent-performance-list" in response.text
+        assert "runtime-status" in response.text
+        assert "runtime-version" in response.text
 
 
 def test_owner_console_assets_are_served() -> None:
@@ -42,3 +44,6 @@ def test_owner_console_assets_are_served() -> None:
         assert "renderAgentPerformance" in script.text
         assert "Cost / success" in script.text
         assert "Avg latency" in script.text
+        assert "renderRuntimeStatus" in script.text
+        assert "Runtime ready" in script.text
+        assert "Live AI" in script.text
