@@ -179,6 +179,70 @@ function renderCommands(items) {
   );
 }
 
+function renderAgentPerformance(performance) {
+  const root = $('#agent-performance-list');
+  const agents = performance?.ranked_agents || [];
+  $('#agent-active-count').textContent =
+    `${Number(performance?.active_agent_count || 0)} active`;
+  root.replaceChildren();
+  if (!agents.length) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = 'No agent evidence yet.';
+    root.append(empty);
+    return;
+  }
+  agents.forEach((agent, index) => {
+    const card = document.createElement('article');
+    card.className = 'agent-scorecard';
+
+    const identity = document.createElement('div');
+    identity.className = 'agent-identity';
+    const rank = document.createElement('span');
+    rank.className = 'agent-rank';
+    rank.textContent = `#${index + 1}`;
+    const name = document.createElement('strong');
+    name.textContent = agent.name;
+    const status = document.createElement('small');
+    status.textContent = agent.status;
+    identity.append(rank, name, status);
+
+    const success = document.createElement('div');
+    success.innerHTML = '<small>Success rate</small>';
+    const successValue = document.createElement('strong');
+    successValue.textContent = agent.success_rate === null
+      ? 'No evidence'
+      : `${(Number(agent.success_rate) * 100).toFixed(1)}%`;
+    success.append(successValue);
+
+    const tasks = document.createElement('div');
+    tasks.innerHTML = '<small>Verified tasks</small>';
+    const taskValue = document.createElement('strong');
+    taskValue.textContent =
+      `${agent.succeeded_tasks}/${agent.completed_tasks}`;
+    tasks.append(taskValue);
+
+    const cost = document.createElement('div');
+    cost.innerHTML = '<small>Cost / success</small>';
+    const costValue = document.createElement('strong');
+    costValue.textContent = agent.cost_per_success_usd === null
+      ? '—'
+      : `${Number(agent.cost_per_success_usd).toFixed(6)}`;
+    cost.append(costValue);
+
+    const latency = document.createElement('div');
+    latency.innerHTML = '<small>Avg latency</small>';
+    const latencyValue = document.createElement('strong');
+    latencyValue.textContent = agent.average_latency_ms === null
+      ? '—'
+      : formatDuration(agent.average_latency_ms);
+    latency.append(latencyValue);
+
+    card.append(identity, success, tasks, cost, latency);
+    root.append(card);
+  });
+}
+
 async function load() {
   if (!state.org) return;
   try {
@@ -205,6 +269,7 @@ async function load() {
     $('#treasury-bar').style.width =
       `${Math.min(Number(treasury.utilization || 0) * 100, 100)}%`;
     $('#treasury-alert').classList.toggle('hidden', !treasury.overcommitted);
+    renderAgentPerformance(dashboard.agent_performance);
     renderCommands(dashboard.recent_commands);
   } catch (error) {
     toast(error.message);
