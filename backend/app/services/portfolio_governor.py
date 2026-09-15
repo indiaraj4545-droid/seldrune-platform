@@ -155,7 +155,7 @@ def evaluate_project_execution(
         reasons.append("Project budget is exhausted or reserved")
     elif budget_configured and estimated_cost > (remaining_budget or 0):
         reasons.append(
-            f"Forecast cost USD {estimated_cost:.2f} exceeds unreserved budget "
+            f"Forecast cost USD {estimated_cost:.2f} exceeds remaining budget "
             f"USD {(remaining_budget or 0):.2f}"
         )
 
