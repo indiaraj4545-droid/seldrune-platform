@@ -34,6 +34,9 @@ class AutonomousExecutionReport(BaseModel):
     blocked_steps: int
     halted_reason: str | None
     last_sequence: int | None
+    budget_reservation_usd: float | None = None
+    recorded_cost_usd: float = 0.0
+    estimated_next_step_usd: float = 0.0
 
 
 class OrchestrationStepPublic(BaseModel):
