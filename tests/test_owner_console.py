@@ -18,6 +18,8 @@ def test_owner_console_is_served() -> None:
         assert "agent-performance-list" in response.text
         assert "runtime-status" in response.text
         assert "runtime-version" in response.text
+        assert "OPERATIONAL INCIDENT CENTER" in response.text
+        assert "incident-list" in response.text
 
 
 def test_owner_console_assets_are_served() -> None:
@@ -47,3 +49,6 @@ def test_owner_console_assets_are_served() -> None:
         assert "renderRuntimeStatus" in script.text
         assert "Runtime ready" in script.text
         assert "Live AI" in script.text
+        assert "renderOperationalIncidents" in script.text
+        assert "No active incidents" in script.text
+        assert "incident-critical" in script.text

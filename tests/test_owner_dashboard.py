@@ -24,6 +24,12 @@ def test_owner_dashboard_and_decision_brief(client) -> None:
     assert body["execution"]["total_steps"] == 3
     assert body["execution"]["matched_steps"] == 3
     assert body["usage"]["total_tokens"] == 0
+    assert body["operational_incidents"] == {
+        "total": 0,
+        "critical": 0,
+        "warning": 0,
+        "recent": [],
+    }
     performance = body["agent_performance"]
     assert performance["agent_count"] == 5
     assert performance["active_agent_count"] == 5
@@ -145,3 +151,40 @@ def test_agent_performance_observatory_uses_execution_evidence(client) -> None:
     assert all(item["failed_tasks"] == 0 for item in evidenced)
     assert all(item["total_tokens"] > 0 for item in evidenced)
     assert all(item["average_latency_ms"] is not None for item in evidenced)
+
+
+def test_operational_incident_center_reports_failed_tasks(client) -> None:
+    token, organization_id = register_owner(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    base = f"/api/v1/organizations/{organization_id}"
+    command = client.post(
+        f"{base}/owner-commands",
+        headers=headers,
+        json={"objective": "Research an operational failure scenario"},
+    ).json()
+    task_id = command["steps"][0]["task_id"]
+    running = client.post(
+        f"{base}/tasks/{task_id}/transition",
+        headers=headers,
+        json={"status": "running"},
+    )
+    assert running.status_code == 200
+    failed = client.post(
+        f"{base}/tasks/{task_id}/transition",
+        headers=headers,
+        json={"status": "failed", "error_message": "Simulated provider outage"},
+    )
+    assert failed.status_code == 200
+
+    dashboard = client.get(f"{base}/owner-dashboard", headers=headers)
+    assert dashboard.status_code == 200
+    incidents = dashboard.json()["operational_incidents"]
+    assert incidents["total"] == 1
+    assert incidents["critical"] == 1
+    assert incidents["warning"] == 0
+    incident = incidents["recent"][0]
+    assert incident["type"] == "task_failed"
+    assert incident["severity"] == "critical"
+    assert incident["resource_id"] == task_id
+    assert incident["detail"] == "Simulated provider outage"
+    assert incident["occurred_at"]
