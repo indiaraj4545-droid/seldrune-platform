@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from backend.app.core.config import settings
 from backend.app.models.organization_kernel import OrganizationProject
 from backend.app.models.orchestration import OrchestrationRun
 
@@ -46,6 +47,10 @@ def evaluate_project_execution(
     remaining_budget = (
         round(max(budget_limit - budget_spent, 0), 8) if budget_configured else None
     )
+    estimated_cost = round(
+        required_units * settings.project_estimated_cost_per_step_usd,
+        8,
+    )
     reasons: list[str] = []
     if required_units > remaining_units:
         reasons.append(
@@ -53,6 +58,11 @@ def evaluate_project_execution(
         )
     if budget_configured and budget_spent >= budget_limit:
         reasons.append("Project budget is exhausted")
+    elif budget_configured and estimated_cost > (remaining_budget or 0):
+        reasons.append(
+            f"Forecast cost USD {estimated_cost:.2f} exceeds remaining budget "
+            f"USD {(remaining_budget or 0):.2f}"
+        )
 
     decision = {
         "allowed": not reasons,
@@ -62,6 +72,9 @@ def evaluate_project_execution(
         "remaining_resource_units": remaining_units,
         "budget_limit_configured": budget_configured,
         "remaining_budget_usd": remaining_budget,
+        "estimated_cost_per_step_usd": settings.project_estimated_cost_per_step_usd,
+        "estimated_execution_cost_usd": estimated_cost,
+        "projected_budget_spent_usd": round(budget_spent + estimated_cost, 8),
         "reasons": reasons,
     }
     return decision
