@@ -49,6 +49,74 @@ def build_owner_dashboard(session: Session, organization_id: UUID) -> dict[str, 
         if task_ids
         else []
     )
+    organization_agents = list(
+        session.scalars(
+            select(Agent).where(Agent.organization_id == organization_id)
+        )
+    )
+    organization_tasks = list(
+        session.scalars(
+            select(Task).where(Task.organization_id == organization_id)
+        )
+    )
+    organization_invocations = list(
+        session.scalars(
+            select(ModelInvocation).where(
+                ModelInvocation.organization_id == organization_id
+            )
+        )
+    )
+    agent_performance: list[dict[str, Any]] = []
+    for agent in organization_agents:
+        agent_tasks = [
+            task for task in organization_tasks if task.assigned_agent_id == agent.id
+        ]
+        agent_invocations = [
+            item for item in organization_invocations if item.agent_id == agent.id
+        ]
+        succeeded = sum(task.status == "succeeded" for task in agent_tasks)
+        failed = sum(task.status == "failed" for task in agent_tasks)
+        completed = succeeded + failed + sum(
+            task.status == "cancelled" for task in agent_tasks
+        )
+        total_cost = round(
+            sum(item.estimated_cost_usd or 0 for item in agent_invocations),
+            8,
+        )
+        latencies = [
+            item.latency_ms for item in agent_invocations if item.latency_ms is not None
+        ]
+        agent_performance.append(
+            {
+                "agent_id": str(agent.id),
+                "name": agent.name,
+                "slug": agent.slug,
+                "status": agent.status,
+                "assigned_tasks": len(agent_tasks),
+                "completed_tasks": completed,
+                "succeeded_tasks": succeeded,
+                "failed_tasks": failed,
+                "success_rate": round(succeeded / completed, 4) if completed else None,
+                "model_invocations": len(agent_invocations),
+                "total_tokens": sum(item.total_tokens for item in agent_invocations),
+                "estimated_cost_usd": total_cost,
+                "cost_per_success_usd": (
+                    round(total_cost / succeeded, 8) if succeeded else None
+                ),
+                "average_latency_ms": (
+                    round(sum(latencies) / len(latencies)) if latencies else None
+                ),
+            }
+        )
+    agent_performance.sort(
+        key=lambda item: (
+            item["succeeded_tasks"],
+            item["success_rate"] or 0,
+            item["assigned_tasks"],
+        ),
+        reverse=True,
+    )
+
     projects = list(
         session.scalars(
             select(OrganizationProject).where(
@@ -89,6 +157,13 @@ def build_owner_dashboard(session: Session, organization_id: UUID) -> dict[str, 
             "matched_steps": sum(step.assigned_agent_id is not None for step in steps),
             "succeeded_steps": sum(task.status == "succeeded" for task in tasks),
             "failed_steps": sum(task.status == "failed" for task in tasks),
+        },
+        "agent_performance": {
+            "agent_count": len(organization_agents),
+            "active_agent_count": sum(
+                agent.status == "active" for agent in organization_agents
+            ),
+            "ranked_agents": agent_performance[:8],
         },
         "treasury": {
             "project_count": len(projects),
