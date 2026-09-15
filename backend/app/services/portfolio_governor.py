@@ -100,6 +100,36 @@ def release_project_budget(
     return released
 
 
+
+def revoke_project_budget_reservation(
+    *,
+    project: OrganizationProject,
+    command_id: str,
+    actor_user_id: str,
+    reason: str = "owner_revoked_approval",
+) -> dict[str, Any] | None:
+    reservations = _budget_reservations(project)
+    released: dict[str, Any] | None = None
+    updated: list[dict[str, Any]] = []
+    for item in reservations:
+        if item.get("command_id") == command_id and item.get("status") == "active":
+            item = {
+                **item,
+                "status": "released",
+                "released_at": datetime.now(UTC).isoformat(),
+                "released_by": actor_user_id,
+                "release_reason": reason,
+            }
+            released = item
+        updated.append(item)
+    if released is not None:
+        project.metadata_json = {
+            **(project.metadata_json or {}),
+            "budget_reservations": updated,
+        }
+    return released
+
+
 def evaluate_project_execution(
     *,
     project: OrganizationProject | None,

@@ -36,6 +36,7 @@ from backend.app.services.playbook_overlay import merge_playbook
 from backend.app.services.portfolio_governor import (
     evaluate_project_execution,
     reserve_project_budget,
+    revoke_project_budget_reservation,
 )
 from backend.app.services.project_delivery import sync_project_delivery_outcome
 
@@ -294,6 +295,79 @@ def approve_owner_command(
         resource_id=str(run.id),
         details={
             **({"budget_reservation": reservation} if reservation is not None else {}),
+        },
+    )
+    session.commit()
+    session.refresh(run)
+    return _to_public(session, run)
+
+
+@router.post(
+    "/{organization_id}/owner-commands/{run_id}/revoke",
+    response_model=OrchestrationRunPublic,
+)
+def revoke_owner_command_approval(
+    organization_id: UUID,
+    run_id: UUID,
+    membership: OwnerDep,
+    current_user: CurrentUserDep,
+    session: SessionDep,
+) -> OrchestrationRunPublic:
+    _require_owner(membership)
+    run = _get_run(session, organization_id, run_id)
+    if not _is_owner_command(run):
+        raise HTTPException(status_code=404, detail="Owner command not found")
+    command = (run.context or {}).get("owner_command") or {}
+    if command.get("approval_status") == "revoked":
+        return _to_public(session, run)
+    if command.get("approval_status") != "approved":
+        raise HTTPException(status_code=409, detail="Only an approved command can be revoked")
+    if int((run.summary or {}).get("succeeded_steps", 0)) > 0:
+        raise HTTPException(
+            status_code=409,
+            detail="Approval cannot be revoked after execution has started",
+        )
+
+    delivery_context = (run.context or {}).get("project_delivery") or {}
+    project_id = delivery_context.get("project_id")
+    project = (
+        session.get(OrganizationProject, UUID(project_id))
+        if project_id
+        else None
+    )
+    released = (
+        revoke_project_budget_reservation(
+            project=project,
+            command_id=str(run.id),
+            actor_user_id=str(current_user.id),
+        )
+        if project is not None
+        else None
+    )
+    governor = (run.context or {}).get("portfolio_governor") or {}
+    if released is not None:
+        governor = {**governor, "budget_reservation": released}
+    run.context = {
+        **(run.context or {}),
+        **({"portfolio_governor": governor} if governor else {}),
+        "owner_command": {
+            **command,
+            "approval_status": "revoked",
+            "approved_by": None,
+            "revoked_by": str(current_user.id),
+            **({"budget_reservation": released} if released is not None else {}),
+        },
+    }
+    flag_modified(run, "context")
+    record_audit(
+        session,
+        organization_id=organization_id,
+        actor_user_id=current_user.id,
+        action="owner_command.approval_revoked",
+        resource_type="orchestration",
+        resource_id=str(run.id),
+        details={
+            **({"budget_reservation": released} if released is not None else {}),
         },
     )
     session.commit()

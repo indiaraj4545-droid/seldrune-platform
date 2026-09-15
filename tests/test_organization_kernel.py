@@ -532,3 +532,75 @@ def test_approval_reserves_and_execution_reconciles_project_budget(client) -> No
     assert reconciled["actual_cost_usd"] == completed["metadata_json"][
         "delivery_recorded_cost_usd"
     ]
+
+
+def test_owner_revocation_releases_budget_and_blocks_execution(client) -> None:
+    token, organization_id = register_owner(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    base = f"/api/v1/organizations/{organization_id}"
+    client.post(f"{base}/organization-kernel/bootstrap", headers=headers)
+    department = client.get(f"{base}/departments", headers=headers).json()[0]
+    project = client.post(
+        f"{base}/projects",
+        headers=headers,
+        json={
+            "name": "Revocable delivery",
+            "slug": "revocable-delivery",
+            "department_id": department["id"],
+            "status": "planned",
+            "budget_limit_usd": 10,
+            "resource_limit_units": 20,
+        },
+    ).json()
+    command = client.post(
+        f"{base}/projects/{project['id']}/launch",
+        headers=headers,
+    ).json()
+    approved = client.post(
+        f"{base}/owner-commands/{command['id']}/approve",
+        headers=headers,
+    )
+    assert approved.status_code == 200
+    assert approved.json()["context"]["portfolio_governor"][
+        "budget_reservation"
+    ]["status"] == "active"
+
+    revoked = client.post(
+        f"{base}/owner-commands/{command['id']}/revoke",
+        headers=headers,
+    )
+    assert revoked.status_code == 200
+    revoked_context = revoked.json()["context"]
+    assert revoked_context["owner_command"]["approval_status"] == "revoked"
+    assert revoked_context["owner_command"]["approved_by"] is None
+    assert revoked_context["portfolio_governor"]["budget_reservation"][
+        "status"
+    ] == "released"
+
+    repeated = client.post(
+        f"{base}/owner-commands/{command['id']}/revoke",
+        headers=headers,
+    )
+    assert repeated.status_code == 200
+
+    denied = client.post(
+        f"{base}/owner-commands/{command['id']}/execute",
+        headers=headers,
+        json={},
+    )
+    assert denied.status_code == 409
+    assert "requires approval" in denied.json()["detail"]
+
+    released_project = client.get(f"{base}/projects", headers=headers).json()[0]
+    reservations = released_project["metadata_json"]["budget_reservations"]
+    assert len([item for item in reservations if item["status"] == "active"]) == 0
+    assert reservations[-1]["release_reason"] == "owner_revoked_approval"
+
+    reapproved = client.post(
+        f"{base}/owner-commands/{command['id']}/approve",
+        headers=headers,
+    )
+    assert reapproved.status_code == 200
+    refreshed_project = client.get(f"{base}/projects", headers=headers).json()[0]
+    refreshed_reservations = refreshed_project["metadata_json"]["budget_reservations"]
+    assert len([item for item in refreshed_reservations if item["status"] == "active"]) == 1
