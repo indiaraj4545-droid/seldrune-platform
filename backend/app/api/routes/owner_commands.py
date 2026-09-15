@@ -8,6 +8,7 @@ from backend.app.api.dependencies import CurrentUserDep, SessionDep, require_org
 from backend.app.api.routes.orchestrations import _get_run, _to_public
 from backend.app.core.rbac import Permission, Role
 from backend.app.models.membership import Membership
+from backend.app.models.organization_kernel import OrganizationProject
 from backend.app.models.orchestration import OrchestrationRun
 from backend.app.schemas.orchestration import (
     AutonomousExecutionRequest,
@@ -31,6 +32,7 @@ from backend.app.services.owner_dashboard import build_decision_brief, build_own
 from backend.app.services.playbook_engine import consolidate_playbooks
 from backend.app.services.playbook_guidance import build_playbook_guidance
 from backend.app.services.playbook_overlay import merge_playbook
+from backend.app.services.project_delivery import sync_project_delivery_outcome
 
 router = APIRouter(prefix="/organizations", tags=["owner-command-center"])
 OwnerDep = Annotated[Membership, Depends(require_org_permission(Permission.ORG_MANAGE))]
@@ -278,6 +280,14 @@ def execute_owner_command(
         raise HTTPException(status_code=404, detail="Owner command not found")
     if command.get("approval_status") != "approved":
         raise HTTPException(status_code=409, detail="Owner command requires approval")
+    delivery_project_id = ((run.context or {}).get("project_delivery") or {}).get(
+        "project_id"
+    )
+    delivery_project = (
+        session.get(OrganizationProject, UUID(delivery_project_id))
+        if delivery_project_id
+        else None
+    )
     prepare_orchestration_research(
         session,
         run=run,
@@ -292,4 +302,20 @@ def execute_owner_command(
         max_retries_per_step=payload.max_retries_per_step,
         max_upstream_text_chars=payload.max_upstream_text_chars,
     )
+    refresh_orchestration_status(session, run)
+    delivery_outcome = sync_project_delivery_outcome(
+        session,
+        run=run,
+        actor_user_id=current_user.id,
+        project_id=delivery_project_id,
+        project=delivery_project,
+    )
+    if delivery_outcome is not None:
+        run.summary = {
+            **(run.summary or {}),
+            "project_delivery_sync": delivery_outcome,
+        }
+    session.flush()
+    session.commit()
+    session.refresh(run)
     return AutonomousExecutionResponse(run=_to_public(session, run), execution=report)

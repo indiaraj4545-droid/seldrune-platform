@@ -142,3 +142,70 @@ def test_organization_kernel_rejects_same_department_delegation(client) -> None:
         },
     )
     assert response.status_code == 422
+
+
+
+def test_delivery_outcome_completes_project_and_goal(client) -> None:
+    token, organization_id = register_owner(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    base = f"/api/v1/organizations/{organization_id}"
+    client.post(f"{base}/organization-kernel/bootstrap", headers=headers)
+    department = client.get(f"{base}/departments", headers=headers).json()[0]
+    goal = client.post(
+        f"{base}/goals",
+        headers=headers,
+        json={
+            "title": "Verify a governed delivery lifecycle",
+            "department_id": department["id"],
+            "status": "planned",
+            "target_metric": "verified_deliveries",
+            "target_value": 1,
+        },
+    ).json()
+    project = client.post(
+        f"{base}/projects",
+        headers=headers,
+        json={
+            "name": "Lifecycle verification",
+            "slug": "lifecycle-verification",
+            "department_id": department["id"],
+            "goal_id": goal["id"],
+            "status": "planned",
+            "budget_limit_usd": 10,
+            "resource_limit_units": 20,
+        },
+    ).json()
+    command = client.post(
+        f"{base}/projects/{project['id']}/launch",
+        headers=headers,
+    ).json()
+    command_id = command["id"]
+    assert command["context"]["project_delivery"]["project_id"] == project["id"]
+    approved = client.post(
+        f"{base}/owner-commands/{command_id}/approve",
+        headers=headers,
+    )
+    assert approved.status_code == 200
+    assert approved.json()["context"]["project_delivery"]["project_id"] == project["id"]
+    executed = client.post(
+        f"{base}/owner-commands/{command_id}/execute",
+        headers=headers,
+        json={},
+    )
+    assert executed.status_code == 200
+    assert executed.json()["run"]["status"] == "succeeded"
+    assert executed.json()["run"]["summary"]["project_delivery_sync"]["verdict"] == "achieved"
+
+    completed = client.get(f"{base}/projects", headers=headers).json()[0]
+    assert completed["status"] == "completed"
+    assert completed["metadata_json"]["delivery_state"] == "verified_complete"
+    assert completed["metadata_json"]["delivery_outcome"]["verdict"] == "achieved"
+    assert completed["resource_used_units"] > 0
+
+    achieved_goal = client.get(f"{base}/goals", headers=headers).json()[0]
+    assert achieved_goal["status"] == "achieved"
+    assert achieved_goal["current_value"] == 1
+
+    snapshot = client.get(f"{base}/organization-kernel", headers=headers).json()
+    assert snapshot["counts"]["active_projects"] == 0
+    assert snapshot["counts"]["blocked_projects"] == 0
