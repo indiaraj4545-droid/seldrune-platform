@@ -166,6 +166,16 @@ def create_project_recovery(
     except CommandRecoveryError as exc:
         raise ProjectDeliveryError(str(exc)) from exc
 
+    recovery_step_count = len(
+        list(
+            session.scalars(
+                select(OrchestrationStep).where(
+                    OrchestrationStep.orchestration_run_id == recovery.id
+                )
+            )
+        )
+    )
+
     recovery.context = {
         **(recovery.context or {}),
         "project_delivery": {
@@ -178,12 +188,12 @@ def create_project_recovery(
             "resource_limit_units": project.resource_limit_units,
             "resource_used_units": project.resource_used_units,
             "cost_forecast": {
-                "step_count": len(planned.steps),
+                "step_count": recovery_step_count,
                 "estimated_cost_per_step_usd": (
                     settings.project_estimated_cost_per_step_usd
                 ),
                 "estimated_execution_cost_usd": round(
-                    len(planned.steps)
+                    recovery_step_count
                     * settings.project_estimated_cost_per_step_usd,
                     8,
                 ),
