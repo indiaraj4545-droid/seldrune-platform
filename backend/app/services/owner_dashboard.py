@@ -92,12 +92,10 @@ def build_owner_dashboard(session: Session, organization_id: UUID) -> dict[str, 
                     )
                 ),
                 "recorded_cost_usd": float(
-                    (
-                        ((run.summary or {}).get("autonomous_execution") or {}).get(
-                            "recorded_cost_usd"
-                        )
-                        or 0
+                    ((run.summary or {}).get("autonomous_execution") or {}).get(
+                        "recorded_cost_usd"
                     )
+                    or 0
                 ),
                 "budget_halted": (
                     ((run.summary or {}).get("autonomous_execution") or {}).get(
