@@ -408,3 +408,49 @@ def test_owner_can_reallocate_resources_and_unblock_approval(client) -> None:
     )
     assert invalid.status_code == 409
     assert "below recorded usage" in invalid.json()["detail"]
+
+
+
+def test_cost_forecast_blocks_underfunded_delivery_before_approval(client) -> None:
+    token, organization_id = register_owner(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    base = f"/api/v1/organizations/{organization_id}"
+    client.post(f"{base}/organization-kernel/bootstrap", headers=headers)
+    department = client.get(f"{base}/departments", headers=headers).json()[0]
+    project = client.post(
+        f"{base}/projects",
+        headers=headers,
+        json={
+            "name": "Underfunded forecast",
+            "slug": "underfunded-forecast",
+            "department_id": department["id"],
+            "status": "planned",
+            "budget_limit_usd": 0.01,
+            "resource_limit_units": 100,
+        },
+    ).json()
+    command = client.post(
+        f"{base}/projects/{project['id']}/launch",
+        headers=headers,
+    ).json()
+    forecast = command["context"]["project_delivery"]["cost_forecast"]
+    assert forecast["step_count"] == len(command["steps"])
+    assert forecast["estimated_cost_per_step_usd"] == 0.05
+    assert forecast["estimated_execution_cost_usd"] > project["budget_limit_usd"]
+
+    brief = client.get(
+        f"{base}/owner-commands/{command['id']}/brief",
+        headers=headers,
+    ).json()
+    assert brief["cost_forecast"] == forecast
+    assert brief["readiness"] == "blocked"
+    assert brief["recommended_next_action"] == "Adjust project resources before approval"
+    assert any("Forecast cost" in risk for risk in brief["risks"])
+
+    denied = client.post(
+        f"{base}/owner-commands/{command['id']}/approve",
+        headers=headers,
+    )
+    assert denied.status_code == 409
+    assert "Forecast cost" in denied.json()["detail"]
+    assert "exceeds remaining budget" in denied.json()["detail"]
