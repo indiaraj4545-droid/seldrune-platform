@@ -24,6 +24,11 @@ def test_owner_dashboard_and_decision_brief(client) -> None:
     assert body["execution"]["total_steps"] == 3
     assert body["execution"]["matched_steps"] == 3
     assert body["usage"]["total_tokens"] == 0
+    recent = body["recent_commands"][0]
+    assert recent["forecast_cost_usd"] == 0
+    assert recent["reservation"] is None
+    assert recent["recorded_cost_usd"] == 0
+    assert recent["budget_halted"] is False
 
     brief = client.get(
         f"/api/v1/organizations/{organization_id}/owner-commands/{command['id']}/brief",
@@ -36,5 +41,9 @@ def test_owner_dashboard_and_decision_brief(client) -> None:
     assert decision["risks"] == []
     assert decision["usage"]["execution_tokens"] == 0
     assert decision["usage"]["estimated_cost_usd"] == 0
+    assert decision["budget_control"]["forecast_cost_usd"] == 0
+    assert decision["budget_control"]["reservation"] is None
+    assert decision["budget_control"]["recorded_cost_usd"] == 0
+    assert decision["budget_control"]["halted"] is False
     assert all(step["output"] is None for step in decision["steps"])
     assert decision["recommended_next_action"] == "Review the plan and approve the command"
