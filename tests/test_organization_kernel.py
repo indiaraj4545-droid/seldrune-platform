@@ -454,3 +454,77 @@ def test_cost_forecast_blocks_underfunded_delivery_before_approval(client) -> No
     assert denied.status_code == 409
     assert "Forecast cost" in denied.json()["detail"]
     assert "exceeds remaining budget" in denied.json()["detail"]
+
+
+def test_approval_reserves_and_execution_reconciles_project_budget(client) -> None:
+    token, organization_id = register_owner(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    base = f"/api/v1/organizations/{organization_id}"
+    client.post(f"{base}/organization-kernel/bootstrap", headers=headers)
+    department = client.get(f"{base}/departments", headers=headers).json()[0]
+    project = client.post(
+        f"{base}/projects",
+        headers=headers,
+        json={
+            "name": "Reserved delivery budget",
+            "slug": "reserved-delivery-budget",
+            "department_id": department["id"],
+            "status": "planned",
+            "budget_limit_usd": 10,
+            "resource_limit_units": 20,
+        },
+    ).json()
+    command = client.post(
+        f"{base}/projects/{project['id']}/launch",
+        headers=headers,
+    ).json()
+
+    approved = client.post(
+        f"{base}/owner-commands/{command['id']}/approve",
+        headers=headers,
+    )
+    assert approved.status_code == 200
+    reservation = approved.json()["context"]["portfolio_governor"][
+        "budget_reservation"
+    ]
+    assert reservation["command_id"] == command["id"]
+    assert reservation["amount_usd"] > 0
+    assert reservation["status"] == "active"
+
+    repeated = client.post(
+        f"{base}/owner-commands/{command['id']}/approve",
+        headers=headers,
+    )
+    assert repeated.status_code == 200
+    before_execution = client.get(f"{base}/projects", headers=headers).json()[0]
+    active = [
+        item
+        for item in before_execution["metadata_json"]["budget_reservations"]
+        if item["status"] == "active"
+    ]
+    assert len(active) == 1
+
+    protected = client.post(
+        f"{base}/projects/{project['id']}/resources",
+        headers=headers,
+        json={
+            "budget_limit_usd": reservation["amount_usd"] / 2,
+            "reason": "Attempt to reduce below committed funds",
+        },
+    )
+    assert protected.status_code == 409
+    assert "active reservations" in protected.json()["detail"]
+
+    executed = client.post(
+        f"{base}/owner-commands/{command['id']}/execute",
+        headers=headers,
+        json={},
+    )
+    assert executed.status_code == 200
+    completed = client.get(f"{base}/projects", headers=headers).json()[0]
+    reconciled = completed["metadata_json"]["delivery_budget_reconciliation"]
+    assert reconciled["command_id"] == command["id"]
+    assert reconciled["status"] == "reconciled"
+    assert reconciled["actual_cost_usd"] == completed["metadata_json"][
+        "delivery_recorded_cost_usd"
+    ]
