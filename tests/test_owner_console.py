@@ -27,3 +27,7 @@ def test_owner_console_assets_are_served() -> None:
         assert "Promote to organization" in script.text
         assert "/promote" in script.text
         assert "Open Organization Board" in script.text
+        assert "Revoke approval" in script.text
+        assert "/revoke" in script.text
+        assert "Governed project budget" in script.text
+        assert "Circuit breaker stopped execution" in script.text
