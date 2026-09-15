@@ -18,12 +18,14 @@ def normalize_capability(value: str) -> str:
 def select_best_agent(
     agents: Iterable[Agent],
     required_capabilities: list[str],
+    performance_evidence: dict[UUID, dict[str, float | int]] | None = None,
 ) -> tuple[Agent | None, int]:
     required = {normalize_capability(item) for item in required_capabilities if item.strip()}
     if not required:
         return None, 0
 
-    candidates: list[tuple[int, str, Agent]] = []
+    evidence = performance_evidence or {}
+    candidates: list[tuple[int, int, float, int, int, str, Agent]] = []
     for agent in agents:
         if agent.status != AgentStatus.ACTIVE.value:
             continue
@@ -32,14 +34,77 @@ def select_best_agent(
         if matched == 0:
             continue
         score = round((matched / len(required)) * 100)
-        candidates.append((score, agent.slug, agent))
+        performance = evidence.get(agent.id, {})
+        completed = int(performance.get("completed_tasks", 0))
+        succeeded = int(performance.get("succeeded_tasks", 0))
+        assigned = int(performance.get("assigned_tasks", 0))
+        success_rate = succeeded / completed if completed else 0.0
+        candidates.append(
+            (
+                score,
+                int(completed > 0),
+                success_rate,
+                succeeded,
+                -assigned,
+                agent.slug,
+                agent,
+            )
+        )
 
     if not candidates:
         return None, 0
 
-    candidates.sort(key=lambda item: (-item[0], item[1]))
-    score, _, agent = candidates[0]
+    candidates.sort(
+        key=lambda item: (
+            -item[0],
+            -item[1],
+            -item[2],
+            -item[3],
+            -item[4],
+            item[5],
+        )
+    )
+    score, _, _, _, _, _, agent = candidates[0]
     return agent, score
+
+
+def build_agent_performance_evidence(
+    session: Session,
+    *,
+    organization_id: UUID,
+    agents: list[Agent],
+) -> dict[UUID, dict[str, float | int]]:
+    agent_ids = [agent.id for agent in agents]
+    if not agent_ids:
+        return {}
+    tasks = list(
+        session.scalars(
+            select(Task).where(
+                Task.organization_id == organization_id,
+                Task.assigned_agent_id.in_(agent_ids),
+            )
+        )
+    )
+    evidence: dict[UUID, dict[str, float | int]] = {}
+    for agent in agents:
+        assigned = [task for task in tasks if task.assigned_agent_id == agent.id]
+        completed = [
+            task
+            for task in assigned
+            if task.status in {
+                TaskStatus.SUCCEEDED.value,
+                TaskStatus.FAILED.value,
+                TaskStatus.CANCELLED.value,
+            }
+        ]
+        succeeded = sum(task.status == TaskStatus.SUCCEEDED.value for task in completed)
+        evidence[agent.id] = {
+            "assigned_tasks": len(assigned),
+            "completed_tasks": len(completed),
+            "succeeded_tasks": succeeded,
+            "success_rate": round(succeeded / len(completed), 4) if completed else 0.0,
+        }
+    return evidence
 
 
 def create_orchestration_run(
@@ -59,6 +124,11 @@ def create_orchestration_run(
             )
         )
     )
+    performance_evidence = build_agent_performance_evidence(
+        session,
+        organization_id=organization_id,
+        agents=agents,
+    )
     run = OrchestrationRun(
         organization_id=organization_id,
         created_by_user_id=created_by_user_id,
@@ -71,7 +141,11 @@ def create_orchestration_run(
 
     matched_steps = 0
     for sequence, planned in enumerate(plan, start=1):
-        agent, score = select_best_agent(agents, planned.required_capabilities)
+        agent, score = select_best_agent(
+            agents,
+            planned.required_capabilities,
+            performance_evidence,
+        )
         task_status = TaskStatus.ASSIGNED if agent is not None else TaskStatus.QUEUED
         task = Task(
             organization_id=organization_id,
@@ -85,6 +159,13 @@ def create_orchestration_run(
                 "orchestration_run_id": str(run.id),
                 "sequence": sequence,
                 "context": context,
+                "agent_routing": {
+                    "mode": "evidence-weighted-v1",
+                    "capability_match_score": score,
+                    "performance_evidence": (
+                        performance_evidence.get(agent.id, {}) if agent is not None else {}
+                    ),
+                },
             },
         )
         session.add(task)
@@ -124,6 +205,13 @@ def create_orchestration_run(
         "step_count": len(plan),
         "matched_steps": matched_steps,
         "unmatched_steps": len(plan) - matched_steps,
+        "agent_routing": {
+            "mode": "evidence-weighted-v1",
+            "agents_with_completed_evidence": sum(
+                int(item.get("completed_tasks", 0)) > 0
+                for item in performance_evidence.values()
+            ),
+        },
     }
     session.flush()
     return run
