@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+from backend.app.core.config import settings
 from backend.app.main import app
 
 client = TestClient(app)
@@ -12,7 +13,7 @@ def test_status_endpoint() -> None:
     assert body["status"] == "ready"
     assert body["ready"] is True
     assert body["service"] == "seldrune-platform"
-    assert body["version"] == "0.40.0"
+    assert body["version"] == settings.app_version
     assert body["environment"] == "development"
     assert body["checks"]["database"]["status"] == "ok"
     assert body["checks"]["model_provider"] == {
