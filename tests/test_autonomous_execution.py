@@ -8,6 +8,7 @@ from backend.app import models  # noqa: F401
 from backend.app.db.base import Base
 from backend.app.db.session import get_db
 from backend.app.main import app
+from backend.app.services.autonomous_execution import runtime_budget_allows_next_step
 
 
 @pytest.fixture
@@ -206,3 +207,21 @@ def test_autonomous_execution_stops_at_unmatched_dependency(client: TestClient) 
         headers=headers,
     ).json()
     assert second_task["status"] == "queued"
+
+
+def test_runtime_budget_circuit_breaker_boundary() -> None:
+    assert runtime_budget_allows_next_step(
+        reservation_usd=None,
+        recorded_cost_usd=100,
+        estimated_next_step_usd=100,
+    )
+    assert runtime_budget_allows_next_step(
+        reservation_usd=0.15,
+        recorded_cost_usd=0.10,
+        estimated_next_step_usd=0.05,
+    )
+    assert not runtime_budget_allows_next_step(
+        reservation_usd=0.15,
+        recorded_cost_usd=0.11,
+        estimated_next_step_usd=0.05,
+    )

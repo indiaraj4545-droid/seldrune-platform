@@ -379,6 +379,13 @@ def execute_owner_command(
         )
         if not governor["allowed"]:
             raise HTTPException(status_code=409, detail="; ".join(governor["reasons"]))
+        approved_reservation = (
+            approved_governor.get("budget_reservation")
+            if isinstance(approved_governor, dict)
+            else None
+        )
+        if approved_reservation is not None:
+            governor = {**governor, "budget_reservation": approved_reservation}
         run.context = {
             **(run.context or {}),
             "portfolio_governor": governor,
