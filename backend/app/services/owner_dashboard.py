@@ -77,6 +77,34 @@ def build_owner_dashboard(session: Session, organization_id: UUID) -> dict[str, 
                 "objective": run.objective,
                 "status": run.status,
                 "approval_status": run.context["owner_command"].get("approval_status"),
+                "forecast_cost_usd": float(
+                    (
+                        ((run.context or {}).get("project_delivery") or {}).get(
+                            "cost_forecast"
+                        )
+                        or {}
+                    ).get("estimated_execution_cost_usd")
+                    or 0
+                ),
+                "reservation": (
+                    ((run.context or {}).get("portfolio_governor") or {}).get(
+                        "budget_reservation"
+                    )
+                ),
+                "recorded_cost_usd": float(
+                    (
+                        ((run.summary or {}).get("autonomous_execution") or {}).get(
+                            "recorded_cost_usd"
+                        )
+                        or 0
+                    )
+                ),
+                "budget_halted": (
+                    ((run.summary or {}).get("autonomous_execution") or {}).get(
+                        "halted_reason"
+                    )
+                    == "budget_reservation_exceeded"
+                ),
                 "created_at": run.created_at,
             }
             for run in commands[:10]
@@ -183,6 +211,20 @@ def build_decision_brief(session: Session, run: OrchestrationRun) -> dict[str, A
             f"Forecast cost USD {forecast_cost:.2f} exceeds remaining project budget"
         )
 
+    governor = (run.context or {}).get("portfolio_governor") or {}
+    reservation = governor.get("budget_reservation")
+    runtime_budget = (run.summary or {}).get("autonomous_execution") or {}
+    budget_control = {
+        "forecast_cost_usd": forecast_cost,
+        "reservation": reservation,
+        "recorded_cost_usd": float(runtime_budget.get("recorded_cost_usd") or total_cost),
+        "estimated_next_step_usd": float(
+            runtime_budget.get("estimated_next_step_usd") or 0
+        ),
+        "halted": runtime_budget.get("halted_reason")
+        == "budget_reservation_exceeded",
+    }
+
     approval = run.context["owner_command"].get("approval_status")
     if approval != "approved" and any(risk.startswith("Forecast cost") for risk in risks):
         next_action = "Adjust project resources before approval"
@@ -206,6 +248,7 @@ def build_decision_brief(session: Session, run: OrchestrationRun) -> dict[str, A
         "outcome": outcome,
         "planner": planner,
         "cost_forecast": cost_forecast or None,
+        "budget_control": budget_control,
         "readiness": "blocked" if risks else "ready",
         "progress": {
             "completed": sum(item["status"] == "succeeded" for item in details),
