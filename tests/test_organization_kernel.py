@@ -187,6 +187,7 @@ def test_delivery_outcome_completes_project_and_goal(client) -> None:
     )
     assert approved.status_code == 200
     assert approved.json()["context"]["project_delivery"]["project_id"] == project["id"]
+    assert "portfolio_governor" in approved.json()["context"], approved.json()["context"]
     executed = client.post(
         f"{base}/owner-commands/{command_id}/execute",
         headers=headers,
@@ -275,3 +276,61 @@ def test_blocked_project_creates_idempotent_governed_recovery(client) -> None:
     assert updated["metadata_json"]["delivery_state"] == (
         "recovery_awaiting_owner_approval"
     )
+
+
+
+def test_portfolio_governor_blocks_exhausted_project_resources(client) -> None:
+    token, organization_id = register_owner(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    base = f"/api/v1/organizations/{organization_id}"
+    client.post(f"{base}/organization-kernel/bootstrap", headers=headers)
+    department = client.get(f"{base}/departments", headers=headers).json()[0]
+
+    cases = (
+        {
+            "name": "No delivery capacity",
+            "slug": "no-delivery-capacity",
+            "budget_limit_usd": 10,
+            "budget_spent_usd": 0,
+            "resource_limit_units": 0,
+            "expected": "capacity units",
+        },
+        {
+            "name": "Exhausted delivery budget",
+            "slug": "exhausted-delivery-budget",
+            "budget_limit_usd": 10,
+            "budget_spent_usd": 10,
+            "resource_limit_units": 20,
+            "expected": "budget is exhausted",
+        },
+    )
+    for case in cases:
+        project = client.post(
+            f"{base}/projects",
+            headers=headers,
+            json={
+                "name": case["name"],
+                "slug": case["slug"],
+                "department_id": department["id"],
+                "status": "planned",
+                "budget_limit_usd": case["budget_limit_usd"],
+                "budget_spent_usd": case["budget_spent_usd"],
+                "resource_limit_units": case["resource_limit_units"],
+            },
+        ).json()
+        command = client.post(
+            f"{base}/projects/{project['id']}/launch",
+            headers=headers,
+        )
+        assert command.status_code == 201
+        command_id = command.json()["id"]
+        blocked = client.post(
+            f"{base}/owner-commands/{command_id}/approve",
+            headers=headers,
+        )
+        assert blocked.status_code == 409, blocked.json()
+        assert case["expected"] in blocked.json()["detail"]
+
+    projects = client.get(f"{base}/projects", headers=headers).json()
+    assert all(project["status"] == "active" for project in projects)
+    assert all(project["resource_used_units"] == 0 for project in projects)

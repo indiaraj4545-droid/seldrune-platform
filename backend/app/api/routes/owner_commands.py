@@ -3,6 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.orm.attributes import flag_modified
 
 from backend.app.api.dependencies import CurrentUserDep, SessionDep, require_org_permission
 from backend.app.api.routes.orchestrations import _get_run, _to_public
@@ -32,6 +33,9 @@ from backend.app.services.owner_dashboard import build_decision_brief, build_own
 from backend.app.services.playbook_engine import consolidate_playbooks
 from backend.app.services.playbook_guidance import build_playbook_guidance
 from backend.app.services.playbook_overlay import merge_playbook
+from backend.app.services.portfolio_governor import (
+    evaluate_project_execution,
+)
 from backend.app.services.project_delivery import sync_project_delivery_outcome
 
 router = APIRouter(prefix="/organizations", tags=["owner-command-center"])
@@ -239,14 +243,35 @@ def approve_owner_command(
     run = _get_run(session, organization_id, run_id)
     if not _is_owner_command(run):
         raise HTTPException(status_code=404, detail="Owner command not found")
+    delivery_context = (run.context or {}).get("project_delivery") or {}
+    delivery_project_id = delivery_context.get("project_id")
+    delivery_project = (
+        session.get(OrganizationProject, UUID(delivery_project_id))
+        if delivery_project_id
+        else None
+    )
+    governor = (
+        evaluate_project_execution(
+            project=delivery_project,
+            run=run,
+            delivery_context=delivery_context,
+        )
+        if delivery_project_id
+        else None
+    )
+    if governor is not None and not governor["allowed"]:
+        raise HTTPException(status_code=409, detail="; ".join(governor["reasons"]))
     run.context = {
         **run.context,
+        **({"portfolio_governor": governor} if governor is not None else {}),
         "owner_command": {
             **run.context["owner_command"],
             "approval_status": "approved",
             "approved_by": str(current_user.id),
+            **({"portfolio_governor": governor} if governor is not None else {}),
         },
     }
+    flag_modified(run, "context")
     record_audit(
         session,
         organization_id=organization_id,
@@ -280,14 +305,76 @@ def execute_owner_command(
         raise HTTPException(status_code=404, detail="Owner command not found")
     if command.get("approval_status") != "approved":
         raise HTTPException(status_code=409, detail="Owner command requires approval")
-    delivery_project_id = ((run.context or {}).get("project_delivery") or {}).get(
-        "project_id"
+    approved_governor = (run.context or {}).get("portfolio_governor") or command.get(
+        "portfolio_governor"
     )
+    if isinstance(approved_governor, dict) and not approved_governor.get("allowed", False):
+        raise HTTPException(
+            status_code=409,
+            detail="; ".join(approved_governor.get("reasons") or ["Execution denied"]),
+        )
+    if isinstance(approved_governor, dict):
+        run.summary = {
+            **(run.summary or {}),
+            "portfolio_governor": approved_governor,
+        }
+        flag_modified(run, "summary")
+        session.flush()
+    delivery_context = (run.context or {}).get("project_delivery") or {}
+    delivery_project_id = delivery_context.get("project_id")
     delivery_project = (
         session.get(OrganizationProject, UUID(delivery_project_id))
         if delivery_project_id
         else None
     )
+    if delivery_project is None:
+        candidates = list(
+            session.scalars(
+                select(OrganizationProject).where(
+                    OrganizationProject.organization_id == organization_id
+                )
+            )
+        )
+        delivery_project = next(
+            (
+                item
+                for item in candidates
+                if str(item.id) == delivery_project_id
+                or (item.metadata_json or {}).get("delivery_command_id") == str(run.id)
+                or (item.metadata_json or {}).get("recovery_command_id") == str(run.id)
+                or f'Deliver the organization project "{item.name}"' in run.objective
+            ),
+            None,
+        )
+    if delivery_project is not None:
+        delivery_project_id = str(delivery_project.id)
+        delivery_context = {
+            **delivery_context,
+            "project_id": delivery_project_id,
+            "budget_limit_usd": delivery_project.budget_limit_usd,
+            "budget_spent_usd": delivery_project.budget_spent_usd,
+            "resource_limit_units": delivery_project.resource_limit_units,
+            "resource_used_units": delivery_project.resource_used_units,
+        }
+    if delivery_project_id:
+        governor = evaluate_project_execution(
+            project=delivery_project,
+            run=run,
+            delivery_context=delivery_context,
+        )
+        if not governor["allowed"]:
+            raise HTTPException(status_code=409, detail="; ".join(governor["reasons"]))
+        run.context = {
+            **(run.context or {}),
+            "portfolio_governor": governor,
+        }
+        flag_modified(run, "context")
+        run.summary = {
+            **(run.summary or {}),
+            "portfolio_governor": governor,
+        }
+        flag_modified(run, "summary")
+        session.flush()
     prepare_orchestration_research(
         session,
         run=run,
