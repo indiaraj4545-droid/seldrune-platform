@@ -243,6 +243,43 @@ function renderAgentPerformance(performance) {
   });
 }
 
+function renderOperationalIncidents(data) {
+  const incidents = data?.recent || [];
+  $('#incident-critical').textContent =
+    `${Number(data?.critical || 0)} critical`;
+  $('#incident-warning').textContent =
+    `${Number(data?.warning || 0)} warnings`;
+  const root = $('#incident-list');
+  root.replaceChildren();
+  if (!incidents.length) {
+    const clear = document.createElement('div');
+    clear.className = 'incident-clear';
+    const title = document.createElement('strong');
+    title.textContent = 'No active incidents';
+    const detail = document.createElement('span');
+    detail.textContent = 'Seldrune has not detected failed work or blocked delivery.';
+    clear.append(title, detail);
+    root.append(clear);
+    return;
+  }
+  incidents.forEach(incident => {
+    const item = document.createElement('article');
+    item.className = `incident-item incident-${incident.severity}`;
+    const badge = document.createElement('span');
+    badge.textContent = incident.severity;
+    const content = document.createElement('div');
+    const title = document.createElement('strong');
+    title.textContent = incident.title;
+    const detail = document.createElement('p');
+    detail.textContent = incident.detail;
+    const time = document.createElement('small');
+    time.textContent = new Date(incident.occurred_at).toLocaleString();
+    content.append(title, detail, time);
+    item.append(badge, content);
+    root.append(item);
+  });
+}
+
 function renderRuntimeStatus(status) {
   const badge = $('#runtime-status');
   const database = status.checks?.database?.status || 'unknown';
@@ -288,6 +325,7 @@ async function load() {
     $('#treasury-bar').style.width =
       `${Math.min(Number(treasury.utilization || 0) * 100, 100)}%`;
     $('#treasury-alert').classList.toggle('hidden', !treasury.overcommitted);
+    renderOperationalIncidents(dashboard.operational_incidents);
     renderAgentPerformance(dashboard.agent_performance);
     renderCommands(dashboard.recent_commands);
   } catch (error) {
