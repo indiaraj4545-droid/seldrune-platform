@@ -21,6 +21,7 @@ from backend.app.services.outcome_verification import assess_command_outcome
 from backend.app.services.playbook_engine import consolidate_playbooks
 from backend.app.services.playbook_guidance import build_playbook_guidance
 from backend.app.services.playbook_overlay import merge_playbook
+from backend.app.services.portfolio_governor import release_project_budget
 
 
 class ProjectDeliveryError(RuntimeError):
@@ -301,6 +302,11 @@ def sync_project_delivery_outcome(
         8,
     )
     outcome = assessment.to_dict()
+    reservation = release_project_budget(
+        project=project,
+        command_id=str(run.id),
+        actual_cost_usd=recorded_cost,
+    )
     project.budget_spent_usd = round(project.budget_spent_usd + recorded_cost, 8)
     project.resource_used_units += successful_units
     project.metadata_json = {
@@ -310,6 +316,7 @@ def sync_project_delivery_outcome(
         "delivery_synced_command_id": str(run.id),
         "delivery_recorded_cost_usd": recorded_cost,
         "delivery_resource_units": successful_units,
+        **({"delivery_budget_reconciliation": reservation} if reservation else {}),
     }
 
     goal = session.get(OrganizationGoal, project.goal_id) if project.goal_id else None
@@ -342,6 +349,7 @@ def sync_project_delivery_outcome(
             "outcome": outcome,
             "recorded_cost_usd": recorded_cost,
             "resource_units": successful_units,
+            **({"budget_reconciliation": reservation} if reservation else {}),
         },
     )
     return outcome

@@ -35,6 +35,7 @@ from backend.app.services.playbook_guidance import build_playbook_guidance
 from backend.app.services.playbook_overlay import merge_playbook
 from backend.app.services.portfolio_governor import (
     evaluate_project_execution,
+    reserve_project_budget,
 )
 from backend.app.services.project_delivery import sync_project_delivery_outcome
 
@@ -261,6 +262,18 @@ def approve_owner_command(
     )
     if governor is not None and not governor["allowed"]:
         raise HTTPException(status_code=409, detail="; ".join(governor["reasons"]))
+    reservation = (
+        reserve_project_budget(
+            project=delivery_project,
+            run=run,
+            amount_usd=float(governor["estimated_execution_cost_usd"]),
+            actor_user_id=str(current_user.id),
+        )
+        if delivery_project is not None and governor is not None
+        else None
+    )
+    if governor is not None and reservation is not None:
+        governor = {**governor, "budget_reservation": reservation}
     run.context = {
         **run.context,
         **({"portfolio_governor": governor} if governor is not None else {}),
@@ -279,7 +292,9 @@ def approve_owner_command(
         action="owner_command.approved",
         resource_type="orchestration",
         resource_id=str(run.id),
-        details={},
+        details={
+            **({"budget_reservation": reservation} if reservation is not None else {}),
+        },
     )
     session.commit()
     session.refresh(run)

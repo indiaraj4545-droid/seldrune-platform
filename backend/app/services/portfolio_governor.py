@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from backend.app.core.config import settings
@@ -9,6 +10,94 @@ from backend.app.models.orchestration import OrchestrationRun
 
 class PortfolioGovernorError(RuntimeError):
     pass
+
+
+def _budget_reservations(project: OrganizationProject | None) -> list[dict[str, Any]]:
+    if project is None:
+        return []
+    reservations = (project.metadata_json or {}).get("budget_reservations") or []
+    return [item for item in reservations if isinstance(item, dict)]
+
+
+def reserved_project_budget(
+    project: OrganizationProject | None,
+    *,
+    exclude_command_id: str | None = None,
+) -> float:
+    return round(
+        sum(
+            float(item.get("amount_usd", 0))
+            for item in _budget_reservations(project)
+            if item.get("status") == "active"
+            and item.get("command_id") != exclude_command_id
+        ),
+        8,
+    )
+
+
+def reserve_project_budget(
+    *,
+    project: OrganizationProject,
+    run: OrchestrationRun,
+    amount_usd: float,
+    actor_user_id: str,
+) -> dict[str, Any]:
+    command_id = str(run.id)
+    reservations = _budget_reservations(project)
+    existing = next(
+        (
+            item
+            for item in reservations
+            if item.get("command_id") == command_id and item.get("status") == "active"
+        ),
+        None,
+    )
+    if existing is not None:
+        return existing
+
+    reservation = {
+        "command_id": command_id,
+        "amount_usd": round(max(amount_usd, 0), 8),
+        "status": "active",
+        "reserved_at": datetime.now(UTC).isoformat(),
+        "reserved_by": actor_user_id,
+    }
+    project.metadata_json = {
+        **(project.metadata_json or {}),
+        "budget_reservations": [*reservations, reservation],
+    }
+    return reservation
+
+
+def release_project_budget(
+    *,
+    project: OrganizationProject,
+    command_id: str,
+    actual_cost_usd: float,
+) -> dict[str, Any] | None:
+    reservations = _budget_reservations(project)
+    released: dict[str, Any] | None = None
+    updated: list[dict[str, Any]] = []
+    for item in reservations:
+        if item.get("command_id") == command_id and item.get("status") == "active":
+            item = {
+                **item,
+                "status": "reconciled",
+                "released_at": datetime.now(UTC).isoformat(),
+                "actual_cost_usd": round(max(actual_cost_usd, 0), 8),
+                "variance_usd": round(
+                    float(item.get("amount_usd", 0)) - max(actual_cost_usd, 0),
+                    8,
+                ),
+            }
+            released = item
+        updated.append(item)
+    if released is not None:
+        project.metadata_json = {
+            **(project.metadata_json or {}),
+            "budget_reservations": updated,
+        }
+    return released
 
 
 def evaluate_project_execution(
@@ -42,10 +131,16 @@ def evaluate_project_execution(
         if project is not None
         else float(delivery_context.get("budget_spent_usd", 0))
     )
+    reserved_budget = reserved_project_budget(
+        project,
+        exclude_command_id=str(run.id),
+    )
     remaining_units = max(resource_limit - resource_used, 0)
     budget_configured = budget_limit > 0
     remaining_budget = (
-        round(max(budget_limit - budget_spent, 0), 8) if budget_configured else None
+        round(max(budget_limit - budget_spent - reserved_budget, 0), 8)
+        if budget_configured
+        else None
     )
     estimated_cost = round(
         required_units * settings.project_estimated_cost_per_step_usd,
@@ -56,8 +151,8 @@ def evaluate_project_execution(
         reasons.append(
             f"Plan requires {required_units} capacity units but only {remaining_units} remain"
         )
-    if budget_configured and budget_spent >= budget_limit:
-        reasons.append("Project budget is exhausted")
+    if budget_configured and budget_spent + reserved_budget >= budget_limit:
+        reasons.append("Project budget is exhausted or reserved")
     elif budget_configured and estimated_cost > (remaining_budget or 0):
         reasons.append(
             f"Forecast cost USD {estimated_cost:.2f} exceeds remaining budget "
@@ -71,10 +166,14 @@ def evaluate_project_execution(
         "required_resource_units": required_units,
         "remaining_resource_units": remaining_units,
         "budget_limit_configured": budget_configured,
+        "budget_reserved_usd": reserved_budget,
         "remaining_budget_usd": remaining_budget,
         "estimated_cost_per_step_usd": settings.project_estimated_cost_per_step_usd,
         "estimated_execution_cost_usd": estimated_cost,
-        "projected_budget_spent_usd": round(budget_spent + estimated_cost, 8),
+        "projected_budget_spent_usd": round(
+            budget_spent + reserved_budget + estimated_cost,
+            8,
+        ),
         "reasons": reasons,
     }
     return decision

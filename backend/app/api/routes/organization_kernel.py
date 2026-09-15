@@ -34,6 +34,7 @@ from backend.app.schemas.organization_kernel import (
 )
 from backend.app.services.audit import record_audit
 from backend.app.services.founding_agents import ensure_founding_agents
+from backend.app.services.portfolio_governor import reserved_project_budget
 from backend.app.services.project_delivery import (
     ProjectDeliveryError,
     create_project_recovery,
@@ -432,8 +433,13 @@ def allocate_project_resources(
         if payload.resource_limit_units is not None
         else project.resource_limit_units
     )
-    if next_budget > 0 and next_budget < project.budget_spent_usd:
-        raise HTTPException(status_code=409, detail="Budget limit cannot be below recorded spend")
+    reserved_budget = reserved_project_budget(project)
+    committed_budget = round(project.budget_spent_usd + reserved_budget, 8)
+    if next_budget > 0 and next_budget < committed_budget:
+        raise HTTPException(
+            status_code=409,
+            detail="Budget limit cannot be below recorded spend and active reservations",
+        )
     if next_resources < project.resource_used_units:
         raise HTTPException(status_code=409, detail="Capacity limit cannot be below recorded usage")
 
