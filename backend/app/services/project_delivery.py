@@ -6,6 +6,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from backend.app.core.config import settings
 from backend.app.models.model_invocation import ModelInvocation
 from backend.app.models.organization_kernel import OrganizationGoal, OrganizationProject
 from backend.app.models.orchestration import OrchestrationRun, OrchestrationStep
@@ -85,6 +86,17 @@ def launch_project_delivery(
             "budget_spent_usd": project.budget_spent_usd,
             "resource_limit_units": project.resource_limit_units,
             "resource_used_units": project.resource_used_units,
+            "cost_forecast": {
+                "step_count": len(planned.steps),
+                "estimated_cost_per_step_usd": (
+                    settings.project_estimated_cost_per_step_usd
+                ),
+                "estimated_execution_cost_usd": round(
+                    len(planned.steps)
+                    * settings.project_estimated_cost_per_step_usd,
+                    8,
+                ),
+            },
         },
     }
     command = create_orchestration_run(
@@ -165,6 +177,17 @@ def create_project_recovery(
             "budget_spent_usd": project.budget_spent_usd,
             "resource_limit_units": project.resource_limit_units,
             "resource_used_units": project.resource_used_units,
+            "cost_forecast": {
+                "step_count": len(planned.steps),
+                "estimated_cost_per_step_usd": (
+                    settings.project_estimated_cost_per_step_usd
+                ),
+                "estimated_execution_cost_usd": round(
+                    len(planned.steps)
+                    * settings.project_estimated_cost_per_step_usd,
+                    8,
+                ),
+            },
             "recovery_of_command_id": str(source_run.id),
         },
     }
