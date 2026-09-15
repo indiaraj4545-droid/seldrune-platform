@@ -144,6 +144,27 @@ function button(label, action, id) {
   return `<button data-action="${action}" data-id="${id}" class="${kind}">${label}</button>`;
 }
 
+function commandActions(command) {
+  const brief = button('Decision brief', 'brief', command.id);
+  if (command.approval_status === 'approved') {
+    return brief
+      + button('Execute', 'execute', command.id)
+      + button('Revoke approval', 'revoke', command.id);
+  }
+  return brief + button('Approve', 'approve', command.id);
+}
+
+function budgetSummary(command) {
+  const reservation = command.reservation || {};
+  const forecast = Number(command.forecast_cost_usd || 0);
+  const recorded = Number(command.recorded_cost_usd || 0);
+  if (!forecast && !reservation.amount_usd && !recorded) return '';
+  const state = command.budget_halted
+    ? 'Circuit breaker stopped execution'
+    : `Reservation: ${reservation.status || 'not reserved'}`;
+  return `<div class="budget-strip"><span>Forecast <b>${forecast.toFixed(4)}</b></span><span>Reserved <b>${Number(reservation.amount_usd || 0).toFixed(4)}</b></span><span>Recorded <b>${recorded.toFixed(4)}</b></span><span class="${command.budget_halted ? 'budget-alert' : ''}">${state}</span></div>`;
+}
+
 function renderCommands(items) {
   const root = $('#command-list');
   if (!items.length) {
@@ -151,7 +172,7 @@ function renderCommands(items) {
     return;
   }
   root.innerHTML = items.map(command =>
-    `<article class="command-card"><div><h3></h3><div class="meta"><span class="pill">${command.status}</span><span class="pill ${command.approval_status === 'awaiting_approval' ? 'pending' : ''}">${command.approval_status.replace('_', ' ')}</span></div></div><div class="actions">${button('Decision brief', 'brief', command.id)}${command.approval_status === 'awaiting_approval' ? button('Approve', 'approve', command.id) : button('Execute', 'execute', command.id)}</div></article>`
+    `<article class="command-card"><div><h3></h3><div class="meta"><span class="pill">${command.status}</span><span class="pill ${command.approval_status === 'awaiting_approval' ? 'pending' : ''}">${command.approval_status.replaceAll('_', ' ')}</span></div>${budgetSummary(command)}</div><div class="actions">${commandActions(command)}</div></article>`
   ).join('');
   [...root.querySelectorAll('h3')].forEach(
     (element, index) => { element.textContent = items[index].objective; }
@@ -244,6 +265,25 @@ function renderBrief(data) {
     metric('Execution time', formatDuration(data.usage?.execution_duration_ms))
   );
   box.append(metrics);
+
+  const budget = data.budget_control || {};
+  if (budget.forecast_cost_usd || budget.reservation || budget.recorded_cost_usd) {
+    const reservation = budget.reservation || {};
+    const controls = document.createElement('div');
+    controls.className = `budget-panel ${budget.halted ? 'budget-panel-alert' : ''}`;
+    const title = document.createElement('strong');
+    title.textContent = budget.halted
+      ? 'Budget circuit breaker triggered'
+      : 'Governed project budget';
+    const detail = document.createElement('span');
+    detail.textContent = [
+      `Forecast ${Number(budget.forecast_cost_usd || 0).toFixed(4)}`,
+      `Reserved ${Number(reservation.amount_usd || 0).toFixed(4)} (${reservation.status || 'none'})`,
+      `Recorded ${Number(budget.recorded_cost_usd || 0).toFixed(4)}`,
+    ].join(' · ');
+    controls.append(title, detail);
+    box.append(controls);
+  }
 
   data.risks.forEach(risk => {
     const item = document.createElement('p');
@@ -428,6 +468,14 @@ $('#command-list').onclick = async event => {
         body: '{}',
       });
       toast('Execution completed');
+      load();
+    } else if (selected.dataset.action === 'revoke') {
+      selected.disabled = true;
+      selected.textContent = 'Revoking…';
+      await api(`/owner-commands/${selected.dataset.id}/revoke`, {
+        method: 'POST',
+      });
+      toast('Approval revoked and budget released');
       load();
     } else {
       const data = await api(`/owner-commands/${selected.dataset.id}/brief`);
