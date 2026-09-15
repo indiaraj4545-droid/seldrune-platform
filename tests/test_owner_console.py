@@ -11,6 +11,9 @@ def test_owner_console_is_served() -> None:
         assert "/console-assets/console.css" in response.text
         assert "Command monitor" in response.text
         assert "Organization board" in response.text
+        assert "ORGANIZATION TREASURY" in response.text
+        assert "treasury-allocated" in response.text
+        assert "treasury-available" in response.text
 
 
 def test_owner_console_assets_are_served() -> None:
@@ -31,3 +34,6 @@ def test_owner_console_assets_are_served() -> None:
         assert "/revoke" in script.text
         assert "Governed project budget" in script.text
         assert "Circuit breaker stopped execution" in script.text
+        assert "treasury-utilization" in script.text
+        assert "allocated_budget_usd" in script.text
+        assert "reserved_budget_usd" in script.text

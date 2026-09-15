@@ -188,7 +188,23 @@ async function load() {
     $('#progress').textContent =
       `${dashboard.execution.succeeded_steps}/${dashboard.execution.total_steps}`;
     $('#cost').textContent =
-      `$${dashboard.usage.estimated_cost_usd.toFixed(4)}`;
+      `${dashboard.usage.estimated_cost_usd.toFixed(4)}`;
+    const treasury = dashboard.treasury || {};
+    $('#treasury-projects').textContent =
+      `${Number(treasury.project_count || 0)} projects`;
+    $('#treasury-utilization').textContent =
+      `${(Number(treasury.utilization || 0) * 100).toFixed(1)}% utilized`;
+    $('#treasury-allocated').textContent =
+      `${Number(treasury.allocated_budget_usd || 0).toFixed(2)}`;
+    $('#treasury-spent').textContent =
+      `${Number(treasury.spent_budget_usd || 0).toFixed(2)}`;
+    $('#treasury-reserved').textContent =
+      `${Number(treasury.reserved_budget_usd || 0).toFixed(2)}`;
+    $('#treasury-available').textContent =
+      `${Number(treasury.available_budget_usd || 0).toFixed(2)}`;
+    $('#treasury-bar').style.width =
+      `${Math.min(Number(treasury.utilization || 0) * 100, 100)}%`;
+    $('#treasury-alert').classList.toggle('hidden', !treasury.overcommitted);
     renderCommands(dashboard.recent_commands);
   } catch (error) {
     toast(error.message);
