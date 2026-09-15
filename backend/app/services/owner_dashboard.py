@@ -6,9 +6,11 @@ from sqlalchemy.orm import Session
 
 from backend.app.models.agent import Agent
 from backend.app.models.model_invocation import ModelInvocation
+from backend.app.models.organization_kernel import OrganizationProject
 from backend.app.models.orchestration import OrchestrationRun, OrchestrationStep
 from backend.app.models.task import Task
 from backend.app.services.outcome_verification import assess_command_outcome
+from backend.app.services.portfolio_governor import reserved_project_budget
 
 
 def _commands(session: Session, organization_id: UUID) -> list[OrchestrationRun]:
@@ -47,6 +49,30 @@ def build_owner_dashboard(session: Session, organization_id: UUID) -> dict[str, 
         if task_ids
         else []
     )
+    projects = list(
+        session.scalars(
+            select(OrganizationProject).where(
+                OrganizationProject.organization_id == organization_id,
+                OrganizationProject.status != "cancelled",
+            )
+        )
+    )
+    metered_projects = [project for project in projects if project.budget_limit_usd > 0]
+    allocated_budget = round(
+        sum(project.budget_limit_usd for project in metered_projects),
+        8,
+    )
+    spent_budget = round(
+        sum(project.budget_spent_usd for project in metered_projects),
+        8,
+    )
+    reserved_budget = round(
+        sum(reserved_project_budget(project) for project in metered_projects),
+        8,
+    )
+    committed_budget = round(spent_budget + reserved_budget, 8)
+    available_budget = round(max(allocated_budget - committed_budget, 0), 8)
+
     approvals = [run.context["owner_command"].get("approval_status") for run in commands]
     status_counts: dict[str, int] = {}
     for run in commands:
@@ -63,6 +89,22 @@ def build_owner_dashboard(session: Session, organization_id: UUID) -> dict[str, 
             "matched_steps": sum(step.assigned_agent_id is not None for step in steps),
             "succeeded_steps": sum(task.status == "succeeded" for task in tasks),
             "failed_steps": sum(task.status == "failed" for task in tasks),
+        },
+        "treasury": {
+            "project_count": len(projects),
+            "metered_project_count": len(metered_projects),
+            "unmetered_project_count": len(projects) - len(metered_projects),
+            "allocated_budget_usd": allocated_budget,
+            "spent_budget_usd": spent_budget,
+            "reserved_budget_usd": reserved_budget,
+            "committed_budget_usd": committed_budget,
+            "available_budget_usd": available_budget,
+            "utilization": (
+                round(committed_budget / allocated_budget, 4)
+                if allocated_budget > 0
+                else 0
+            ),
+            "overcommitted": committed_budget > allocated_budget,
         },
         "usage": {
             "model_invocations": len(invocations),
