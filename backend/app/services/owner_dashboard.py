@@ -141,6 +141,62 @@ def build_owner_dashboard(session: Session, organization_id: UUID) -> dict[str, 
     committed_budget = round(spent_budget + reserved_budget, 8)
     available_budget = round(max(allocated_budget - committed_budget, 0), 8)
 
+    incidents: list[dict[str, Any]] = []
+    for task in organization_tasks:
+        if task.status == "failed":
+            incidents.append(
+                {
+                    "type": "task_failed",
+                    "severity": "critical",
+                    "title": task.title,
+                    "detail": task.error_message or "Agent task failed",
+                    "resource_id": str(task.id),
+                    "occurred_at": task.completed_at or task.updated_at,
+                }
+            )
+    for invocation in organization_invocations:
+        if invocation.status == "failed":
+            incidents.append(
+                {
+                    "type": "model_invocation_failed",
+                    "severity": "critical",
+                    "title": f"{invocation.provider} model invocation failed",
+                    "detail": invocation.error_message or "Model provider request failed",
+                    "resource_id": str(invocation.id),
+                    "occurred_at": invocation.completed_at or invocation.created_at,
+                }
+            )
+    for run in commands:
+        execution = (run.summary or {}).get("autonomous_execution") or {}
+        if execution.get("halted_reason") == "budget_reservation_exceeded":
+            incidents.append(
+                {
+                    "type": "budget_circuit_breaker",
+                    "severity": "warning",
+                    "title": "Budget circuit breaker stopped execution",
+                    "detail": run.objective,
+                    "resource_id": str(run.id),
+                    "occurred_at": run.updated_at,
+                }
+            )
+    for project in projects:
+        if project.status == "blocked":
+            incidents.append(
+                {
+                    "type": "project_blocked",
+                    "severity": "warning",
+                    "title": project.name,
+                    "detail": "Project delivery is blocked and requires owner review",
+                    "resource_id": str(project.id),
+                    "occurred_at": project.updated_at,
+                }
+            )
+    incidents.sort(key=lambda item: item["occurred_at"], reverse=True)
+    incident_counts = {
+        "critical": sum(item["severity"] == "critical" for item in incidents),
+        "warning": sum(item["severity"] == "warning" for item in incidents),
+    }
+
     approvals = [run.context["owner_command"].get("approval_status") for run in commands]
     status_counts: dict[str, int] = {}
     for run in commands:
@@ -157,6 +213,12 @@ def build_owner_dashboard(session: Session, organization_id: UUID) -> dict[str, 
             "matched_steps": sum(step.assigned_agent_id is not None for step in steps),
             "succeeded_steps": sum(task.status == "succeeded" for task in tasks),
             "failed_steps": sum(task.status == "failed" for task in tasks),
+        },
+        "operational_incidents": {
+            "total": len(incidents),
+            "critical": incident_counts["critical"],
+            "warning": incident_counts["warning"],
+            "recent": incidents[:20],
         },
         "agent_performance": {
             "agent_count": len(organization_agents),
