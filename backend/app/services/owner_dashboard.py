@@ -173,8 +173,20 @@ def build_decision_brief(session: Session, run: OrchestrationRun) -> dict[str, A
     if run.status == "succeeded" and not outcome["promotable"]:
         risks.extend(outcome["reasons"])
 
+    delivery = (run.context or {}).get("project_delivery") or {}
+    cost_forecast = delivery.get("cost_forecast") or {}
+    forecast_cost = float(cost_forecast.get("estimated_execution_cost_usd") or 0)
+    budget_limit = float(delivery.get("budget_limit_usd") or 0)
+    budget_spent = float(delivery.get("budget_spent_usd") or 0)
+    if budget_limit > 0 and forecast_cost > max(budget_limit - budget_spent, 0):
+        risks.append(
+            f"Forecast cost USD {forecast_cost:.2f} exceeds remaining project budget"
+        )
+
     approval = run.context["owner_command"].get("approval_status")
-    if approval != "approved":
+    if approval != "approved" and any(risk.startswith("Forecast cost") for risk in risks):
+        next_action = "Adjust project resources before approval"
+    elif approval != "approved":
         next_action = "Review the plan and approve the command"
     elif run.status in {"planned", "active"}:
         next_action = "Execute or resume the approved command"
@@ -193,6 +205,7 @@ def build_decision_brief(session: Session, run: OrchestrationRun) -> dict[str, A
         "recovery_command_id": run.context["owner_command"].get("recovery_command_id"),
         "outcome": outcome,
         "planner": planner,
+        "cost_forecast": cost_forecast or None,
         "readiness": "blocked" if risks else "ready",
         "progress": {
             "completed": sum(item["status"] == "succeeded" for item in details),
