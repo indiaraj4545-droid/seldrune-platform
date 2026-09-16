@@ -49,6 +49,18 @@ function showMessage(message,kind='message'){
   const box=text('div',message,kind);
   root.append(box);
 }
+function lifecycleLabel(state){
+  return({
+    unassigned:'No action created',
+    awaiting_approval:'Awaiting owner approval',
+    active:'Governed action active',
+    succeeded_unresolved:'Action succeeded · priority still present',
+    partial:'Action partially completed',
+    failed:'Action failed · follow-up available',
+    cancelled:'Action cancelled · follow-up available',
+    resolved:'Resolved by current evidence',
+  })[state]||state;
+}
 
 async function runPriorityAction(item,button){
   button.disabled=true;
@@ -83,6 +95,15 @@ function renderPriority(item){
   );
   root.append(heading,text('p',item.detail));
 
+  const lifecycle=item.lifecycle||{state:'unassigned',attempts:0};
+  root.append(
+    text(
+      'p',
+      `${lifecycleLabel(lifecycle.state)} · ${lifecycle.attempts||0} attempt(s)`,
+      `lifecycle lifecycle-${lifecycle.state}`,
+    ),
+  );
+
   const action=item.action||null;
   if(action){
     const controls=document.createElement('div');
@@ -93,17 +114,39 @@ function renderPriority(item){
       link.textContent=action.label||'Open';
       controls.append(link);
     }else if(action.kind==='owner_command'&&item.key){
-      const button=document.createElement('button');
-      button.type='button';
-      button.textContent=action.label||'Create governed command';
-      button.onclick=()=>runPriorityAction(item,button);
-      controls.append(button);
+      if(['awaiting_approval','active'].includes(lifecycle.state)){
+        const link=document.createElement('a');
+        link.href='/console';
+        link.textContent='Open current governed command';
+        controls.append(link);
+      }else{
+        const button=document.createElement('button');
+        button.type='button';
+        button.textContent=lifecycle.state==='unassigned'
+          ?(action.label||'Create governed command')
+          :'Create follow-up governed command';
+        button.onclick=()=>runPriorityAction(item,button);
+        controls.append(button);
+      }
     }
     if(controls.childElementCount)root.append(controls);
   }
   return root;
 }
 
+function renderResolved(item){
+  const root=document.createElement('div');
+  root.className='resolved-action';
+  root.append(
+    text('h3',item.title),
+    text(
+      'p',
+      `${lifecycleLabel(item.state)} · ${item.attempts} attempt(s) · `+
+      `last command ${item.latest_command_status}`,
+    ),
+  );
+  return root;
+}
 function renderIncident(item){
   const root=document.createElement('div');
   root.className='incident';
@@ -131,6 +174,7 @@ function render(data){
   $('#health-score').textContent=data.health.score;
   $('#health-posture').textContent=data.health.posture;
   const snapshot=data.operating_snapshot;
+  const actions=data.executive_actions||{};
   const metrics=clear('#metrics');
   [
     ['Open goals',snapshot.open_goals],
@@ -140,7 +184,7 @@ function render(data){
     ['Succeeded steps',snapshot.succeeded_steps],
     ['Failed steps',snapshot.failed_steps],
     ['Active agents',`${snapshot.active_agents}/${snapshot.total_agents}`],
-    ['Critical incidents',data.health.critical_incidents],
+    ['Tracked actions',actions.tracked_priorities||0],
   ].forEach(item=>metrics.append(metric(item[0],item[1])));
 
   const priorities=clear('#priorities');
@@ -150,6 +194,13 @@ function render(data){
     priorities.append(
       text('p','No immediate owner intervention is indicated by current evidence.','empty'),
     );
+  }
+
+  const resolved=clear('#resolved-actions');
+  if((data.resolved_actions||[]).length){
+    data.resolved_actions.forEach(item=>resolved.append(renderResolved(item)));
+  }else{
+    resolved.append(text('p','No resolved executive actions recorded yet.','empty'));
   }
 
   const incidents=clear('#incidents');
