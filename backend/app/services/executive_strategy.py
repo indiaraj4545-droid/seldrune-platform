@@ -72,8 +72,8 @@ def _rationale(mode: str) -> str:
             "verification rather than copied blindly."
         ),
         "adapt": (
-            "Both resolution-associated and unsuccessful patterns exist, so the next command should "
-            "combine useful evidence while avoiding known failure modes."
+            "Both resolution-associated and unsuccessful patterns exist, so the next command "
+            "should combine useful evidence while avoiding known failure modes."
         ),
         "explore": (
             "Comparable unsuccessful attempts exist without a resolution-associated pattern, so a "
