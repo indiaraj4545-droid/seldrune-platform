@@ -86,6 +86,23 @@ def _rationale(mode: str) -> str:
     }[mode]
 
 
+def _outcome_score(priority: dict[str, Any], mode: str) -> dict[str, Any]:
+    outcomes = priority.get("strategy_outcomes") or {}
+    modes = outcomes.get("modes") or {}
+    score = modes.get(mode) or {}
+    return {
+        "family": outcomes.get("family"),
+        "family_attempts": outcomes.get("total_attempts", 0),
+        "attempts": score.get("attempts", 0),
+        "resolution_associations": score.get("resolution_associations", 0),
+        "persisted_after_success": score.get("persisted_after_success", 0),
+        "unsuccessful_attempts": score.get("unsuccessful_attempts", 0),
+        "resolution_rate": score.get("resolution_rate", 0.0),
+        "evidence_strength": score.get("evidence_strength", "none"),
+        "causal_claim": False,
+    }
+
+
 def _strategy(priority: dict[str, Any]) -> dict[str, Any]:
     mode = _strategy_mode(priority)
     memory = priority.get("outcome_memory") or {}
@@ -93,7 +110,13 @@ def _strategy(priority: dict[str, Any]) -> dict[str, Any]:
     avoid = memory.get("avoid_patterns") or []
     preferred_id = preferred.get("command_id")
     avoid_ids = [item.get("command_id") for item in avoid[:3] if item.get("command_id")]
-    history_informed = bool(preferred_id or avoid_ids or mode == "recover")
+    outcome_score = _outcome_score(priority, mode)
+    history_informed = bool(
+        preferred_id
+        or avoid_ids
+        or mode == "recover"
+        or outcome_score["family_attempts"]
+    )
     return {
         "mode": mode,
         "rationale": _rationale(mode),
@@ -102,6 +125,7 @@ def _strategy(priority: dict[str, Any]) -> dict[str, Any]:
         "preferred_reference_command_id": preferred_id,
         "avoid_reference_command_ids": avoid_ids,
         "required_evidence": _required_evidence(mode),
+        "outcome_score": outcome_score,
         "owner_approval_required": (priority.get("action") or {}).get("kind") == "owner_command",
         "causal_claim": False,
     }
