@@ -51,6 +51,10 @@ router = APIRouter(prefix="/organizations", tags=["owner-command-center"])
 OwnerDep = Annotated[Membership, Depends(require_org_permission(Permission.ORG_MANAGE))]
 
 
+class GovernancePolicyRollback(BaseModel):
+    source_event_id: UUID
+
+
 class GovernancePolicyUpdate(BaseModel):
     max_steps_per_command: int = Field(ge=1, le=100)
     max_project_budget_usd: float = Field(ge=0, le=1_000_000)
@@ -97,6 +101,101 @@ def get_governance_policy(
     _require_owner(membership)
     policy = _get_governance_policy(session, organization_id)
     session.commit()
+    return _governance_policy_public(policy)
+
+
+@router.get(
+    "/{organization_id}/governance-policy/history",
+    response_model=dict[str, Any],
+)
+def get_governance_policy_history(
+    organization_id: UUID,
+    membership: OwnerDep,
+    session: SessionDep,
+    limit: int = Query(default=20, ge=1, le=100),
+) -> dict[str, Any]:
+    _require_owner(membership)
+    events = list(
+        session.scalars(
+            select(AuditLog)
+            .where(
+                AuditLog.organization_id == organization_id,
+                AuditLog.action.in_(
+                    ("governance.policy_updated", "governance.policy_rolled_back")
+                ),
+            )
+            .order_by(AuditLog.occurred_at.desc())
+            .limit(limit)
+        )
+    )
+    return {
+        "total_returned": len(events),
+        "revisions": [
+            {
+                "event_id": str(event.id),
+                "action": event.action,
+                "policy": (event.details or {}).get("current", {}),
+                "actor_user_id": (
+                    str(event.actor_user_id) if event.actor_user_id else None
+                ),
+                "occurred_at": event.occurred_at,
+                "source_event_id": (event.details or {}).get("source_event_id"),
+            }
+            for event in events
+        ],
+    }
+
+
+@router.post(
+    "/{organization_id}/governance-policy/rollback",
+    response_model=dict[str, Any],
+)
+def rollback_governance_policy(
+    organization_id: UUID,
+    payload: GovernancePolicyRollback,
+    membership: OwnerDep,
+    current_user: CurrentUserDep,
+    session: SessionDep,
+) -> dict[str, Any]:
+    _require_owner(membership)
+    source = session.get(AuditLog, payload.source_event_id)
+    if (
+        source is None
+        or source.organization_id != organization_id
+        or source.action
+        not in ("governance.policy_updated", "governance.policy_rolled_back")
+    ):
+        raise HTTPException(status_code=404, detail="Governance policy revision not found")
+    snapshot = (source.details or {}).get("current")
+    try:
+        target = GovernancePolicyUpdate.model_validate(snapshot)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Governance policy revision is invalid or incomplete",
+        ) from exc
+    policy = _get_governance_policy(session, organization_id)
+    previous = jsonable_encoder(_governance_policy_public(policy))
+    policy.max_steps_per_command = target.max_steps_per_command
+    policy.max_project_budget_usd = target.max_project_budget_usd
+    policy.allow_autonomous_execution = target.allow_autonomous_execution
+    session.flush()
+    current = jsonable_encoder(_governance_policy_public(policy))
+    record_audit(
+        session,
+        organization_id=organization_id,
+        actor_user_id=current_user.id,
+        action="governance.policy_rolled_back",
+        resource_type="governance_policy",
+        resource_id=str(organization_id),
+        details={
+            "source_event_id": str(source.id),
+            "previous": previous,
+            "current": current,
+        },
+    )
+    session.commit()
+    session.refresh(policy)
     return _governance_policy_public(policy)
 
 
