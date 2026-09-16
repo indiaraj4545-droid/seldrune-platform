@@ -15,6 +15,7 @@ from backend.app.core.rbac import Permission, Role
 from backend.app.models.membership import Membership
 from backend.app.models.orchestration import OrchestrationRun
 from backend.app.schemas.orchestration import OrchestrationCreate, OrchestrationRunPublic
+from backend.app.services.executive_action_lifecycle import reconcile_executive_actions
 from backend.app.services.executive_briefing import build_executive_brief
 
 router = APIRouter(prefix="/organizations", tags=["executive-brief"])
@@ -46,6 +47,22 @@ def _existing_priority_command(
     return None
 
 
+def _brief_with_lifecycle(
+    session: SessionDep,
+    organization_id: UUID,
+) -> dict[str, Any]:
+    brief = build_executive_brief(session, organization_id)
+    lifecycle = reconcile_executive_actions(
+        session,
+        organization_id,
+        brief["priorities"],
+    )
+    brief["priorities"] = lifecycle["priorities"]
+    brief["executive_actions"] = lifecycle["summary"]
+    brief["resolved_actions"] = lifecycle["resolved_recent"]
+    return brief
+
+
 @router.get("/{organization_id}/executive-brief", response_model=dict[str, Any])
 def get_executive_brief(
     organization_id: UUID,
@@ -53,7 +70,7 @@ def get_executive_brief(
     session: SessionDep,
 ) -> dict[str, Any]:
     _require_owner(membership)
-    return build_executive_brief(session, organization_id)
+    return _brief_with_lifecycle(session, organization_id)
 
 
 @router.post(
