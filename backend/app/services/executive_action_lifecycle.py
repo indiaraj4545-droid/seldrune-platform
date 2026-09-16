@@ -9,6 +9,9 @@ from sqlalchemy.orm import Session
 
 from backend.app.models.orchestration import OrchestrationRun
 
+_SEVERITIES = ("low", "medium", "high", "critical")
+_TERMINAL_STATUSES = {"succeeded", "partial", "failed", "cancelled"}
+
 
 def _priority_key(run: OrchestrationRun) -> str | None:
     value = ((run.context or {}).get("executive_priority") or {}).get("key")
@@ -47,6 +50,40 @@ def _run_public(run: OrchestrationRun, attempts: int) -> dict[str, Any]:
     }
 
 
+def _effective_severity(base: str, escalation_level: int) -> str:
+    try:
+        index = _SEVERITIES.index(base)
+    except ValueError:
+        index = 1
+    return _SEVERITIES[min(len(_SEVERITIES) - 1, index + escalation_level)]
+
+
+def _escalation(priority: dict[str, Any], attempts: list[OrchestrationRun]) -> dict[str, Any]:
+    completed = [run for run in attempts if run.status in _TERMINAL_STATUSES]
+    succeeded = sum(run.status == "succeeded" for run in completed)
+    unsuccessful = sum(run.status in {"partial", "failed", "cancelled"} for run in completed)
+    level = min(3, len(completed))
+    reason = None
+    if completed:
+        latest = completed[0]
+        if latest.status == "succeeded":
+            reason = "A completed action succeeded, but the source priority remains in evidence."
+        else:
+            reason = (
+                f"The latest completed action ended as {latest.status}, and the source priority "
+                "remains in evidence."
+            )
+    return {
+        "level": level,
+        "effective_severity": _effective_severity(priority.get("severity", "medium"), level),
+        "completed_attempts": len(completed),
+        "succeeded_attempts": succeeded,
+        "unsuccessful_attempts": unsuccessful,
+        "alternate_strategy_required": bool(completed),
+        "reason": reason,
+    }
+
+
 def reconcile_executive_actions(
     session: Session,
     organization_id: UUID,
@@ -67,6 +104,7 @@ def reconcile_executive_actions(
     current_keys = {item["key"] for item in priorities}
     enriched: list[dict[str, Any]] = []
     state_counts: dict[str, int] = defaultdict(int)
+    escalated = 0
     for priority in priorities:
         attempts = grouped.get(priority["key"], [])
         lifecycle = (
@@ -82,8 +120,17 @@ def reconcile_executive_actions(
                 "updated_at": None,
             }
         )
+        escalation = _escalation(priority, attempts)
+        if escalation["level"]:
+            escalated += 1
         state_counts[lifecycle["state"]] += 1
-        enriched.append({**priority, "lifecycle": lifecycle})
+        enriched.append(
+            {
+                **priority,
+                "lifecycle": lifecycle,
+                "escalation": escalation,
+            }
+        )
 
     resolved: list[dict[str, Any]] = []
     for key, attempts in grouped.items():
@@ -91,6 +138,7 @@ def reconcile_executive_actions(
             continue
         latest = attempts[0]
         priority = (latest.context or {}).get("executive_priority") or {}
+        completed = [run for run in attempts if run.status in _TERMINAL_STATUSES]
         resolved.append(
             {
                 "key": key,
@@ -102,6 +150,7 @@ def reconcile_executive_actions(
                 "latest_command_id": str(latest.id),
                 "latest_command_status": latest.status,
                 "attempts": len(attempts),
+                "completed_attempts": len(completed),
                 "last_action_at": latest.updated_at,
             }
         )
@@ -113,6 +162,7 @@ def reconcile_executive_actions(
             "tracked_priorities": len(grouped),
             "current_priorities": len(priorities),
             "resolved_priorities": len(resolved),
+            "escalated_priorities": escalated,
             "states": dict(state_counts),
         },
         "resolved_recent": resolved[:8],
