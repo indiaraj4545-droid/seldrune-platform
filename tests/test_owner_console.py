@@ -35,6 +35,8 @@ def test_owner_console_is_served() -> None:
         assert "policy-preview-button" in response.text
         assert "Preview impact" in response.text
         assert "policy-preview" in response.text
+        assert "Policy history" in response.text
+        assert "policy-history" in response.text
 
 
 def test_owner_console_assets_are_served() -> None:
@@ -82,3 +84,7 @@ def test_owner_console_assets_are_served() -> None:
         assert "previewGovernancePolicy" in script.text
         assert "/governance-policy/preview" in script.text
         assert "Impact detected" in script.text
+        assert "renderPolicyHistory" in script.text
+        assert "/governance-policy/history?limit=10" in script.text
+        assert "rollbackGovernancePolicy" in script.text
+        assert "/governance-policy/rollback" in script.text
