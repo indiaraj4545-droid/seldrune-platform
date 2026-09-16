@@ -61,6 +61,9 @@ function lifecycleLabel(state){
     resolved:'Resolved by current evidence',
   })[state]||state;
 }
+function memoryLabel(confidence){
+  return({none:'No comparable outcome evidence',low:'Limited outcome evidence',medium:'Usable outcome pattern',high:'Repeated outcome pattern'})[confidence]||confidence;
+}
 
 async function runPriorityAction(item,button){
   button.disabled=true;
@@ -117,6 +120,20 @@ function renderPriority(item){
     );
   }
 
+  const memory=item.outcome_memory||{};
+  if((memory.resolution_patterns||0)||(memory.unsuccessful_patterns||0)){
+    root.append(
+      text(
+        'p',
+        `${memoryLabel(memory.confidence)} · `+
+        `${memory.resolution_patterns||0} resolution-associated pattern(s) · `+
+        `${memory.unsuccessful_patterns||0} unsuccessful pattern(s). `+
+        'Associations are evidence, not proof of causation.',
+        'outcome-memory',
+      ),
+    );
+  }
+
   const action=item.action||null;
   if(action){
     const controls=document.createElement('div');
@@ -162,6 +179,23 @@ function renderResolved(item){
   );
   return root;
 }
+function renderPlaybook(item){
+  const root=document.createElement('div');
+  root.className='playbook';
+  const latest=item.latest||{};
+  root.append(
+    text('h3',item.family),
+    text(
+      'p',
+      `${memoryLabel(item.confidence)} · ${item.resolution_patterns} `+
+      `resolution-associated pattern(s) · reference command ${latest.command_id||'—'}`,
+    ),
+  );
+  if(latest.objective){
+    root.append(text('p',latest.objective,'muted'));
+  }
+  return root;
+}
 function renderIncident(item){
   const root=document.createElement('div');
   root.className='incident';
@@ -190,16 +224,17 @@ function render(data){
   $('#health-posture').textContent=data.health.posture;
   const snapshot=data.operating_snapshot;
   const actions=data.executive_actions||{};
+  const memory=data.outcome_memory||{};
   const metrics=clear('#metrics');
   [
     ['Open goals',snapshot.open_goals],
     ['Active projects',snapshot.active_projects],
     ['Awaiting approval',snapshot.commands_awaiting_approval],
-    ['Open delegations',snapshot.open_delegations],
-    ['Succeeded steps',snapshot.succeeded_steps],
-    ['Failed steps',snapshot.failed_steps],
     ['Tracked actions',actions.tracked_priorities||0],
     ['Escalated actions',actions.escalated_priorities||0],
+    ['Learned families',memory.learned_families||0],
+    ['Resolution patterns',memory.resolution_patterns||0],
+    ['Unsuccessful patterns',memory.unsuccessful_patterns||0],
   ].forEach(item=>metrics.append(metric(item[0],item[1])));
 
   const priorities=clear('#priorities');
@@ -208,6 +243,15 @@ function render(data){
   }else{
     priorities.append(
       text('p','No immediate owner intervention is indicated by current evidence.','empty'),
+    );
+  }
+
+  const playbooks=clear('#outcome-playbooks');
+  if((data.outcome_playbooks||[]).length){
+    data.outcome_playbooks.forEach(item=>playbooks.append(renderPlaybook(item)));
+  }else{
+    playbooks.append(
+      text('p','No resolution-associated executive patterns have been learned yet.','empty'),
     );
   }
 
