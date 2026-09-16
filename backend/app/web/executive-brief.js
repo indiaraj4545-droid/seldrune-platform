@@ -64,6 +64,16 @@ function lifecycleLabel(state){
 function memoryLabel(confidence){
   return({none:'No comparable outcome evidence',low:'Limited outcome evidence',medium:'Usable outcome pattern',high:'Repeated outcome pattern'})[confidence]||confidence;
 }
+function strategyLabel(mode){
+  return({
+    observe:'Observe only',
+    baseline:'Baseline strategy',
+    reuse:'Reuse with verification',
+    adapt:'Adapt learned evidence',
+    explore:'Explore alternative',
+    recover:'Escalated recovery',
+  })[mode]||mode;
+}
 
 async function runPriorityAction(item,button){
   button.disabled=true;
@@ -130,6 +140,17 @@ function renderPriority(item){
         `${memory.unsuccessful_patterns||0} unsuccessful pattern(s). `+
         'Associations are evidence, not proof of causation.',
         'outcome-memory',
+      ),
+    );
+  }
+
+  const strategy=item.strategy||{};
+  if(strategy.mode){
+    root.append(
+      text(
+        'p',
+        `${strategyLabel(strategy.mode)} · ${strategy.rationale||''}`,
+        'strategy',
       ),
     );
   }
@@ -225,6 +246,7 @@ function render(data){
   const snapshot=data.operating_snapshot;
   const actions=data.executive_actions||{};
   const memory=data.outcome_memory||{};
+  const strategy=data.executive_strategy||{};
   const metrics=clear('#metrics');
   [
     ['Open goals',snapshot.open_goals],
@@ -235,6 +257,7 @@ function render(data){
     ['Learned families',memory.learned_families||0],
     ['Resolution patterns',memory.resolution_patterns||0],
     ['Unsuccessful patterns',memory.unsuccessful_patterns||0],
+    ['Strategy-informed',strategy.history_informed_priorities||0],
   ].forEach(item=>metrics.append(metric(item[0],item[1])));
 
   const priorities=clear('#priorities');
