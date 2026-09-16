@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -23,6 +24,7 @@ def record_audit(
         resource_type=resource_type,
         resource_id=resource_id,
         details=details or {},
+        occurred_at=datetime.now(UTC),
     )
     session.add(event)
     return event
