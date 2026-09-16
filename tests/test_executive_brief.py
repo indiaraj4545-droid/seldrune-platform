@@ -27,7 +27,12 @@ def _blocked_project(
     return response.json()
 
 
-def _project_priority(client, base: str, headers: dict[str, str], project_id: str | None = None) -> dict:
+def _project_priority(
+    client,
+    base: str,
+    headers: dict[str, str],
+    project_id: str | None = None,
+) -> dict:
     brief = client.get(f"{base}/executive-brief", headers=headers)
     assert brief.status_code == 200
     priorities = [item for item in brief.json()["priorities"] if item["source"] == "project"]
