@@ -284,6 +284,61 @@ function renderOperationalIncidents(data) {
 
 
 
+
+function renderPolicyHistory(history) {
+  const root = $('#policy-history');
+  const revisions = history?.revisions || [];
+  root.replaceChildren();
+  if (!revisions.length) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = 'No policy revisions yet.';
+    root.append(empty);
+    return;
+  }
+  revisions.forEach((revision, index) => {
+    const item = document.createElement('article');
+    item.className = 'policy-revision';
+    const content = document.createElement('div');
+    const title = document.createElement('strong');
+    title.textContent = revision.action === 'governance.policy_rolled_back'
+      ? 'Restored policy revision'
+      : 'Policy updated';
+    const detail = document.createElement('span');
+    detail.textContent = [
+      `${revision.policy.max_steps_per_command} steps`,
+      `${Number(revision.policy.max_project_budget_usd || 0).toFixed(2)} budget`,
+      revision.policy.allow_autonomous_execution ? 'autonomy on' : 'autonomy off',
+    ].join(' · ');
+    const time = document.createElement('small');
+    time.textContent = new Date(revision.occurred_at).toLocaleString();
+    content.append(title, detail, time);
+    const restore = document.createElement('button');
+    restore.type = 'button';
+    restore.className = 'ghost';
+    restore.dataset.revisionId = revision.event_id;
+    restore.textContent = index === 0 ? 'Current revision' : 'Restore';
+    restore.disabled = index === 0;
+    item.append(content, restore);
+    root.append(item);
+  });
+}
+
+async function rollbackGovernancePolicy(sourceEventId) {
+  if (!window.confirm('Restore this governance policy revision?')) return;
+  try {
+    const policy = await api('/governance-policy/rollback', {
+      method: 'POST',
+      body: JSON.stringify({source_event_id: sourceEventId}),
+    });
+    renderGovernancePolicy(policy);
+    toast('Governance policy restored');
+    await load();
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
 function policyFormPayload() {
   return {
     max_steps_per_command: Number($('#policy-max-steps').value),
@@ -441,14 +496,16 @@ function renderRuntimeStatus(status) {
 async function load() {
   if (!state.org) return;
   try {
-    const [dashboard, runtimeStatus, auditLog, governancePolicy] = await Promise.all([
+    const [dashboard, runtimeStatus, auditLog, governancePolicy, policyHistory] = await Promise.all([
       api('/owner-dashboard'),
       request('/status'),
       api('/audit-log?limit=30'),
       api('/governance-policy'),
+      api('/governance-policy/history?limit=10'),
     ]);
     renderRuntimeStatus(runtimeStatus);
     renderGovernancePolicy(governancePolicy);
+    renderPolicyHistory(policyHistory);
     $('#total').textContent = dashboard.command_counts.total;
     $('#pending').textContent = dashboard.command_counts.awaiting_approval;
     $('#progress').textContent =
@@ -494,6 +551,10 @@ $('#verify-audit-file').onchange = event => {
 
 
 $('#policy-preview-button').onclick = previewGovernancePolicy;
+$('#policy-history').onclick = event => {
+  const button = event.target.closest('button[data-revision-id]');
+  if (button && !button.disabled) rollbackGovernancePolicy(button.dataset.revisionId);
+};
 
 $('#policy-form').onsubmit = async event => {
   event.preventDefault();
