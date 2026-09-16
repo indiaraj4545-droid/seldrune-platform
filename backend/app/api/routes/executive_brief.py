@@ -17,6 +17,7 @@ from backend.app.models.orchestration import OrchestrationRun
 from backend.app.schemas.orchestration import OrchestrationCreate, OrchestrationRunPublic
 from backend.app.services.executive_action_lifecycle import reconcile_executive_actions
 from backend.app.services.executive_briefing import build_executive_brief
+from backend.app.services.executive_outcome_memory import build_executive_outcome_memory
 
 router = APIRouter(prefix="/organizations", tags=["executive-brief"])
 OwnerDep = Annotated[Membership, Depends(require_org_permission(Permission.ORG_MANAGE))]
@@ -57,9 +58,16 @@ def _brief_with_lifecycle(
         organization_id,
         brief["priorities"],
     )
-    brief["priorities"] = lifecycle["priorities"]
+    memory = build_executive_outcome_memory(
+        session,
+        organization_id,
+        lifecycle["priorities"],
+    )
+    brief["priorities"] = memory["priorities"]
     brief["executive_actions"] = lifecycle["summary"]
     brief["resolved_actions"] = lifecycle["resolved_recent"]
+    brief["outcome_memory"] = memory["summary"]
+    brief["outcome_playbooks"] = memory["playbooks"]
     return brief
 
 
@@ -68,15 +76,53 @@ def _action_objective(priority: dict[str, Any]) -> str:
     objective = action["objective"]
     escalation = priority.get("escalation") or {}
     level = int(escalation.get("level") or 0)
-    if not level:
-        return objective
-    completed = int(escalation.get("completed_attempts") or 0)
-    return (
-        f"Executive escalation level {level}: this priority remains after {completed} completed "
-        "governed action attempt(s). Do not simply repeat the previous plan. Review the prior "
-        "command evidence and outcomes, identify why the condition persists, and use a materially "
-        f"different recovery strategy with explicit verification criteria. {objective}"
-    )
+    if level:
+        completed = int(escalation.get("completed_attempts") or 0)
+        objective = (
+            f"Executive escalation level {level}: this priority remains after "
+            f"{completed} completed governed action attempt(s). Do not simply repeat the "
+            "previous plan. Review the prior command evidence and outcomes, identify why the "
+            "condition persists, and use a materially different recovery strategy with explicit "
+            f"verification criteria. {objective}"
+        )
+
+    memory = priority.get("outcome_memory") or {}
+    preferred = memory.get("preferred_pattern") or {}
+    avoid = memory.get("avoid_patterns") or []
+    if preferred:
+        reference = str(preferred.get("objective") or "")[:900]
+        objective += (
+            " Organization outcome memory contains a resolution-associated pattern for this "
+            f"priority family from command {preferred.get('command_id')}: {reference} "
+            "Treat this as supporting evidence rather than proof of causation; adapt it to current "
+            "conditions instead of copying it blindly."
+        )
+    if avoid:
+        failed = "; ".join(
+            f"{item.get('command_status')} command {item.get('command_id')}: "
+            f"{str(item.get('objective') or '')[:350]}"
+            for item in avoid[:3]
+        )
+        objective += (
+            " Outcome memory also contains unsuccessful patterns. Do not repeat them without "
+            f"explicit evidence-based justification: {failed}."
+        )
+    return objective[:8000]
+
+
+def _memory_context(priority: dict[str, Any]) -> dict[str, Any]:
+    memory = priority.get("outcome_memory") or {}
+    preferred = memory.get("preferred_pattern") or {}
+    avoid = memory.get("avoid_patterns") or []
+    return {
+        "family": memory.get("family"),
+        "confidence": memory.get("confidence", "none"),
+        "resolution_patterns": memory.get("resolution_patterns", 0),
+        "unsuccessful_patterns": memory.get("unsuccessful_patterns", 0),
+        "preferred_reference_command_id": preferred.get("command_id"),
+        "avoid_reference_command_ids": [item.get("command_id") for item in avoid[:3]],
+        "causal_claim": False,
+    }
 
 
 @router.get("/{organization_id}/executive-brief", response_model=dict[str, Any])
@@ -139,7 +185,8 @@ def create_executive_priority_action(
                 "source": priority["source"],
                 "resource_id": priority.get("resource_id"),
                 "title": priority["title"],
-            }
+            },
+            "executive_outcome_memory": _memory_context(priority),
         },
     )
     return create_owner_command(
