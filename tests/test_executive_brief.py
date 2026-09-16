@@ -63,11 +63,18 @@ def test_executive_brief_reports_owner_priorities(client) -> None:
     assert body["priorities"][0]["lifecycle"]["state"] == "unassigned"
     assert body["priorities"][0]["escalation"]["level"] == 0
     assert body["priorities"][0]["outcome_memory"]["confidence"] == "none"
+    assert body["priorities"][0]["strategy"]["mode"] == "observe"
+    assert body["priorities"][0]["strategy"]["owner_approval_required"] is False
     assert body["executive_actions"]["tracked_priorities"] == 0
     assert body["executive_actions"]["escalated_priorities"] == 0
     assert body["outcome_memory"]["learned_families"] == 0
     assert body["outcome_playbooks"] == []
     assert body["resolved_actions"] == []
+    assert body["executive_strategy"] == {
+        "actionable_priorities": 0,
+        "history_informed_priorities": 0,
+        "modes": {"observe": 1},
+    }
 
     _blocked_project(client, base, headers)
     result = client.get(f"{base}/executive-brief", headers=headers).json()
@@ -83,6 +90,10 @@ def test_executive_brief_reports_owner_priorities(client) -> None:
     assert project_priority["lifecycle"]["state"] == "unassigned"
     assert project_priority["escalation"]["level"] == 0
     assert project_priority["outcome_memory"]["family"] == "blocked-project"
+    assert project_priority["strategy"]["mode"] == "baseline"
+    assert project_priority["strategy"]["history_informed"] is False
+    assert project_priority["strategy"]["owner_approval_required"] is True
+    assert result["executive_strategy"]["actionable_priorities"] >= 1
 
 
 def test_executive_priority_action_lifecycle_closes_when_evidence_clears(client) -> None:
@@ -102,6 +113,12 @@ def test_executive_priority_action_lifecycle_closes_when_evidence_clears(client)
     assert command["context"]["executive_priority"]["key"] == priority["key"]
     assert command["context"]["executive_priority"]["resource_id"] == project_id
     assert command["context"]["executive_outcome_memory"]["causal_claim"] is False
+    strategy = command["context"]["executive_strategy"]
+    assert strategy["mode"] == "baseline"
+    assert strategy["owner_approval_required"] is True
+    assert strategy["causal_claim"] is False
+    assert strategy["required_evidence"]
+    assert "Executive strategy mode baseline" in command["objective"]
 
     active_brief = client.get(f"{base}/executive-brief", headers=headers).json()
     active_priority = next(
@@ -170,17 +187,24 @@ def test_persistent_priority_escalates_after_completed_action(client) -> None:
     assert escalated["escalation"]["completed_attempts"] == 1
     assert escalated["escalation"]["effective_severity"] == "critical"
     assert escalated["escalation"]["alternate_strategy_required"] is True
+    assert escalated["strategy"]["mode"] == "recover"
+    assert escalated["strategy"]["history_informed"] is True
     assert escalated_brief["executive_actions"]["escalated_priorities"] == 1
+    assert escalated_brief["executive_strategy"]["history_informed_priorities"] >= 1
 
     follow_up = client.post(endpoint, headers=headers)
     assert follow_up.status_code == 201
     second_command = follow_up.json()
     assert second_command["id"] != first_command["id"]
     assert second_command["objective"].startswith("Executive escalation level 1:")
+    assert "Executive strategy mode recover" in second_command["objective"]
     context = second_command["context"]["executive_priority"]
     assert context["escalation_level"] == 1
     assert context["completed_attempts"] == 1
     assert context["effective_severity"] == "critical"
+    strategy_context = second_command["context"]["executive_strategy"]
+    assert strategy_context["mode"] == "recover"
+    assert strategy_context["history_informed"] is True
 
 
 def test_resolution_associated_memory_guides_similar_future_priority(client) -> None:
@@ -239,6 +263,10 @@ def test_resolution_associated_memory_guides_similar_future_priority(client) -> 
     assert memory["resolution_patterns"] == 1
     assert memory["preferred_pattern"]["command_id"] == first_command["id"]
     assert memory["causal_claim"] is False
+    strategy = second_priority["strategy"]
+    assert strategy["mode"] == "reuse"
+    assert strategy["history_informed"] is True
+    assert strategy["preferred_reference_command_id"] == first_command["id"]
 
     second_endpoint = f"{base}/executive-brief/actions/{second_priority['key']}"
     second_command = client.post(second_endpoint, headers=headers)
@@ -248,6 +276,11 @@ def test_resolution_associated_memory_guides_similar_future_priority(client) -> 
     assert context["preferred_reference_command_id"] == first_command["id"]
     assert context["resolution_patterns"] == 1
     assert context["causal_claim"] is False
+    strategy_context = body["context"]["executive_strategy"]
+    assert strategy_context["mode"] == "reuse"
+    assert strategy_context["preferred_reference_command_id"] == first_command["id"]
+    assert strategy_context["owner_approval_required"] is True
+    assert "Executive strategy mode reuse" in body["objective"]
     assert "resolution-associated pattern" in body["objective"]
     assert "supporting evidence rather than proof of causation" in body["objective"]
 
@@ -283,6 +316,8 @@ def test_executive_brief_assets_are_served(client) -> None:
     assert "/executive-brief/actions/" in script.text
     assert "resolution-associated pattern" in script.text
     assert "Learned families" in script.text
+    assert "Strategy-informed" in script.text
+    assert "strategyLabel" in script.text
 
     board = client.get("/console-assets/organization-board.html")
     assert board.status_code == 200

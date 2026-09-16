@@ -18,6 +18,7 @@ from backend.app.schemas.orchestration import OrchestrationCreate, Orchestration
 from backend.app.services.executive_action_lifecycle import reconcile_executive_actions
 from backend.app.services.executive_briefing import build_executive_brief
 from backend.app.services.executive_outcome_memory import build_executive_outcome_memory
+from backend.app.services.executive_strategy import evaluate_executive_strategies
 
 router = APIRouter(prefix="/organizations", tags=["executive-brief"])
 OwnerDep = Annotated[Membership, Depends(require_org_permission(Permission.ORG_MANAGE))]
@@ -63,11 +64,13 @@ def _brief_with_lifecycle(
         organization_id,
         lifecycle["priorities"],
     )
-    brief["priorities"] = memory["priorities"]
+    strategy = evaluate_executive_strategies(memory["priorities"])
+    brief["priorities"] = strategy["priorities"]
     brief["executive_actions"] = lifecycle["summary"]
     brief["resolved_actions"] = lifecycle["resolved_recent"]
     brief["outcome_memory"] = memory["summary"]
     brief["outcome_playbooks"] = memory["playbooks"]
+    brief["executive_strategy"] = strategy["summary"]
     return brief
 
 
@@ -84,6 +87,15 @@ def _action_objective(priority: dict[str, Any]) -> str:
             "previous plan. Review the prior command evidence and outcomes, identify why the "
             "condition persists, and use a materially different recovery strategy with explicit "
             f"verification criteria. {objective}"
+        )
+
+    strategy = priority.get("strategy") or {}
+    mode = strategy.get("mode")
+    if mode and mode != "observe":
+        evidence = " ".join(str(item) for item in strategy.get("required_evidence") or [])
+        objective += (
+            f" Executive strategy mode {mode}: {strategy.get('rationale', '')} "
+            f"Required evidence: {evidence}"
         )
 
     memory = priority.get("outcome_memory") or {}
@@ -121,6 +133,21 @@ def _memory_context(priority: dict[str, Any]) -> dict[str, Any]:
         "unsuccessful_patterns": memory.get("unsuccessful_patterns", 0),
         "preferred_reference_command_id": preferred.get("command_id"),
         "avoid_reference_command_ids": [item.get("command_id") for item in avoid[:3]],
+        "causal_claim": False,
+    }
+
+
+def _strategy_context(priority: dict[str, Any]) -> dict[str, Any]:
+    strategy = priority.get("strategy") or {}
+    return {
+        "mode": strategy.get("mode", "baseline"),
+        "rationale": strategy.get("rationale"),
+        "confidence": strategy.get("confidence", "none"),
+        "history_informed": bool(strategy.get("history_informed")),
+        "preferred_reference_command_id": strategy.get("preferred_reference_command_id"),
+        "avoid_reference_command_ids": strategy.get("avoid_reference_command_ids") or [],
+        "required_evidence": strategy.get("required_evidence") or [],
+        "owner_approval_required": True,
         "causal_claim": False,
     }
 
@@ -187,6 +214,7 @@ def create_executive_priority_action(
                 "title": priority["title"],
             },
             "executive_outcome_memory": _memory_context(priority),
+            "executive_strategy": _strategy_context(priority),
         },
     )
     return create_owner_command(
