@@ -3,13 +3,20 @@ from tests.test_autonomous_execution import register_owner
 pytest_plugins = ["tests.test_autonomous_execution"]
 
 
-def _blocked_project(client, base: str, headers: dict[str, str]) -> dict:
+def _blocked_project(
+    client,
+    base: str,
+    headers: dict[str, str],
+    *,
+    name: str = "Blocked Delivery",
+    slug: str = "blocked-delivery",
+) -> dict:
     response = client.post(
         f"{base}/projects",
         headers=headers,
         json={
-            "name": "Blocked Delivery",
-            "slug": "blocked-delivery",
+            "name": name,
+            "slug": slug,
             "status": "blocked",
             "priority": 95,
             "budget_limit_usd": 50,
@@ -20,10 +27,13 @@ def _blocked_project(client, base: str, headers: dict[str, str]) -> dict:
     return response.json()
 
 
-def _project_priority(client, base: str, headers: dict[str, str]) -> dict:
+def _project_priority(client, base: str, headers: dict[str, str], project_id: str | None = None) -> dict:
     brief = client.get(f"{base}/executive-brief", headers=headers)
     assert brief.status_code == 200
-    return next(item for item in brief.json()["priorities"] if item["source"] == "project")
+    priorities = [item for item in brief.json()["priorities"] if item["source"] == "project"]
+    if project_id is None:
+        return priorities[0]
+    return next(item for item in priorities if item["resource_id"] == project_id)
 
 
 def test_executive_brief_reports_owner_priorities(client) -> None:
@@ -47,8 +57,11 @@ def test_executive_brief_reports_owner_priorities(client) -> None:
     assert body["priorities"][0]["action"]["kind"] == "navigate"
     assert body["priorities"][0]["lifecycle"]["state"] == "unassigned"
     assert body["priorities"][0]["escalation"]["level"] == 0
+    assert body["priorities"][0]["outcome_memory"]["confidence"] == "none"
     assert body["executive_actions"]["tracked_priorities"] == 0
     assert body["executive_actions"]["escalated_priorities"] == 0
+    assert body["outcome_memory"]["learned_families"] == 0
+    assert body["outcome_playbooks"] == []
     assert body["resolved_actions"] == []
 
     _blocked_project(client, base, headers)
@@ -64,6 +77,7 @@ def test_executive_brief_reports_owner_priorities(client) -> None:
     assert project_priority["action"]["kind"] == "owner_command"
     assert project_priority["lifecycle"]["state"] == "unassigned"
     assert project_priority["escalation"]["level"] == 0
+    assert project_priority["outcome_memory"]["family"] == "blocked-project"
 
 
 def test_executive_priority_action_lifecycle_closes_when_evidence_clears(client) -> None:
@@ -82,6 +96,7 @@ def test_executive_priority_action_lifecycle_closes_when_evidence_clears(client)
     assert command["context"]["owner_command"]["approval_status"] == "awaiting_approval"
     assert command["context"]["executive_priority"]["key"] == priority["key"]
     assert command["context"]["executive_priority"]["resource_id"] == project_id
+    assert command["context"]["executive_outcome_memory"]["causal_claim"] is False
 
     active_brief = client.get(f"{base}/executive-brief", headers=headers).json()
     active_priority = next(
@@ -163,6 +178,75 @@ def test_persistent_priority_escalates_after_completed_action(client) -> None:
     assert context["effective_severity"] == "critical"
 
 
+def test_resolution_associated_memory_guides_similar_future_priority(client) -> None:
+    token, organization_id = register_owner(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    base = f"/api/v1/organizations/{organization_id}"
+
+    first_project = _blocked_project(
+        client,
+        base,
+        headers,
+        name="Blocked Alpha",
+        slug="blocked-alpha",
+    )
+    first_priority = _project_priority(client, base, headers, first_project["id"])
+    first_endpoint = f"{base}/executive-brief/actions/{first_priority['key']}"
+    first_command = client.post(first_endpoint, headers=headers).json()
+
+    approved = client.post(
+        f"{base}/owner-commands/{first_command['id']}/approve",
+        headers=headers,
+    )
+    assert approved.status_code == 200
+    executed = client.post(
+        f"{base}/owner-commands/{first_command['id']}/execute",
+        headers=headers,
+        json={"max_steps": 50},
+    )
+    assert executed.status_code == 200
+    assert executed.json()["run"]["status"] == "succeeded"
+
+    unblocked = client.patch(
+        f"{base}/projects/{first_project['id']}",
+        headers=headers,
+        json={"status": "active"},
+    )
+    assert unblocked.status_code == 200
+
+    learned = client.get(f"{base}/executive-brief", headers=headers).json()
+    assert learned["outcome_memory"]["learned_families"] == 1
+    assert learned["outcome_memory"]["resolution_patterns"] == 1
+    assert learned["outcome_playbooks"][0]["family"] == "blocked-project"
+    assert learned["outcome_playbooks"][0]["latest"]["command_id"] == first_command["id"]
+
+    second_project = _blocked_project(
+        client,
+        base,
+        headers,
+        name="Blocked Beta",
+        slug="blocked-beta",
+    )
+    second_priority = _project_priority(client, base, headers, second_project["id"])
+    memory = second_priority["outcome_memory"]
+    assert memory["family"] == "blocked-project"
+    assert memory["confidence"] == "medium"
+    assert memory["resolution_patterns"] == 1
+    assert memory["preferred_pattern"]["command_id"] == first_command["id"]
+    assert memory["causal_claim"] is False
+
+    second_endpoint = f"{base}/executive-brief/actions/{second_priority['key']}"
+    second_command = client.post(second_endpoint, headers=headers)
+    assert second_command.status_code == 201
+    body = second_command.json()
+    context = body["context"]["executive_outcome_memory"]
+    assert context["preferred_reference_command_id"] == first_command["id"]
+    assert context["resolution_patterns"] == 1
+    assert context["causal_claim"] is False
+    assert "resolution-associated pattern" in body["objective"]
+    assert "supporting evidence rather than proof of causation" in body["objective"]
+
+
 def test_executive_priority_action_rejects_navigation_and_stale_keys(client) -> None:
     token, organization_id = register_owner(client)
     headers = {"Authorization": f"Bearer {token}"}
@@ -185,15 +269,15 @@ def test_executive_brief_assets_are_served(client) -> None:
     page = client.get("/console-assets/executive-brief.html")
     assert page.status_code == 200
     assert "Executive Brief" in page.text
-    assert "EXECUTIVE ESCALATION ENGINE" in page.text
-    assert "resolved-actions" in page.text
+    assert "EXECUTIVE OUTCOME MEMORY" in page.text
+    assert "outcome-playbooks" in page.text
     assert "/console-assets/executive-brief.js" in page.text
 
     script = client.get("/console-assets/executive-brief.js")
     assert script.status_code == 200
     assert "/executive-brief/actions/" in script.text
-    assert "Create escalated follow-up" in script.text
-    assert "Escalation level" in script.text
+    assert "resolution-associated pattern" in script.text
+    assert "Learned families" in script.text
 
     board = client.get("/console-assets/organization-board.html")
     assert board.status_code == 200
