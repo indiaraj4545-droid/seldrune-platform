@@ -6,6 +6,7 @@ from fastapi.staticfiles import StaticFiles
 from backend.app.api.routes.agent_tasks import router as agent_tasks_router
 from backend.app.api.routes.auth import router as auth_router
 from backend.app.api.routes.console import router as console_router
+from backend.app.api.routes.executive_brief import router as executive_brief_router
 from backend.app.api.routes.knowledge import router as knowledge_router
 from backend.app.api.routes.orchestrations import router as orchestrations_router
 from backend.app.api.routes.organization_kernel import router as organization_kernel_router
@@ -35,6 +36,7 @@ def create_app() -> FastAPI:
         auth_router,
         organizations_router,
         organization_kernel_router,
+        executive_brief_router,
         agent_tasks_router,
         orchestrations_router,
         sense_router,
