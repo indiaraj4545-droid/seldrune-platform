@@ -19,6 +19,9 @@ from backend.app.services.executive_action_lifecycle import reconcile_executive_
 from backend.app.services.executive_briefing import build_executive_brief
 from backend.app.services.executive_outcome_memory import build_executive_outcome_memory
 from backend.app.services.executive_strategy import evaluate_executive_strategies
+from backend.app.services.executive_strategy_outcomes import (
+    build_executive_strategy_outcomes,
+)
 
 router = APIRouter(prefix="/organizations", tags=["executive-brief"])
 OwnerDep = Annotated[Membership, Depends(require_org_permission(Permission.ORG_MANAGE))]
@@ -64,13 +67,21 @@ def _brief_with_lifecycle(
         organization_id,
         lifecycle["priorities"],
     )
-    strategy = evaluate_executive_strategies(memory["priorities"])
+    outcomes = build_executive_strategy_outcomes(
+        session,
+        organization_id,
+        memory["priorities"],
+    )
+    strategy = evaluate_executive_strategies(outcomes["priorities"])
     brief["priorities"] = strategy["priorities"]
     brief["executive_actions"] = lifecycle["summary"]
     brief["resolved_actions"] = lifecycle["resolved_recent"]
     brief["outcome_memory"] = memory["summary"]
     brief["outcome_playbooks"] = memory["playbooks"]
     brief["executive_strategy"] = strategy["summary"]
+    brief["strategy_outcomes"] = outcomes["summary"]
+    brief["strategy_scorecards"] = outcomes["scorecards"]
+    brief["strategy_outcome_history"] = outcomes["recent"]
     return brief
 
 
@@ -139,6 +150,7 @@ def _memory_context(priority: dict[str, Any]) -> dict[str, Any]:
 
 def _strategy_context(priority: dict[str, Any]) -> dict[str, Any]:
     strategy = priority.get("strategy") or {}
+    outcome_score = strategy.get("outcome_score") or {}
     return {
         "mode": strategy.get("mode", "baseline"),
         "rationale": strategy.get("rationale"),
@@ -147,6 +159,17 @@ def _strategy_context(priority: dict[str, Any]) -> dict[str, Any]:
         "preferred_reference_command_id": strategy.get("preferred_reference_command_id"),
         "avoid_reference_command_ids": strategy.get("avoid_reference_command_ids") or [],
         "required_evidence": strategy.get("required_evidence") or [],
+        "outcome_score": {
+            "family": outcome_score.get("family"),
+            "family_attempts": outcome_score.get("family_attempts", 0),
+            "attempts": outcome_score.get("attempts", 0),
+            "resolution_associations": outcome_score.get("resolution_associations", 0),
+            "persisted_after_success": outcome_score.get("persisted_after_success", 0),
+            "unsuccessful_attempts": outcome_score.get("unsuccessful_attempts", 0),
+            "resolution_rate": outcome_score.get("resolution_rate", 0.0),
+            "evidence_strength": outcome_score.get("evidence_strength", "none"),
+            "causal_claim": False,
+        },
         "owner_approval_required": True,
         "causal_claim": False,
     }
