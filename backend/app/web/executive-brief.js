@@ -154,6 +154,19 @@ function renderPriority(item){
       ),
     );
   }
+  const score=strategy.outcome_score||{};
+  if(score.family_attempts){
+    root.append(
+      text(
+        'p',
+        `Strategy evidence · family attempts ${score.family_attempts} · `+
+        `${strategyLabel(strategy.mode)} attempts ${score.attempts||0} · `+
+        `${Math.round(Number(score.resolution_rate||0)*100)}% resolution association. `+
+        'Recorded association only; not proof of causation.',
+        'outcome-memory',
+      ),
+    );
+  }
 
   const action=item.action||null;
   if(action){
@@ -247,6 +260,7 @@ function render(data){
   const actions=data.executive_actions||{};
   const memory=data.outcome_memory||{};
   const strategy=data.executive_strategy||{};
+  const outcomes=data.strategy_outcomes||{};
   const metrics=clear('#metrics');
   [
     ['Open goals',snapshot.open_goals],
@@ -258,6 +272,8 @@ function render(data){
     ['Resolution patterns',memory.resolution_patterns||0],
     ['Unsuccessful patterns',memory.unsuccessful_patterns||0],
     ['Strategy-informed',strategy.history_informed_priorities||0],
+    ['Strategy attempts',outcomes.scored_attempts||0],
+    ['Verified resolutions',outcomes.verified_resolution_associations||0],
   ].forEach(item=>metrics.append(metric(item[0],item[1])));
 
   const priorities=clear('#priorities');
