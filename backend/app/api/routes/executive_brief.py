@@ -2,15 +2,18 @@ from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
 
 from backend.app.api.dependencies import (
     CurrentUserDep,
     SessionDep,
     require_org_permission,
 )
+from backend.app.api.routes.orchestrations import _to_public
 from backend.app.api.routes.owner_commands import create_owner_command
 from backend.app.core.rbac import Permission, Role
 from backend.app.models.membership import Membership
+from backend.app.models.orchestration import OrchestrationRun
 from backend.app.schemas.orchestration import OrchestrationCreate, OrchestrationRunPublic
 from backend.app.services.executive_briefing import build_executive_brief
 
@@ -20,7 +23,27 @@ OwnerDep = Annotated[Membership, Depends(require_org_permission(Permission.ORG_M
 
 def _require_owner(membership: Membership) -> None:
     if membership.role != Role.OWNER.value:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Owner role required")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Owner role required",
+        )
+
+
+def _existing_priority_command(
+    session: SessionDep,
+    organization_id: UUID,
+    priority_key: str,
+) -> OrchestrationRun | None:
+    runs = session.scalars(
+        select(OrchestrationRun)
+        .where(OrchestrationRun.organization_id == organization_id)
+        .order_by(OrchestrationRun.created_at.desc())
+    )
+    for run in runs:
+        priority = ((run.context or {}).get("executive_priority") or {})
+        if priority.get("key") == priority_key and run.status in {"planned", "active"}:
+            return run
+    return None
 
 
 @router.get("/{organization_id}/executive-brief", response_model=dict[str, Any])
@@ -60,8 +83,16 @@ def create_executive_priority_action(
     if action.get("kind") != "owner_command" or not action.get("objective"):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="This priority is informational or navigational and does not create a command",
+            detail=(
+                "This priority is informational or navigational and does not "
+                "create a command"
+            ),
         )
+
+    existing = _existing_priority_command(session, organization_id, priority_key)
+    if existing is not None:
+        return _to_public(session, existing)
+
     payload = OrchestrationCreate(
         objective=action["objective"],
         context={
