@@ -1,24 +1,216 @@
 (()=>{
-const API='/api/v1';const $=s=>document.querySelector(s);
-async function request(path){const token=sessionStorage.seldruneToken||'';if(!token)throw new Error('NO_SESSION');const r=await fetch(`${API}${path}`,{headers:{Authorization:`Bearer ${token}`}});if(r.status===401)throw new Error('SESSION_EXPIRED');if(!r.ok){const b=await r.json().catch(()=>({}));throw new Error(b.detail||`Request failed (${r.status})`)}return r.json()}
-function money(v){return`$${Number(v||0).toLocaleString(undefined,{maximumFractionDigits:2})}`}
-function pct(v){return`${Math.round(Number(v||0)*100)}%`}
-function clear(id){const e=$(id);e.replaceChildren();return e}
-function text(tag,value,className=''){const e=document.createElement(tag);e.textContent=value;if(className)e.className=className;return e}
-function pair(label,value){const d=document.createElement('div');d.append(text('span',label),text('strong',value));return d}
-function metric(label,value){const d=document.createElement('div');d.className='metric';d.append(text('small',label),text('strong',String(value)));return d}
-function renderPriority(item){const d=document.createElement('div');d.className='priority';const h=document.createElement('h3');h.append(text('span',item.severity,`severity ${item.severity}`),document.createTextNode(item.title));d.append(h,text('p',item.detail));return d}
-function renderIncident(item){const d=document.createElement('div');d.className='incident';d.append(text('h3',item.title),text('p',item.detail||item.type));return d}
-function renderAgent(item){const d=document.createElement('div');d.className='agent';const rate=item.success_rate===null||item.success_rate===undefined?'No completed evidence':`${Math.round(item.success_rate*100)}% success`;d.append(text('h3',item.name),text('p',`${item.succeeded_tasks} succeeded · ${rate} · ${money(item.estimated_cost_usd)} recorded cost`));return d}
-function render(data){$('#health-score').textContent=data.health.score;$('#health-posture').textContent=data.health.posture;
-const s=data.operating_snapshot;const metrics=clear('#metrics');[['Open goals',s.open_goals],['Active projects',s.active_projects],['Awaiting approval',s.commands_awaiting_approval],['Open delegations',s.open_delegations],['Succeeded steps',s.succeeded_steps],['Failed steps',s.failed_steps],['Active agents',`${s.active_agents}/${s.total_agents}`],['Critical incidents',data.health.critical_incidents]].forEach(x=>metrics.append(metric(x[0],x[1])));
-const priorities=clear('#priorities');if(data.priorities.length)data.priorities.forEach(x=>priorities.append(renderPriority(x)));else priorities.append(text('p','No immediate owner intervention is indicated by current evidence.','empty'));
-const incidents=clear('#incidents');if(data.recent_incidents.length)data.recent_incidents.forEach(x=>incidents.append(renderIncident(x)));else incidents.append(text('p','No current operational incidents.','empty'));
-const t=data.treasury;const treasury=clear('#treasury');treasury.append(pair('Allocated',money(t.allocated_budget_usd)),pair('Spent',money(t.spent_budget_usd)),pair('Reserved',money(t.reserved_budget_usd)),pair('Available',money(t.available_budget_usd)),pair('Utilization',pct(t.utilization)),pair('Overcommitted',t.overcommitted?'Yes':'No'));
-const g=data.governance;const governance=clear('#governance');governance.append(pair('Max command steps',g.max_steps_per_command),pair('Max project budget',money(g.max_project_budget_usd)),pair('Autonomous execution',g.allow_autonomous_execution?'Allowed':'Disabled'));
-const agents=clear('#agents');if(data.top_agents.length)data.top_agents.forEach(x=>agents.append(renderAgent(x)));else agents.append(text('p','No verified agent delivery evidence yet.','empty'));
+const API='/api/v1';
+const $=s=>document.querySelector(s);
+let organizationId='';
+
+async function request(path,options={}){
+  const token=sessionStorage.seldruneToken||'';
+  if(!token)throw new Error('NO_SESSION');
+  const response=await fetch(`${API}${path}`,{
+    ...options,
+    headers:{
+      'Content-Type':'application/json',
+      Authorization:`Bearer ${token}`,
+      ...(options.headers||{}),
+    },
+  });
+  if(response.status===401)throw new Error('SESSION_EXPIRED');
+  if(!response.ok){
+    const body=await response.json().catch(()=>({}));
+    throw new Error(body.detail||`Request failed (${response.status})`);
+  }
+  return response.json();
 }
-function showError(message){const root=clear('#message');root.append(text('div',message,'message'))}
-async function load(){clear('#message');try{const me=await request('/auth/me');const membership=me.memberships.find(x=>x.role==='owner');if(!membership)throw new Error('OWNER_REQUIRED');const data=await request(`/organizations/${membership.organization.id}/executive-brief`);render(data)}catch(e){if(['NO_SESSION','SESSION_EXPIRED'].includes(e.message))showError('Sign in to the Owner Console first, then open Executive Brief in the same browser tab.');else if(e.message==='OWNER_REQUIRED')showError('Executive Brief requires an organization owner account.');else showError(e.message)}}
-$('#refresh').onclick=load;load();
+
+function money(value){
+  return`$${Number(value||0).toLocaleString(undefined,{maximumFractionDigits:2})}`;
+}
+function pct(value){return`${Math.round(Number(value||0)*100)}%`;}
+function clear(selector){const element=$(selector);element.replaceChildren();return element;}
+function text(tag,value,className=''){
+  const element=document.createElement(tag);
+  element.textContent=value;
+  if(className)element.className=className;
+  return element;
+}
+function pair(label,value){
+  const row=document.createElement('div');
+  row.append(text('span',label),text('strong',value));
+  return row;
+}
+function metric(label,value){
+  const item=document.createElement('div');
+  item.className='metric';
+  item.append(text('small',label),text('strong',String(value)));
+  return item;
+}
+function showMessage(message,kind='message'){
+  const root=clear('#message');
+  const box=text('div',message,kind);
+  root.append(box);
+}
+
+async function runPriorityAction(item,button){
+  button.disabled=true;
+  const original=button.textContent;
+  button.textContent='Creating governed command…';
+  try{
+    const key=encodeURIComponent(item.key);
+    await request(
+      `/organizations/${organizationId}/executive-brief/actions/${key}`,
+      {method:'POST'},
+    );
+    button.textContent='Command ready for review';
+    showMessage(
+      'Governed owner command created or reused. Review and approve it in Owner Console.',
+      'success',
+    );
+    await load();
+  }catch(error){
+    button.disabled=false;
+    button.textContent=original;
+    showMessage(error.message,'message');
+  }
+}
+
+function renderPriority(item){
+  const root=document.createElement('div');
+  root.className='priority';
+  const heading=document.createElement('h3');
+  heading.append(
+    text('span',item.severity,`severity ${item.severity}`),
+    document.createTextNode(item.title),
+  );
+  root.append(heading,text('p',item.detail));
+
+  const action=item.action||null;
+  if(action){
+    const controls=document.createElement('div');
+    controls.className='priority-actions';
+    if(action.kind==='navigate'&&action.href){
+      const link=document.createElement('a');
+      link.href=action.href;
+      link.textContent=action.label||'Open';
+      controls.append(link);
+    }else if(action.kind==='owner_command'&&item.key){
+      const button=document.createElement('button');
+      button.type='button';
+      button.textContent=action.label||'Create governed command';
+      button.onclick=()=>runPriorityAction(item,button);
+      controls.append(button);
+    }
+    if(controls.childElementCount)root.append(controls);
+  }
+  return root;
+}
+
+function renderIncident(item){
+  const root=document.createElement('div');
+  root.className='incident';
+  root.append(text('h3',item.title),text('p',item.detail||item.type));
+  return root;
+}
+function renderAgent(item){
+  const root=document.createElement('div');
+  root.className='agent';
+  const rate=item.success_rate===null||item.success_rate===undefined
+    ?'No completed evidence'
+    :`${Math.round(item.success_rate*100)}% success`;
+  root.append(
+    text('h3',item.name),
+    text(
+      'p',
+      `${item.succeeded_tasks} succeeded · ${rate} · `+
+      `${money(item.estimated_cost_usd)} recorded cost`,
+    ),
+  );
+  return root;
+}
+
+function render(data){
+  $('#health-score').textContent=data.health.score;
+  $('#health-posture').textContent=data.health.posture;
+  const snapshot=data.operating_snapshot;
+  const metrics=clear('#metrics');
+  [
+    ['Open goals',snapshot.open_goals],
+    ['Active projects',snapshot.active_projects],
+    ['Awaiting approval',snapshot.commands_awaiting_approval],
+    ['Open delegations',snapshot.open_delegations],
+    ['Succeeded steps',snapshot.succeeded_steps],
+    ['Failed steps',snapshot.failed_steps],
+    ['Active agents',`${snapshot.active_agents}/${snapshot.total_agents}`],
+    ['Critical incidents',data.health.critical_incidents],
+  ].forEach(item=>metrics.append(metric(item[0],item[1])));
+
+  const priorities=clear('#priorities');
+  if(data.priorities.length){
+    data.priorities.forEach(item=>priorities.append(renderPriority(item)));
+  }else{
+    priorities.append(
+      text('p','No immediate owner intervention is indicated by current evidence.','empty'),
+    );
+  }
+
+  const incidents=clear('#incidents');
+  if(data.recent_incidents.length){
+    data.recent_incidents.forEach(item=>incidents.append(renderIncident(item)));
+  }else{
+    incidents.append(text('p','No current operational incidents.','empty'));
+  }
+
+  const treasuryData=data.treasury;
+  const treasury=clear('#treasury');
+  treasury.append(
+    pair('Allocated',money(treasuryData.allocated_budget_usd)),
+    pair('Spent',money(treasuryData.spent_budget_usd)),
+    pair('Reserved',money(treasuryData.reserved_budget_usd)),
+    pair('Available',money(treasuryData.available_budget_usd)),
+    pair('Utilization',pct(treasuryData.utilization)),
+    pair('Overcommitted',treasuryData.overcommitted?'Yes':'No'),
+  );
+
+  const governanceData=data.governance;
+  const governance=clear('#governance');
+  governance.append(
+    pair('Max command steps',governanceData.max_steps_per_command),
+    pair('Max project budget',money(governanceData.max_project_budget_usd)),
+    pair(
+      'Autonomous execution',
+      governanceData.allow_autonomous_execution?'Allowed':'Disabled',
+    ),
+  );
+
+  const agents=clear('#agents');
+  if(data.top_agents.length){
+    data.top_agents.forEach(item=>agents.append(renderAgent(item)));
+  }else{
+    agents.append(text('p','No verified agent delivery evidence yet.','empty'));
+  }
+}
+
+async function load(){
+  clear('#message');
+  try{
+    const me=await request('/auth/me');
+    const membership=me.memberships.find(item=>item.role==='owner');
+    if(!membership)throw new Error('OWNER_REQUIRED');
+    organizationId=membership.organization.id;
+    const data=await request(`/organizations/${organizationId}/executive-brief`);
+    render(data);
+  }catch(error){
+    if(['NO_SESSION','SESSION_EXPIRED'].includes(error.message)){
+      showMessage(
+        'Sign in to the Owner Console first, then open Executive Brief in the same browser tab.',
+      );
+    }else if(error.message==='OWNER_REQUIRED'){
+      showMessage('Executive Brief requires an organization owner account.');
+    }else{
+      showMessage(error.message);
+    }
+  }
+}
+
+$('#refresh').onclick=load;
+load();
 })();
