@@ -22,7 +22,7 @@ def _approval_status(run: OrchestrationRun) -> str | None:
 
 def _state(run: OrchestrationRun) -> str:
     approval = _approval_status(run)
-    if run.status == "planned" and approval == "awaiting_approval":
+    if approval == "awaiting_approval" and run.status in {"planned", "active"}:
         return "awaiting_approval"
     if run.status in {"planned", "active"}:
         return "active"
