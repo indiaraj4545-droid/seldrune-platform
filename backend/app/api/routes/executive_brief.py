@@ -63,6 +63,22 @@ def _brief_with_lifecycle(
     return brief
 
 
+def _action_objective(priority: dict[str, Any]) -> str:
+    action = priority.get("action") or {}
+    objective = action["objective"]
+    escalation = priority.get("escalation") or {}
+    level = int(escalation.get("level") or 0)
+    if not level:
+        return objective
+    completed = int(escalation.get("completed_attempts") or 0)
+    return (
+        f"Executive escalation level {level}: this priority remains after {completed} completed "
+        "governed action attempt(s). Do not simply repeat the previous plan. Review the prior "
+        "command evidence and outcomes, identify why the condition persists, and use a materially "
+        f"different recovery strategy with explicit verification criteria. {objective}"
+    )
+
+
 @router.get("/{organization_id}/executive-brief", response_model=dict[str, Any])
 def get_executive_brief(
     organization_id: UUID,
@@ -86,7 +102,7 @@ def create_executive_priority_action(
     session: SessionDep,
 ) -> OrchestrationRunPublic:
     _require_owner(membership)
-    brief = build_executive_brief(session, organization_id)
+    brief = _brief_with_lifecycle(session, organization_id)
     priority = next(
         (item for item in brief["priorities"] if item.get("key") == priority_key),
         None,
@@ -110,12 +126,16 @@ def create_executive_priority_action(
     if existing is not None:
         return _to_public(session, existing)
 
+    escalation = priority.get("escalation") or {}
     payload = OrchestrationCreate(
-        objective=action["objective"],
+        objective=_action_objective(priority),
         context={
             "executive_priority": {
                 "key": priority["key"],
                 "severity": priority["severity"],
+                "effective_severity": escalation.get("effective_severity"),
+                "escalation_level": escalation.get("level", 0),
+                "completed_attempts": escalation.get("completed_attempts", 0),
                 "source": priority["source"],
                 "resource_id": priority.get("resource_id"),
                 "title": priority["title"],
