@@ -60,7 +60,9 @@ def _required_evidence(mode: str) -> list[str]:
 
 def _rationale(mode: str) -> str:
     return {
-        "observe": "The priority is informational or navigational, so no governed command is required.",
+        "observe": (
+            "The priority is informational or navigational, so no governed command is required."
+        ),
         "recover": (
             "The priority persisted after completed governed action, so the next command must be a "
             "materially different recovery strategy."
