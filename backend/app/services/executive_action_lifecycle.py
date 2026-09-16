@@ -102,10 +102,10 @@ def reconcile_executive_actions(
                 "latest_command_id": str(latest.id),
                 "latest_command_status": latest.status,
                 "attempts": len(attempts),
-                "resolved_at": latest.updated_at,
+                "last_action_at": latest.updated_at,
             }
         )
-    resolved.sort(key=lambda item: item["resolved_at"], reverse=True)
+    resolved.sort(key=lambda item: item["last_action_at"], reverse=True)
 
     return {
         "priorities": enriched,
