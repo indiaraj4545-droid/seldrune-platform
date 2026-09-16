@@ -382,3 +382,56 @@ def test_governance_policy_preview_reports_impact_without_mutation(_client) -> N
     after = client.get(policy_url, headers=headers).json()
     assert after["max_steps_per_command"] == before["max_steps_per_command"]
     assert after["allow_autonomous_execution"] == before["allow_autonomous_execution"]
+
+
+
+def test_governance_policy_history_supports_audited_rollback(_client) -> None:  # noqa: F811
+    client = _client
+    token, organization_id = register_owner(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    policy_url = f"/api/v1/organizations/{organization_id}/governance-policy"
+
+    first = client.put(
+        policy_url,
+        headers=headers,
+        json={
+            "max_steps_per_command": 10,
+            "max_project_budget_usd": 50.0,
+            "allow_autonomous_execution": True,
+        },
+    )
+    assert first.status_code == 200
+    second = client.put(
+        policy_url,
+        headers=headers,
+        json={
+            "max_steps_per_command": 5,
+            "max_project_budget_usd": 20.0,
+            "allow_autonomous_execution": False,
+        },
+    )
+    assert second.status_code == 200
+
+    history = client.get(f"{policy_url}/history", headers=headers)
+    assert history.status_code == 200
+    revisions = history.json()["revisions"]
+    assert len(revisions) == 2
+    first_revision = next(
+        revision
+        for revision in revisions
+        if revision["policy"]["max_steps_per_command"] == 10
+    )
+
+    restored = client.post(
+        f"{policy_url}/rollback",
+        headers=headers,
+        json={"source_event_id": first_revision["event_id"]},
+    )
+    assert restored.status_code == 200
+    assert restored.json()["max_steps_per_command"] == 10
+    assert restored.json()["max_project_budget_usd"] == 50.0
+    assert restored.json()["allow_autonomous_execution"] is True
+
+    updated_history = client.get(f"{policy_url}/history", headers=headers).json()
+    assert updated_history["revisions"][0]["action"] == "governance.policy_rolled_back"
+    assert updated_history["revisions"][0]["source_event_id"] == first_revision["event_id"]
