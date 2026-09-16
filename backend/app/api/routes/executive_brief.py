@@ -79,10 +79,11 @@ def _action_objective(priority: dict[str, Any]) -> str:
     if level:
         completed = int(escalation.get("completed_attempts") or 0)
         objective = (
-            f"Executive escalation level {level}: this priority remains after {completed} completed "
-            "governed action attempt(s). Do not simply repeat the previous plan. Review the prior "
-            "command evidence and outcomes, identify why the condition persists, and use a materially "
-            f"different recovery strategy with explicit verification criteria. {objective}"
+            f"Executive escalation level {level}: this priority remains after "
+            f"{completed} completed governed action attempt(s). Do not simply repeat the "
+            "previous plan. Review the prior command evidence and outcomes, identify why the "
+            "condition persists, and use a materially different recovery strategy with explicit "
+            f"verification criteria. {objective}"
         )
 
     memory = priority.get("outcome_memory") or {}
