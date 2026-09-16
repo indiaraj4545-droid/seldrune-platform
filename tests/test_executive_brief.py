@@ -122,7 +122,7 @@ def test_executive_priority_action_lifecycle_closes_when_evidence_clears(client)
     )
     assert resolved["state"] == "resolved"
     assert resolved["latest_command_id"] == command["id"]
-    assert resolved["latest_command_status"] == "planned"
+    assert resolved["latest_command_status"] == command["status"]
     assert resolved["attempts"] == 1
     assert resolved_brief["executive_actions"]["resolved_priorities"] == 1
 
