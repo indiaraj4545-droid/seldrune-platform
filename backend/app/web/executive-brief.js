@@ -88,9 +88,11 @@ async function runPriorityAction(item,button){
 function renderPriority(item){
   const root=document.createElement('div');
   root.className='priority';
+  const escalation=item.escalation||{level:0};
+  const severity=escalation.effective_severity||item.severity;
   const heading=document.createElement('h3');
   heading.append(
-    text('span',item.severity,`severity ${item.severity}`),
+    text('span',severity,`severity ${severity}`),
     document.createTextNode(item.title),
   );
   root.append(heading,text('p',item.detail));
@@ -103,6 +105,17 @@ function renderPriority(item){
       `lifecycle lifecycle-${lifecycle.state}`,
     ),
   );
+  if(escalation.level){
+    root.append(
+      text(
+        'p',
+        `Escalation level ${escalation.level} · `+
+        `${escalation.completed_attempts} completed attempt(s) · `+
+        `${escalation.reason||'alternate strategy required'}`,
+        'escalation',
+      ),
+    );
+  }
 
   const action=item.action||null;
   if(action){
@@ -122,9 +135,11 @@ function renderPriority(item){
       }else{
         const button=document.createElement('button');
         button.type='button';
-        button.textContent=lifecycle.state==='unassigned'
-          ?(action.label||'Create governed command')
-          :'Create follow-up governed command';
+        button.textContent=escalation.level
+          ?'Create escalated follow-up'
+          :(lifecycle.state==='unassigned'
+            ?(action.label||'Create governed command')
+            :'Create follow-up governed command');
         button.onclick=()=>runPriorityAction(item,button);
         controls.append(button);
       }
@@ -142,7 +157,7 @@ function renderResolved(item){
     text(
       'p',
       `${lifecycleLabel(item.state)} · ${item.attempts} attempt(s) · `+
-      `last command ${item.latest_command_status}`,
+      `${item.completed_attempts||0} completed · last command ${item.latest_command_status}`,
     ),
   );
   return root;
@@ -183,8 +198,8 @@ function render(data){
     ['Open delegations',snapshot.open_delegations],
     ['Succeeded steps',snapshot.succeeded_steps],
     ['Failed steps',snapshot.failed_steps],
-    ['Active agents',`${snapshot.active_agents}/${snapshot.total_agents}`],
     ['Tracked actions',actions.tracked_priorities||0],
+    ['Escalated actions',actions.escalated_priorities||0],
   ].forEach(item=>metrics.append(metric(item[0],item[1])));
 
   const priorities=clear('#priorities');
