@@ -3,6 +3,7 @@ from backend.app.models.agent_revision import AgentConfigurationRevision
 from backend.app.models.audit import AuditLog
 from backend.app.models.governance_policy import GovernancePolicy
 from backend.app.models.knowledge import KnowledgeEntry
+from backend.app.models.login_failure import LoginFailure
 from backend.app.models.membership import Membership
 from backend.app.models.memory import MemoryItem
 from backend.app.models.model_invocation import ModelInvocation
@@ -39,6 +40,7 @@ __all__ = [
     "Department",
     "DepartmentDelegation",
     "KnowledgeEntry",
+    "LoginFailure",
     "Membership",
     "MemoryItem",
     "ModelInvocation",

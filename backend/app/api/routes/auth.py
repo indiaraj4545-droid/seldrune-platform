@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Response, status
+from fastapi import APIRouter, HTTPException, Request, Response, status
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 
@@ -28,6 +28,13 @@ from backend.app.schemas.auth import (
     UserPublic,
 )
 from backend.app.services.audit import record_audit
+from backend.app.services.login_throttle import (
+    LoginThrottleError,
+    clear_login_failures,
+    enforce_login_throttle,
+    login_throttle_key,
+    record_login_failure,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 _BOOTSTRAP_LOCK_ID = 7_341_337_006_011
@@ -43,6 +50,14 @@ def _auth_response(user: User) -> AuthResponse:
 
 def _bootstrap_required(session: SessionDep) -> bool:
     return session.scalar(select(Organization.id).limit(1)) is None
+
+
+def _raise_login_throttled(exc: LoginThrottleError) -> None:
+    raise HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail=str(exc),
+        headers={"Retry-After": str(exc.retry_after_seconds)},
+    ) from exc
 
 
 @router.get("/bootstrap-status", response_model=BootstrapStatus)
@@ -112,21 +127,33 @@ def register(payload: RegisterRequest, session: SessionDep) -> AuthResponse:
 
 
 @router.post("/login", response_model=AuthResponse)
-def login(payload: LoginRequest, session: SessionDep) -> AuthResponse:
+def login(payload: LoginRequest, request: Request, session: SessionDep) -> AuthResponse:
     email = str(payload.email).strip().lower()
-    user = session.scalar(select(User).where(User.email == email))
+    source_address = request.client.host if request.client is not None else "unknown"
+    throttle_key = login_throttle_key(email, source_address)
 
+    try:
+        enforce_login_throttle(session, throttle_key)
+    except LoginThrottleError as exc:
+        _raise_login_throttled(exc)
+
+    user = session.scalar(select(User).where(User.email == email))
     if (
         user is None
         or not user.is_active
         or not verify_password(payload.password, user.password_hash)
     ):
+        try:
+            record_login_failure(session, throttle_key)
+        except LoginThrottleError as exc:
+            _raise_login_throttled(exc)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    clear_login_failures(session, throttle_key)
     record_audit(
         session,
         action="auth.login",
