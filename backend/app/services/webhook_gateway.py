@@ -188,7 +188,7 @@ def receive_webhook(
     session.add(event)
     try:
         session.flush()
-    except IntegrityError:
+    except IntegrityError as exc:
         session.rollback()
         existing = session.scalar(
             select(WebhookEvent).where(
@@ -202,7 +202,7 @@ def receive_webhook(
             raise WebhookGatewayError(
                 "Webhook delivery ID was already used for different content",
                 status_code=409,
-            )
+            ) from exc
         return existing, True
 
     record_audit(
