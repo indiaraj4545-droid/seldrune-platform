@@ -10,9 +10,9 @@ from backend.app.core.security import verify_password
 from backend.app.schemas.mfa import (
     MfaCodeRequest,
     MfaDisableRequest,
-    MfaEnableResponse,
     MfaRecoveryCodesResponse,
     MfaRecoveryRegenerateRequest,
+    MfaRecoveryStatus,
     MfaSetupRequest,
     MfaSetupResponse,
     MfaStatus,
@@ -56,12 +56,10 @@ def _record_recovery_code_use(current_user: CurrentUserDep, session: SessionDep)
 
 
 @router.get("", response_model=MfaStatus)
-def mfa_status(current_user: CurrentUserDep, session: SessionDep) -> MfaStatus:
-    remaining = remaining_recovery_codes(session, current_user.id) if current_user.mfa_enabled else 0
+def mfa_status(current_user: CurrentUserDep) -> MfaStatus:
     return MfaStatus(
         enabled=current_user.mfa_enabled,
         setup_pending=bool(current_user.mfa_nonce and not current_user.mfa_enabled),
-        recovery_codes_remaining=remaining,
     )
 
 
@@ -89,12 +87,12 @@ def setup_mfa(
     )
 
 
-@router.post("/enable", response_model=MfaEnableResponse)
+@router.post("/enable", response_model=MfaStatus)
 def enable_mfa(
     payload: MfaCodeRequest,
     current_user: CurrentUserDep,
     session: SessionDep,
-) -> MfaEnableResponse:
+) -> MfaStatus:
     if current_user.mfa_enabled:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -111,7 +109,6 @@ def enable_mfa(
         raise HTTPException(status_code=400, detail="Invalid MFA code")
 
     current_user.mfa_enabled = True
-    recovery_codes = generate_recovery_codes(session, current_user.id)
     revoke_user_refresh_sessions(session, current_user.id)
     record_audit(
         session,
@@ -121,12 +118,16 @@ def enable_mfa(
         resource_id=str(current_user.id),
     )
     session.commit()
-    return MfaEnableResponse(
-        enabled=True,
-        setup_pending=False,
-        recovery_codes_remaining=len(recovery_codes),
-        recovery_codes=recovery_codes,
-    )
+    return MfaStatus(enabled=True, setup_pending=False)
+
+
+@router.get("/recovery-codes/status", response_model=MfaRecoveryStatus)
+def recovery_code_status(
+    current_user: CurrentUserDep,
+    session: SessionDep,
+) -> MfaRecoveryStatus:
+    remaining = remaining_recovery_codes(session, current_user.id) if current_user.mfa_enabled else 0
+    return MfaRecoveryStatus(recovery_codes_remaining=remaining)
 
 
 @router.post("/recovery-codes/regenerate", response_model=MfaRecoveryCodesResponse)
@@ -211,8 +212,4 @@ def disable_mfa(
         resource_id=str(current_user.id),
     )
     session.commit()
-    return MfaStatus(
-        enabled=False,
-        setup_pending=False,
-        recovery_codes_remaining=0,
-    )
+    return MfaStatus(enabled=False, setup_pending=False)
