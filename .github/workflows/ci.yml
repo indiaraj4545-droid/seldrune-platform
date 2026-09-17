@@ -55,6 +55,7 @@ jobs:
           SELDRUNE_AUTH_SECRET_KEY: ci-production-secret-key-longer-than-thirty-two-characters
           SELDRUNE_MODEL_PROVIDER: openai
           SELDRUNE_MODEL_DEFAULT: gpt-5.6-sol
+          SELDRUNE_RELEASE_SHA: ${{ github.sha }}
           OPENAI_API_KEY: ci-placeholder-key
         run: |
           uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 > /tmp/seldrune-uvicorn.log 2>&1 &
@@ -62,27 +63,37 @@ jobs:
           trap 'kill "$server_pid" 2>/dev/null || true' EXIT
 
           for attempt in $(seq 1 30); do
-            if curl --fail --silent http://127.0.0.1:8000/api/v1/status > /tmp/seldrune-status.json; then
+            if curl --fail --silent http://127.0.0.1:8000/api/v1/ready > /tmp/seldrune-ready.json; then
               break
             fi
             if [ "$attempt" -eq 30 ]; then
               cat /tmp/seldrune-uvicorn.log
+              curl --silent http://127.0.0.1:8000/api/v1/status || true
               exit 1
             fi
             sleep 1
           done
 
-          cat /tmp/seldrune-status.json
+          cat /tmp/seldrune-ready.json
           python - <<'PY'
           import json
+          import os
 
-          with open('/tmp/seldrune-status.json', encoding='utf-8') as handle:
+          with open('/tmp/seldrune-ready.json', encoding='utf-8') as handle:
               status = json.load(handle)
 
+          schema = status['checks']['schema']
           assert status['ready'] is True
           assert status['status'] == 'ready'
           assert status['environment'] == 'production'
           assert status['checks']['database']['status'] == 'ok'
+          assert schema['status'] == 'ok'
+          assert schema['schema_current'] is True
+          assert schema['current_revision'] == schema['expected_revision']
           assert status['checks']['model_provider']['status'] == 'ok'
           assert status['checks']['model_provider']['live_ai'] is True
+          assert status['release'] == {
+              'sha': os.environ['SELDRUNE_RELEASE_SHA'],
+              'source': 'seldrune',
+          }
           PY

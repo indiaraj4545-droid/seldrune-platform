@@ -2,7 +2,7 @@ services:
   - type: web
     name: seldrune-platform
     runtime: docker
-    healthCheckPath: /api/v1/status
+    healthCheckPath: /api/v1/ready
     envVars:
       - key: SELDRUNE_ENVIRONMENT
         value: production
