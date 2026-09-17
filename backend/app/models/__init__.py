@@ -21,6 +21,7 @@ from backend.app.models.organization_kernel import (
     OrganizationProject,
 )
 from backend.app.models.owner_push_subscription import OwnerPushSubscription
+from backend.app.models.refresh_token import RefreshToken
 from backend.app.models.research_connector import ResearchConnector
 from backend.app.models.research_session import ResearchSession
 from backend.app.models.research_source import ResearchSource
@@ -52,6 +53,7 @@ __all__ = [
     "OrganizationGoal",
     "OrganizationProject",
     "OwnerPushSubscription",
+    "RefreshToken",
     "ResearchConnector",
     "ResearchSession",
     "ResearchSource",
