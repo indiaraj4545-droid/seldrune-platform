@@ -16,16 +16,16 @@ def test_owner_console_serves_action_inbox_assets(client) -> None:
     assert "prefers-reduced-motion:reduce" in stylesheet.text
 
 
-def test_action_inbox_uses_existing_governed_sources(client) -> None:
+def test_action_inbox_uses_server_ranked_attention(client) -> None:
     script = client.get("/console-assets/console-action-inbox.js")
     assert script.status_code == 200
-    assert "/owner-dashboard" in script.text
+    assert "/owner-attention" in script.text
     assert "/owner-commands" in script.text
-    assert "/executive-brief" in script.text
-    assert "approvalStatus" in script.text
-    assert "strategy_review" in script.text
-    assert "operational_incidents" in script.text
+    assert "/owner-dashboard" not in script.text
+    assert "/executive-brief" not in script.text
+    assert "attention.items" in script.text
     assert "renderAllCommands" in script.text
+    assert "commandListMatches" in script.text
     assert "dataset.action" in script.text
 
 
@@ -34,8 +34,7 @@ def test_action_inbox_is_navigation_and_review_surface(client) -> None:
     script = client.get("/console-assets/console-action-inbox.js")
 
     assert "Seldrune never acts from this inbox without the existing owner controls." in page.text
-    assert "Review command" in script.text
-    assert "Open Review Drift" in script.text
-    assert "Open incidents" in script.text
+    assert "review_command" in script.text
+    assert "action.kind==='navigate'" in script.text
     assert "method:'POST'" not in script.text
     assert 'method:"POST"' not in script.text
