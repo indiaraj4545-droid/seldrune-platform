@@ -12,13 +12,15 @@ class Settings(BaseSettings):
     )
 
     app_name: str = "Seldrune Platform"
-    app_version: str = "0.94.0"
+    app_version: str = "0.95.0"
     environment: str = "development"
     api_v1_prefix: str = "/api/v1"
     enable_docs: bool = True
     database_url: str = "sqlite+pysqlite:///./seldrune.db"
     auth_secret_key: str = "development-only-change-this-secret"
     auth_access_token_minutes: int = 30
+    auth_login_failure_limit: int = 5
+    auth_login_failure_window_minutes: int = 15
     model_provider: str = "mock"
     model_default: str = "mock-v1"
     model_timeout_seconds: float = 60.0
@@ -37,6 +39,10 @@ class Settings(BaseSettings):
                 raise ValueError("SELDRUNE_AUTH_SECRET_KEY must be set in production")
             if len(self.auth_secret_key) < 32:
                 raise ValueError("SELDRUNE_AUTH_SECRET_KEY must be at least 32 characters")
+        if self.auth_login_failure_limit <= 0:
+            raise ValueError("SELDRUNE_AUTH_LOGIN_FAILURE_LIMIT must be positive")
+        if self.auth_login_failure_window_minutes <= 0:
+            raise ValueError("SELDRUNE_AUTH_LOGIN_FAILURE_WINDOW_MINUTES must be positive")
         if self.model_provider not in {"mock", "openai"}:
             raise ValueError("SELDRUNE_MODEL_PROVIDER must be mock or openai")
         if self.model_timeout_seconds <= 0:
