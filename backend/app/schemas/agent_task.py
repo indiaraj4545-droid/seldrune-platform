@@ -6,6 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from backend.app.core.modeling import ModelProvider
 from backend.app.core.tasking import AgentStatus, TaskStatus
 
 
@@ -19,6 +20,8 @@ class AgentCreate(BaseModel):
     description: str | None = Field(default=None, max_length=4000)
     capabilities: list[str] = Field(default_factory=list, max_length=100)
     runtime_config: dict[str, Any] = Field(default_factory=dict)
+    allowed_model_providers: list[ModelProvider] | None = Field(default=None, max_length=20)
+    allowed_models: list[str] | None = Field(default=None, max_length=100)
 
 
 class AgentUpdate(BaseModel):
@@ -26,6 +29,8 @@ class AgentUpdate(BaseModel):
     description: str | None = Field(default=None, max_length=4000)
     capabilities: list[str] | None = Field(default=None, max_length=100)
     runtime_config: dict[str, Any] | None = None
+    allowed_model_providers: list[ModelProvider] | None = Field(default=None, max_length=20)
+    allowed_models: list[str] | None = Field(default=None, max_length=100)
 
 
 class AgentStatusUpdate(BaseModel):
@@ -41,8 +46,11 @@ class AgentPublic(BaseModel):
     slug: str
     description: str | None
     status: AgentStatus
+    version: int
     capabilities: list[str]
     runtime_config: dict[str, Any]
+    allowed_model_providers: list[ModelProvider] | None
+    allowed_models: list[str] | None
     created_at: datetime
     updated_at: datetime
 
