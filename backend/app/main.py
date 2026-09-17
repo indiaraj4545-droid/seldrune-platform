@@ -21,6 +21,7 @@ from backend.app.api.routes.owner_push import router as owner_push_router
 from backend.app.api.routes.research import router as research_router
 from backend.app.api.routes.runtime import router as runtime_router
 from backend.app.api.routes.secret_references import router as secret_references_router
+from backend.app.api.routes.security_events import router as security_events_router
 from backend.app.api.routes.sense import router as sense_router
 from backend.app.api.routes.status import router as status_router
 from backend.app.api.routes.tools import router as tools_router
@@ -57,6 +58,7 @@ def create_app() -> FastAPI:
         tools_router,
         knowledge_router,
         secret_references_router,
+        security_events_router,
         research_router,
         webhooks_router,
         audit_router,
