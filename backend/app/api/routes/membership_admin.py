@@ -27,7 +27,9 @@ from backend.app.schemas.membership_admin import (
     MemberRoleUpdate,
 )
 from backend.app.services.audit import record_audit
+from backend.app.services.mfa_recovery import consume_recovery_code
 from backend.app.services.refresh_sessions import issue_refresh_token
+from backend.app.services.security_events import record_user_security_event
 
 router = APIRouter(tags=["membership-administration"])
 MembersManageDep = Annotated[
@@ -264,6 +266,7 @@ def accept_invitation(payload: InvitationAccept, session: SessionDep) -> AuthRes
         raise HTTPException(status_code=410, detail="Invitation has expired")
 
     user = session.scalar(select(User).where(User.email == invitation.email))
+    recovery_code_used = False
     if user is None:
         user = User(
             email=invitation.email,
@@ -276,10 +279,17 @@ def accept_invitation(payload: InvitationAccept, session: SessionDep) -> AuthRes
         if not user.is_active or not verify_password(payload.password, user.password_hash):
             raise HTTPException(status_code=401, detail="Invalid existing-user credentials")
         if user.mfa_enabled:
-            if not user.mfa_nonce or not payload.mfa_code:
-                raise HTTPException(status_code=401, detail="Invalid existing-user credentials")
-            secret = derive_totp_secret(user.id, user.mfa_nonce)
-            if not verify_totp(secret, payload.mfa_code):
+            if payload.mfa_code is not None:
+                if not user.mfa_nonce:
+                    raise HTTPException(status_code=401, detail="Invalid existing-user credentials")
+                secret = derive_totp_secret(user.id, user.mfa_nonce)
+                if not verify_totp(secret, payload.mfa_code):
+                    raise HTTPException(status_code=401, detail="Invalid existing-user credentials")
+            elif payload.recovery_code is not None:
+                if not consume_recovery_code(session, user.id, payload.recovery_code):
+                    raise HTTPException(status_code=401, detail="Invalid existing-user credentials")
+                recovery_code_used = True
+            else:
                 raise HTTPException(status_code=401, detail="Invalid existing-user credentials")
 
     if session.scalar(
@@ -299,6 +309,23 @@ def accept_invitation(payload: InvitationAccept, session: SessionDep) -> AuthRes
     )
     invitation.status = "accepted"
     invitation.accepted_at = _now()
+    if recovery_code_used:
+        record_audit(
+            session,
+            organization_id=invitation.organization_id,
+            actor_user_id=user.id,
+            action="auth.mfa_recovery_code_used",
+            resource_type="user",
+            resource_id=str(user.id),
+        )
+        record_user_security_event(
+            session,
+            user_id=user.id,
+            event_type="mfa_recovery_code_used",
+            severity="medium",
+            resource_type="user",
+            resource_id=str(user.id),
+        )
     record_audit(
         session,
         organization_id=invitation.organization_id,

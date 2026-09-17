@@ -6,6 +6,7 @@ from backend.app.models.knowledge import KnowledgeEntry
 from backend.app.models.login_failure import LoginFailure
 from backend.app.models.membership import Membership
 from backend.app.models.memory import MemoryItem
+from backend.app.models.mfa_recovery_code import MfaRecoveryCode
 from backend.app.models.model_invocation import ModelInvocation
 from backend.app.models.orchestration import (
     OrchestrationApproval,
@@ -45,6 +46,7 @@ __all__ = [
     "LoginFailure",
     "Membership",
     "MemoryItem",
+    "MfaRecoveryCode",
     "ModelInvocation",
     "OrchestrationApproval",
     "OrchestrationRun",

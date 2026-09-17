@@ -39,6 +39,7 @@ from backend.app.services.login_throttle import (
     login_throttle_key,
     record_login_failure,
 )
+from backend.app.services.mfa_recovery import consume_recovery_code
 from backend.app.services.refresh_sessions import (
     RefreshIssue,
     RefreshTokenError,
@@ -196,20 +197,46 @@ def login(payload: LoginRequest, request: Request, session: SessionDep) -> AuthR
     ):
         _reject_login(session, throttle_key)
 
+    mfa_factor: str | None = None
     if user.mfa_enabled:
-        if not user.mfa_nonce or not payload.mfa_code:
-            _reject_login(session, throttle_key)
-        secret = derive_totp_secret(user.id, user.mfa_nonce)
-        if not verify_totp(secret, payload.mfa_code):
+        if payload.mfa_code is not None:
+            if not user.mfa_nonce:
+                _reject_login(session, throttle_key)
+            secret = derive_totp_secret(user.id, user.mfa_nonce)
+            if not verify_totp(secret, payload.mfa_code):
+                _reject_login(session, throttle_key)
+            mfa_factor = "totp"
+        elif payload.recovery_code is not None:
+            if not consume_recovery_code(session, user.id, payload.recovery_code):
+                _reject_login(session, throttle_key)
+            mfa_factor = "recovery_code"
+        else:
             _reject_login(session, throttle_key)
 
     clear_login_failures(session, throttle_key)
+    if mfa_factor == "recovery_code":
+        record_audit(
+            session,
+            action="auth.mfa_recovery_code_used",
+            resource_type="user",
+            actor_user_id=user.id,
+            resource_id=str(user.id),
+        )
+        record_user_security_event(
+            session,
+            user_id=user.id,
+            event_type="mfa_recovery_code_used",
+            severity="medium",
+            resource_type="user",
+            resource_id=str(user.id),
+        )
     record_audit(
         session,
         action="auth.login",
         resource_type="user",
         actor_user_id=user.id,
         resource_id=str(user.id),
+        details={"mfa_factor": mfa_factor} if mfa_factor is not None else {},
     )
     response = _auth_response(session, user)
     session.commit()

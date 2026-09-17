@@ -1,7 +1,11 @@
+from __future__ import annotations
+
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
+
+_RECOVERY_CODE_PATTERN = r"^(?:[0-9A-Fa-f]{4}-){5}[0-9A-Fa-f]{4}$"
 
 
 class BootstrapStatus(BaseModel):
@@ -29,6 +33,13 @@ class LoginRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=1, max_length=128)
     mfa_code: str | None = Field(default=None, pattern=r"^\d{6}$")
+    recovery_code: str | None = Field(default=None, pattern=_RECOVERY_CODE_PATTERN)
+
+    @model_validator(mode="after")
+    def require_at_most_one_mfa_factor(self) -> LoginRequest:
+        if self.mfa_code is not None and self.recovery_code is not None:
+            raise ValueError("Provide at most one MFA factor")
+        return self
 
 
 class RefreshRequest(BaseModel):
