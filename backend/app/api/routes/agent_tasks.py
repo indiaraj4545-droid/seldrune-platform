@@ -9,6 +9,7 @@ from backend.app.core.rbac import Permission
 from backend.app.core.tasking import AgentStatus, TaskStatus
 from backend.app.models.agent import Agent
 from backend.app.models.membership import Membership
+from backend.app.models.organization_kernel import OrganizationProject
 from backend.app.models.task import Task, TaskEvent
 from backend.app.models.tool_definition import ToolDefinition
 from backend.app.schemas.agent_task import (
@@ -61,6 +62,22 @@ def _get_task(session: SessionDep, organization_id: UUID, task_id: UUID) -> Task
     if task is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
     return task
+
+
+def _get_project(
+    session: SessionDep,
+    organization_id: UUID,
+    project_id: UUID,
+) -> OrganizationProject:
+    project = session.scalar(
+        select(OrganizationProject).where(
+            OrganizationProject.id == project_id,
+            OrganizationProject.organization_id == organization_id,
+        )
+    )
+    if project is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+    return project
 
 
 def _validate_allowed_tool_slugs(
@@ -284,10 +301,6 @@ def update_agent(
                 change_kind="baseline",
             )
         except ValueError:
-            # Pre-v0.86 configurations may contain secret-like runtime keys. When the
-            # same request replaces them with a safe runtime_config, preserve safety
-            # by starting immutable history at the new version instead of copying the
-            # legacy secret-bearing snapshot into revision storage.
             pass
         agent.version += 1
         capture_agent_revision(
@@ -366,9 +379,15 @@ def create_task(
                 detail="Cannot assign a disabled agent",
             )
         task_status = TaskStatus.ASSIGNED
+    project = (
+        _get_project(session, organization_id, payload.project_id)
+        if payload.project_id is not None
+        else None
+    )
 
     task = Task(
         organization_id=organization_id,
+        project_id=project.id if project is not None else None,
         created_by_user_id=current_user.id,
         assigned_agent_id=assigned_agent.id if assigned_agent else None,
         title=payload.title,
@@ -379,6 +398,7 @@ def create_task(
     )
     session.add(task)
     session.flush()
+    project_id = str(task.project_id) if task.project_id else None
     session.add(
         TaskEvent(
             organization_id=organization_id,
@@ -390,6 +410,7 @@ def create_task(
                 "assigned_agent_id": str(task.assigned_agent_id)
                 if task.assigned_agent_id
                 else None,
+                "project_id": project_id,
             },
         )
     )
@@ -400,7 +421,7 @@ def create_task(
         action="task.created",
         resource_type="task",
         resource_id=str(task.id),
-        details={"status": task.status, "priority": task.priority},
+        details={"status": task.status, "priority": task.priority, "project_id": project_id},
     )
     session.commit()
     session.refresh(task)
