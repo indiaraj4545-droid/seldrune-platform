@@ -73,23 +73,36 @@ def release_project_budget(
     *,
     project: OrganizationProject,
     command_id: str,
-    actual_cost_usd: float,
+    actual_cost_usd: float | None,
+    known_cost_usd: float = 0.0,
+    unpriced_invocation_count: int = 0,
 ) -> dict[str, Any] | None:
     reservations = _budget_reservations(project)
     released: dict[str, Any] | None = None
     updated: list[dict[str, Any]] = []
     for item in reservations:
         if item.get("command_id") == command_id and item.get("status") == "active":
-            item = {
-                **item,
-                "status": "reconciled",
-                "released_at": datetime.now(UTC).isoformat(),
-                "actual_cost_usd": round(max(actual_cost_usd, 0), 8),
-                "variance_usd": round(
-                    float(item.get("amount_usd", 0)) - max(actual_cost_usd, 0),
-                    8,
-                ),
-            }
+            if actual_cost_usd is None:
+                item = {
+                    **item,
+                    "status": "reconciled_unpriced",
+                    "released_at": datetime.now(UTC).isoformat(),
+                    "known_cost_usd": round(max(known_cost_usd, 0), 8),
+                    "unpriced_invocation_count": max(unpriced_invocation_count, 0),
+                    "cost_complete": False,
+                }
+            else:
+                actual = round(max(actual_cost_usd, 0), 8)
+                item = {
+                    **item,
+                    "status": "reconciled",
+                    "released_at": datetime.now(UTC).isoformat(),
+                    "actual_cost_usd": actual,
+                    "known_cost_usd": actual,
+                    "unpriced_invocation_count": 0,
+                    "cost_complete": True,
+                    "variance_usd": round(float(item.get("amount_usd", 0)) - actual, 8),
+                }
             released = item
         updated.append(item)
     if released is not None:
@@ -98,7 +111,6 @@ def release_project_budget(
             "budget_reservations": updated,
         }
     return released
-
 
 
 def revoke_project_budget_reservation(
@@ -161,6 +173,7 @@ def evaluate_project_execution(
         if project is not None
         else float(delivery_context.get("budget_spent_usd", 0))
     )
+    unpriced_count = project.unpriced_model_invocation_count if project is not None else 0
     reserved_budget = reserved_project_budget(
         project,
         exclude_command_id=str(run.id),
@@ -181,6 +194,10 @@ def evaluate_project_execution(
         reasons.append(
             f"Plan requires {required_units} capacity units but only {remaining_units} remain"
         )
+    if unpriced_count > 0:
+        reasons.append(
+            "Project has unresolved unpriced model usage requiring billing-authority correction"
+        )
     if budget_configured and budget_spent + reserved_budget >= budget_limit:
         reasons.append("Project budget is exhausted or reserved")
     elif budget_configured and estimated_cost > (remaining_budget or 0):
@@ -198,6 +215,8 @@ def evaluate_project_execution(
         "budget_limit_configured": budget_configured,
         "budget_reserved_usd": reserved_budget,
         "remaining_budget_usd": remaining_budget,
+        "unpriced_model_invocation_count": unpriced_count,
+        "accounting_complete": unpriced_count == 0,
         "estimated_cost_per_step_usd": settings.project_estimated_cost_per_step_usd,
         "estimated_execution_cost_usd": estimated_cost,
         "projected_budget_spent_usd": round(
