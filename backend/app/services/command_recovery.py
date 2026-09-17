@@ -9,7 +9,10 @@ from backend.app.services.adaptive_planning import build_adaptive_planning_guida
 from backend.app.services.audit import record_audit
 from backend.app.services.founding_agents import ensure_founding_agents
 from backend.app.services.live_planner import build_live_plan
-from backend.app.services.orchestrator import OrchestrationAttributionError, create_orchestration_run
+from backend.app.services.orchestrator import (
+    OrchestrationAttributionError,
+    create_orchestration_run,
+)
 from backend.app.services.outcome_verification import assess_command_outcome
 from backend.app.services.playbook_engine import consolidate_playbooks
 from backend.app.services.playbook_guidance import build_playbook_guidance
