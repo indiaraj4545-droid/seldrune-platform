@@ -10,6 +10,7 @@ from backend.app.api.routes.executive_brief import _brief_with_lifecycle
 from backend.app.core.rbac import Permission, Role
 from backend.app.models.membership import Membership
 from backend.app.models.orchestration import OrchestrationRun
+from backend.app.models.security_event import SecurityEvent
 from backend.app.services.owner_attention import build_owner_attention
 from backend.app.services.owner_attention_notification import (
     build_owner_attention_notification_envelope,
@@ -41,14 +42,30 @@ def _owner_commands(session: SessionDep, organization_id: UUID) -> list[Orchestr
     return [run for run in runs if (run.context or {}).get("owner_command")]
 
 
+def _open_security_events(session: SessionDep, organization_id: UUID) -> list[SecurityEvent]:
+    return list(
+        session.scalars(
+            select(SecurityEvent)
+            .where(
+                SecurityEvent.organization_id == organization_id,
+                SecurityEvent.status == "open",
+            )
+            .order_by(SecurityEvent.occurred_at.desc(), SecurityEvent.id.desc())
+            .limit(100)
+        )
+    )
+
+
 def _owner_attention_state(session: SessionDep, organization_id: UUID) -> dict[str, Any]:
     dashboard = build_owner_dashboard(session, organization_id)
     executive_brief = _brief_with_lifecycle(session, organization_id)
     commands = _owner_commands(session, organization_id)
+    security_events = _open_security_events(session, organization_id)
     return build_owner_attention(
         dashboard=dashboard,
         executive_brief=executive_brief,
         commands=commands,
+        security_events=security_events,
     )
 
 

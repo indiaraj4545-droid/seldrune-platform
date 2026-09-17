@@ -18,6 +18,7 @@ from backend.app.schemas.webhooks import (
     WebhookReceipt,
 )
 from backend.app.services.audit import record_audit
+from backend.app.services.security_events import record_security_event
 from backend.app.services.webhook_gateway import WebhookGatewayError, get_endpoint, receive_webhook
 
 router = APIRouter(tags=["webhooks"])
@@ -260,6 +261,16 @@ async def receive_inbound_webhook(
             body=body,
         )
     except WebhookGatewayError as exc:
+        if exc.status_code == status.HTTP_401_UNAUTHORIZED:
+            record_security_event(
+                session,
+                organization_id=endpoint.organization_id,
+                event_type="webhook_authentication_rejected",
+                severity="warning",
+                resource_type="webhook_endpoint",
+                resource_id=str(endpoint.id),
+            )
+            session.commit()
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     return WebhookReceipt(
         duplicate=duplicate,
