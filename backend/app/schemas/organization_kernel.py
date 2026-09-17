@@ -135,6 +135,7 @@ class ProjectUpdate(BaseModel):
     priority: int | None = Field(default=None, ge=0, le=100)
     budget_limit_usd: float | None = Field(default=None, ge=0)
     budget_spent_usd: float | None = Field(default=None, ge=0)
+    unpriced_model_invocation_count: int | None = Field(default=None, ge=0)
     resource_limit_units: int | None = Field(default=None, ge=0, le=1_000_000)
     resource_used_units: int | None = Field(default=None, ge=0, le=1_000_000)
     start_at: datetime | None = None
@@ -164,6 +165,7 @@ class ProjectPublic(BaseModel):
     priority: int
     budget_limit_usd: float
     budget_spent_usd: float
+    unpriced_model_invocation_count: int
     resource_limit_units: int
     resource_used_units: int
     start_at: datetime | None
