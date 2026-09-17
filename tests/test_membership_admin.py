@@ -138,7 +138,11 @@ def test_admin_role_ceiling_and_invitation_revocation(client) -> None:
         f"/api/v1/organizations/{organization_id}/members",
         headers=owner_headers,
     ).json()
-    member_id = next(item["id"] for item in members if item["email"] == "managed-member@example.com")
+    member_id = next(
+        item["id"]
+        for item in members
+        if item["email"] == "managed-member@example.com"
+    )
 
     forbidden_admin_invite = client.post(
         f"/api/v1/organizations/{organization_id}/invitations",
