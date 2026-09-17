@@ -66,7 +66,7 @@ def register_owner(client: TestClient) -> tuple[dict[str, str], str, str]:
     headers = {"Authorization": f"Bearer {token}"}
     profile = client.get("/api/v1/auth/me", headers=headers).json()
     organization_id = profile["memberships"][0]["organization"]["id"]
-    return headers, organization_id, profile["id"]
+    return headers, organization_id, profile["user"]["id"]
 
 
 def create_secret_reference(testing_session, organization_id: str, *, slug: str) -> str:
