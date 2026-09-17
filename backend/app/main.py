@@ -5,6 +5,7 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.app.api.routes.agent_revisions import router as agent_revisions_router
 from backend.app.api.routes.agent_tasks import router as agent_tasks_router
+from backend.app.api.routes.audit import router as audit_router
 from backend.app.api.routes.auth import router as auth_router
 from backend.app.api.routes.console import router as console_router
 from backend.app.api.routes.executive_brief import router as executive_brief_router
@@ -53,6 +54,7 @@ def create_app() -> FastAPI:
         knowledge_router,
         research_router,
         webhooks_router,
+        audit_router,
     ):
         app.include_router(item, prefix=settings.api_v1_prefix)
     return app
