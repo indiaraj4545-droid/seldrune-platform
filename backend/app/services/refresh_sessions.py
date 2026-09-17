@@ -21,7 +21,7 @@ class RefreshTokenReplay(RefreshTokenError):
     """Raised after a consumed refresh token is presented again."""
 
     def __init__(self, user_id: UUID, family_id: UUID) -> None:
-        super().__init__("Refresh token reuse detected")
+        super().__init__("Invalid refresh token")
         self.user_id = user_id
         self.family_id = family_id
 
@@ -81,11 +81,12 @@ def revoke_refresh_family(session: Session, family_id: UUID) -> None:
 
 
 def rotate_refresh_token(session: Session, raw_token: str) -> tuple[UUID, RefreshIssue]:
-    token = session.scalar(
-        select(RefreshToken)
-        .where(RefreshToken.token_sha256 == refresh_token_fingerprint(raw_token))
-        .with_for_update()
+    statement = select(RefreshToken).where(
+        RefreshToken.token_sha256 == refresh_token_fingerprint(raw_token)
     )
+    if session.get_bind().dialect.name != "sqlite":
+        statement = statement.with_for_update()
+    token = session.scalar(statement)
     if token is None:
         raise RefreshTokenError("Invalid refresh token")
 
