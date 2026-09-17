@@ -26,6 +26,7 @@ from backend.app.schemas.membership_admin import (
     MemberRoleUpdate,
 )
 from backend.app.services.audit import record_audit
+from backend.app.services.refresh_sessions import issue_refresh_token
 
 router = APIRouter(tags=["membership-administration"])
 MembersManageDep = Annotated[
@@ -72,10 +73,17 @@ def _created(invitation: OrganizationInvitation, token: str) -> InvitationCreate
     return InvitationCreated(**_public(invitation).model_dump(), token=token)
 
 
-def _auth_response(user: User) -> AuthResponse:
+def _auth_response(session: SessionDep, user: User) -> AuthResponse:
+    refresh_issue = issue_refresh_token(session, user.id)
+    refresh_expires_in = max(
+        0,
+        int((_aware(refresh_issue.expires_at) - _now()).total_seconds()),
+    )
     return AuthResponse(
-        access_token=create_access_token(user.id),
+        access_token=create_access_token(user.id, session_id=refresh_issue.family_id),
+        refresh_token=refresh_issue.token,
         expires_in=settings.auth_access_token_minutes * 60,
+        refresh_expires_in=refresh_expires_in,
         user=UserPublic.model_validate(user),
     )
 
@@ -293,12 +301,13 @@ def accept_invitation(payload: InvitationAccept, session: SessionDep) -> AuthRes
         details={"role": invitation.role},
     )
     try:
+        response = _auth_response(session, user)
         session.commit()
     except IntegrityError as exc:
         session.rollback()
         raise HTTPException(status_code=409, detail="Invitation acceptance conflicted") from exc
     session.refresh(user)
-    return _auth_response(user)
+    return response
 
 
 @router.patch(

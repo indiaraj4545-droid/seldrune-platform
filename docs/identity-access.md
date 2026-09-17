@@ -7,8 +7,12 @@ Seldrune Core v0.3 introduced the first authentication and authorization boundar
 - Passwords are hashed with the recommended `pwdlib` password hash configuration.
 - Access tokens are signed JWTs with an expiry and a required token type.
 - New access tokens carry a unique `jti` so simultaneous sessions are independently revocable.
-- `POST /api/v1/auth/logout` stores only a SHA-256 token fingerprint and revokes that bearer session immediately.
-- Legacy valid access tokens without `jti` remain compatible until expiry or explicit revocation.
+- New access tokens also carry a stable session-family `sid` when issued with a refresh session.
+- Opaque refresh tokens rotate exactly once and are stored only as SHA-256 digests.
+- Refresh-token reuse revokes the entire refresh family before the request is rejected.
+- Refresh families expire after a bounded lifetime and are revoked by normal session logout.
+- `POST /api/v1/auth/logout` stores only a SHA-256 access-token fingerprint and revokes that bearer session immediately.
+- Legacy valid access tokens without `sid` remain compatible until expiry or explicit access-token revocation.
 - Production refuses to start with the development JWT secret.
 - Authentication failures return the same response for unknown users and bad passwords.
 - Repeated bad-password attempts are rate-limited per credential/source pair using only a keyed SHA-256 throttle digest; raw credential identifiers and source addresses are not stored in throttle records.
@@ -32,6 +36,7 @@ Current roles:
 
 - invite-only post-bootstrap onboarding,
 - organization member administration and role ceilings,
+- rotating refresh sessions with replay-family revocation,
 - server-side access-token revocation,
 - per-session logout,
 - login brute-force rate limiting,
@@ -45,7 +50,6 @@ Before accepting broad external customer access, complete:
 
 - email verification,
 - MFA/passkeys,
-- refresh-token rotation or an external identity provider,
 - account recovery,
 - cloud secret-manager integration for secret values,
 - expanded security-event monitoring and alerting.

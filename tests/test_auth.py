@@ -127,8 +127,9 @@ def test_logout_revokes_only_the_current_session(client: TestClient) -> None:
 
         logout_audit = session.scalar(select(AuditLog).where(AuditLog.action == "auth.logout"))
         assert logout_audit is not None
-        assert logout_audit.details == {}
+        assert set(logout_audit.details) <= {"family_id"}
         assert first_token not in str(logout_audit.details)
+        assert revoked[0].token_sha256 not in str(logout_audit.details)
 
 
 def test_legacy_access_token_without_jti_remains_valid(client: TestClient) -> None:
