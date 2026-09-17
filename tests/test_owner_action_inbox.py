@@ -26,7 +26,7 @@ def test_action_inbox_uses_existing_governed_sources(client) -> None:
     assert "strategy_review" in script.text
     assert "operational_incidents" in script.text
     assert "renderAllCommands" in script.text
-    assert "data-action" in script.text
+    assert "dataset.action" in script.text
 
 
 def test_action_inbox_is_navigation_and_review_surface(client) -> None:
