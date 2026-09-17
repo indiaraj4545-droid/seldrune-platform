@@ -12,6 +12,7 @@ from backend.app.models.orchestration import (
     OrchestrationStep,
 )
 from backend.app.models.organization import Organization
+from backend.app.models.organization_invitation import OrganizationInvitation
 from backend.app.models.organization_kernel import (
     Department,
     DepartmentDelegation,
@@ -44,6 +45,7 @@ __all__ = [
     "OrchestrationRun",
     "OrchestrationStep",
     "Organization",
+    "OrganizationInvitation",
     "OrganizationGoal",
     "OrganizationProject",
     "OwnerPushSubscription",
