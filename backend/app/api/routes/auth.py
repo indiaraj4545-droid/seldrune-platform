@@ -1,13 +1,21 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Response, status
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 
-from backend.app.api.dependencies import CurrentUserDep, SessionDep
+from backend.app.api.dependencies import CurrentUserDep, SessionDep, TokenDep
 from backend.app.core.config import settings
 from backend.app.core.rbac import ROLE_PERMISSIONS, Role
-from backend.app.core.security import create_access_token, hash_password, verify_password
+from backend.app.core.security import (
+    TokenError,
+    access_token_fingerprint,
+    create_access_token,
+    decode_access_token_claims,
+    hash_password,
+    verify_password,
+)
 from backend.app.models.membership import Membership
 from backend.app.models.organization import Organization
+from backend.app.models.revoked_access_token import RevokedAccessToken
 from backend.app.models.user import User
 from backend.app.schemas.auth import (
     AuthResponse,
@@ -128,6 +136,50 @@ def login(payload: LoginRequest, session: SessionDep) -> AuthResponse:
     )
     session.commit()
     return _auth_response(user)
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(token: TokenDep, session: SessionDep) -> Response:
+    credentials_error = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or expired credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        claims = decode_access_token_claims(token)
+    except TokenError as exc:
+        raise credentials_error from exc
+
+    user = session.get(User, claims.user_id)
+    if user is None or not user.is_active:
+        raise credentials_error
+
+    fingerprint = access_token_fingerprint(token)
+    existing = session.scalar(
+        select(RevokedAccessToken.id).where(
+            RevokedAccessToken.token_sha256 == fingerprint,
+        )
+    )
+    if existing is None:
+        session.add(
+            RevokedAccessToken(
+                user_id=user.id,
+                token_sha256=fingerprint,
+                expires_at=claims.expires_at,
+            )
+        )
+        record_audit(
+            session,
+            action="auth.logout",
+            resource_type="user",
+            actor_user_id=user.id,
+            resource_id=str(user.id),
+        )
+        try:
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/me", response_model=MeResponse)
