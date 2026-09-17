@@ -118,6 +118,12 @@ class OrganizationProject(Base):
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
     budget_limit_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     budget_spent_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    unpriced_model_invocation_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
     resource_limit_units: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
     resource_used_units: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
