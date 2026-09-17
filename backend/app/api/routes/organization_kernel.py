@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from backend.app.api.dependencies import CurrentUserDep, SessionDep, require_org_permission
 from backend.app.api.routes.orchestrations import _to_public
-from backend.app.core.rbac import Permission
+from backend.app.core.rbac import Permission, has_permission
 from backend.app.models.agent import Agent
 from backend.app.models.membership import Membership
 from backend.app.models.organization_kernel import (
@@ -48,6 +48,14 @@ from backend.app.services.organization_kernel import (
 router = APIRouter(prefix="/organizations", tags=["organization-kernel"])
 ReadDep = Annotated[Membership, Depends(require_org_permission(Permission.ORG_READ))]
 ManageDep = Annotated[Membership, Depends(require_org_permission(Permission.ORG_MANAGE))]
+
+
+def _require_billing_manage(membership: Membership) -> None:
+    if not has_permission(membership.role, Permission.BILLING_MANAGE):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Missing permission: billing:manage",
+        )
 
 
 def _belongs(instance: Any, organization_id: UUID, label: str):
@@ -160,6 +168,8 @@ def create_department(
     current_user: CurrentUserDep,
     session: SessionDep,
 ) -> Department:
+    if payload.budget_limit_usd > 0:
+        _require_billing_manage(_membership)
     existing = session.scalar(
         select(Department).where(
             Department.organization_id == organization_id,
@@ -176,6 +186,9 @@ def create_department(
     )
     session.add(department)
     session.flush()
+    details: dict[str, Any] = {"slug": department.slug}
+    if payload.budget_limit_usd > 0:
+        details["budget_limit_usd"] = department.budget_limit_usd
     _audit(
         session,
         organization_id=organization_id,
@@ -183,7 +196,7 @@ def create_department(
         action="department.created",
         resource_type="department",
         resource_id=department.id,
-        details={"slug": department.slug},
+        details=details,
     )
     session.commit()
     session.refresh(department)
@@ -215,9 +228,23 @@ def update_department(
     session: SessionDep,
 ) -> Department:
     department = _department(session, organization_id, department_id)
+    budget_changed = "budget_limit_usd" in payload.model_fields_set
+    if budget_changed:
+        _require_billing_manage(_membership)
     if "owner_agent_id" in payload.model_fields_set:
         _agent(session, organization_id, payload.owner_agent_id)
+    before_budget = department.budget_limit_usd
     _apply_patch(department, payload)
+    details = (
+        {
+            "budget_limit_usd": {
+                "before": before_budget,
+                "after": department.budget_limit_usd,
+            }
+        }
+        if budget_changed
+        else None
+    )
     _audit(
         session,
         organization_id=organization_id,
@@ -225,6 +252,7 @@ def update_department(
         action="department.updated",
         resource_type="department",
         resource_id=department.id,
+        details=details,
     )
     session.commit()
     session.refresh(department)
@@ -327,6 +355,15 @@ def create_project(
     current_user: CurrentUserDep,
     session: SessionDep,
 ) -> OrganizationProject:
+    seeded_accounting = any(
+        (
+            payload.budget_limit_usd > 0,
+            payload.budget_spent_usd > 0,
+            payload.resource_used_units > 0,
+        )
+    )
+    if seeded_accounting:
+        _require_billing_manage(_membership)
     existing = session.scalar(
         select(OrganizationProject).where(
             OrganizationProject.organization_id == organization_id,
@@ -347,6 +384,13 @@ def create_project(
     )
     session.add(project)
     session.flush()
+    details: dict[str, Any] = {"slug": project.slug}
+    if seeded_accounting:
+        details["accounting"] = {
+            "budget_limit_usd": project.budget_limit_usd,
+            "budget_spent_usd": project.budget_spent_usd,
+            "resource_used_units": project.resource_used_units,
+        }
     _audit(
         session,
         organization_id=organization_id,
@@ -354,7 +398,7 @@ def create_project(
         action="organization_project.created",
         resource_type="organization_project",
         resource_id=project.id,
-        details={"slug": project.slug},
+        details=details,
     )
     session.commit()
     session.refresh(project)
@@ -386,13 +430,37 @@ def update_project(
     session: SessionDep,
 ) -> OrganizationProject:
     project = _project(session, organization_id, project_id)
+    accounting_fields = {
+        "budget_limit_usd",
+        "budget_spent_usd",
+        "resource_used_units",
+    }
+    changed_accounting = accounting_fields & payload.model_fields_set
+    if changed_accounting:
+        _require_billing_manage(_membership)
     if "department_id" in payload.model_fields_set and payload.department_id is not None:
         _department(session, organization_id, payload.department_id)
     if "goal_id" in payload.model_fields_set and payload.goal_id is not None:
         _goal(session, organization_id, payload.goal_id)
     if "lead_agent_id" in payload.model_fields_set:
         _agent(session, organization_id, payload.lead_agent_id)
+    before_accounting = {
+        "budget_limit_usd": project.budget_limit_usd,
+        "budget_spent_usd": project.budget_spent_usd,
+        "resource_used_units": project.resource_used_units,
+    }
     _apply_patch(project, payload)
+    details = None
+    if changed_accounting:
+        details = {
+            "accounting": {
+                field: {
+                    "before": before_accounting[field],
+                    "after": getattr(project, field),
+                }
+                for field in sorted(changed_accounting)
+            }
+        }
     _audit(
         session,
         organization_id=organization_id,
@@ -400,6 +468,7 @@ def update_project(
         action="organization_project.updated",
         resource_type="organization_project",
         resource_id=project.id,
+        details=details,
     )
     session.commit()
     session.refresh(project)
@@ -418,6 +487,8 @@ def allocate_project_resources(
     current_user: CurrentUserDep,
     session: SessionDep,
 ) -> OrganizationProject:
+    if payload.budget_limit_usd is not None:
+        _require_billing_manage(_membership)
     project = _project(session, organization_id, project_id)
     if project.status in {"completed", "cancelled"}:
         raise HTTPException(status_code=409, detail="Closed projects cannot be reallocated")
