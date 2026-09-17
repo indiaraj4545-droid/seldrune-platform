@@ -14,6 +14,20 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Alembic creates version_num as VARCHAR(32) by default. This is the first
+    # Seldrune revision identifier longer than 32 characters, so PostgreSQL
+    # must be widened before Alembic records this revision after upgrade().
+    # SQLite does not enforce VARCHAR length and cannot alter a column type
+    # directly, so no change is necessary there.
+    if op.get_bind().dialect.name == "postgresql":
+        op.alter_column(
+            "alembic_version",
+            "version_num",
+            existing_type=sa.String(length=32),
+            type_=sa.String(length=128),
+            existing_nullable=False,
+        )
+
     op.create_table(
         "agent_configuration_revisions",
         sa.Column("id", sa.Uuid(), nullable=False),
