@@ -6,7 +6,6 @@ _RECOVERY_CODE_PATTERN = r"^(?:[0-9A-Fa-f]{4}-){5}[0-9A-Fa-f]{4}$"
 class MfaStatus(BaseModel):
     enabled: bool
     setup_pending: bool
-    recovery_codes_remaining: int = Field(ge=0)
 
 
 class MfaSetupRequest(BaseModel):
@@ -25,10 +24,6 @@ class MfaCodeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     code: str = Field(pattern=r"^\d{6}$")
-
-
-class MfaEnableResponse(MfaStatus):
-    recovery_codes: list[str]
 
 
 class MfaDisableRequest(BaseModel):
@@ -52,6 +47,9 @@ class MfaRecoveryRegenerateRequest(BaseModel):
     code: str = Field(pattern=r"^\d{6}$")
 
 
-class MfaRecoveryCodesResponse(BaseModel):
-    recovery_codes: list[str]
+class MfaRecoveryStatus(BaseModel):
     recovery_codes_remaining: int = Field(ge=0)
+
+
+class MfaRecoveryCodesResponse(MfaRecoveryStatus):
+    recovery_codes: list[str]
