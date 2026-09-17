@@ -46,6 +46,7 @@ from backend.app.services.refresh_sessions import (
     revoke_refresh_family,
     rotate_refresh_token,
 )
+from backend.app.services.security_events import record_user_security_event
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 _BOOTSTRAP_LOCK_ID = 7_341_337_006_011
@@ -215,6 +216,14 @@ def refresh(payload: RefreshRequest, session: SessionDep) -> AuthResponse:
             actor_user_id=exc.user_id,
             resource_id=str(exc.user_id),
             details={"family_id": str(exc.family_id)},
+        )
+        record_user_security_event(
+            session,
+            user_id=exc.user_id,
+            event_type="refresh_token_reuse",
+            severity="critical",
+            resource_type="user",
+            resource_id=str(exc.user_id),
         )
         session.commit()
         raise _refresh_credentials_error() from exc
