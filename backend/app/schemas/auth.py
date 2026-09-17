@@ -30,6 +30,10 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
 
+class RefreshRequest(BaseModel):
+    refresh_token: str = Field(min_length=32, max_length=512)
+
+
 class UserPublic(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -49,8 +53,10 @@ class OrganizationPublic(BaseModel):
 
 class AuthResponse(BaseModel):
     access_token: str
+    refresh_token: str
     token_type: Literal["bearer"] = "bearer"
     expires_in: int
+    refresh_expires_in: int
     user: UserPublic
 
 
