@@ -19,15 +19,21 @@ Seldrune Core v0.3 introduced the first authentication and authorization boundar
 
 ## Multi-factor authentication
 
-Users can enroll a standard 6-digit TOTP authenticator through authenticated setup, confirmation, and disable endpoints. Setup requires current-password re-authentication, enabling requires a valid authenticator code, and disabling requires both the current password and a valid authenticator code.
+Users can enroll a standard 6-digit TOTP authenticator through authenticated setup, confirmation, and disable endpoints. Setup requires current-password re-authentication, enabling requires a valid authenticator code, and disabling requires the current password plus either a valid authenticator code or one unused recovery code.
 
 Seldrune does not persist the base32 TOTP seed. It stores only a random per-user enrollment nonce and derives the authenticator secret with HMAC domain separation from the server authentication key, user id, and nonce. Restarting setup before enable rotates the nonce; disabling clears it. MFA state changes revoke every active refresh-token family for the user.
 
-When MFA is enabled, password login and existing-user invitation acceptance require the TOTP code before any new access/refresh session is issued. Existing refresh sessions created before an MFA state change are invalidated.
+When MFA is enabled, password login and existing-user invitation acceptance require either the current TOTP code or one valid one-time recovery code before any new access/refresh session is issued. Recovery-code failures share the existing login throttle budget.
+
+Recovery codes are generated explicitly after MFA enrollment and can be regenerated only after current-password re-authentication plus a live TOTP code. Raw recovery codes are returned only at generation time. The database stores only keyed HMAC-SHA256 digests. Successful use permanently consumes the matching code; regeneration invalidates every previous unused code. Status APIs expose only the number of unused recovery codes.
+
+Recovery-code use and regeneration are audited and can produce organization-scoped security events without persisting the raw recovery code, TOTP value, password, bearer token, or refresh token.
 
 ## Registration and invitations
 
 `POST /api/v1/auth/register` is the one-time owner bootstrap flow. After bootstrap, organization membership is expanded through expiring one-time invitations. Invitation tokens are stored only as hashes, support revocation and replay protection, and enforce role ceilings so administrators cannot mint owner authority.
+
+Existing users with MFA enabled must satisfy MFA during invitation acceptance. TOTP and one-time recovery codes follow the same MFA rules as normal password login.
 
 ## Authorization
 
@@ -44,13 +50,14 @@ Current roles:
 
 High-signal security events are stored in an organization-scoped security center. Owner, admin, and auditor roles can read events; owner and admin roles can acknowledge them. Open critical and warning events feed the existing owner-attention snapshot and privacy-safe counts-only push envelope.
 
-Initial producers include refresh-token reuse detection and inbound webhook authentication rejection. Security-event records intentionally exclude raw passwords, bearer tokens, refresh tokens, webhook signatures, request bodies, and secret values.
+Initial producers include refresh-token reuse detection, inbound webhook authentication rejection, and MFA recovery-code use/regeneration. Security-event records intentionally exclude raw passwords, bearer tokens, refresh tokens, MFA recovery codes, TOTP values, webhook signatures, request bodies, and secret values.
 
 ## Implemented production controls
 
 - invite-only post-bootstrap onboarding,
 - organization member administration and role ceilings,
 - TOTP multi-factor authentication,
+- one-time hashed MFA recovery codes,
 - rotating refresh sessions with replay-family revocation,
 - server-side access-token revocation,
 - per-session logout,
@@ -65,5 +72,5 @@ Initial producers include refresh-token reuse detection and inbound webhook auth
 Before accepting broad external customer access, complete:
 
 - email verification,
-- account recovery,
+- password/account recovery beyond MFA recovery codes,
 - cloud secret-manager integration for secret values.
