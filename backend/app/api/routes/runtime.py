@@ -12,7 +12,11 @@ from backend.app.models.model_invocation import ModelInvocation
 from backend.app.models.task import Task
 from backend.app.schemas.agent_task import TaskPublic
 from backend.app.schemas.runtime import ModelInvocationPublic
-from backend.app.services.agent_runtime import AgentRuntimeError, execute_agent_task
+from backend.app.services.agent_runtime import (
+    AgentPolicyError,
+    AgentRuntimeError,
+    execute_agent_task,
+)
 
 router = APIRouter(prefix="/organizations", tags=["agent-runtime"])
 
@@ -60,6 +64,8 @@ def execute_task(
             agent=agent,
             actor_user_id=current_user.id,
         )
+    except AgentPolicyError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except AgentRuntimeError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 

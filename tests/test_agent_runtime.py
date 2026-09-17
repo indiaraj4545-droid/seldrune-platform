@@ -57,23 +57,32 @@ def register_owner(client: TestClient) -> tuple[str, str]:
     return token, organization_id
 
 
-def create_runtime_task(client: TestClient, token: str, organization_id: str) -> dict:
+def create_runtime_task(
+    client: TestClient,
+    token: str,
+    organization_id: str,
+    *,
+    agent_overrides: dict | None = None,
+) -> dict:
     headers = {"Authorization": f"Bearer {token}"}
+    agent_payload = {
+        "name": "R&D Runtime Agent",
+        "slug": "rnd-runtime-agent",
+        "description": "Executes research tasks.",
+        "capabilities": ["research", "analysis"],
+        "runtime_config": {
+            "provider": "mock",
+            "model": "mock-v1",
+            "input_cost_per_million": 1.0,
+            "output_cost_per_million": 2.0,
+        },
+    }
+    if agent_overrides:
+        agent_payload.update(agent_overrides)
     agent_response = client.post(
         f"/api/v1/organizations/{organization_id}/agents",
         headers=headers,
-        json={
-            "name": "R&D Runtime Agent",
-            "slug": "rnd-runtime-agent",
-            "description": "Executes research tasks.",
-            "capabilities": ["research", "analysis"],
-            "runtime_config": {
-                "provider": "mock",
-                "model": "mock-v1",
-                "input_cost_per_million": 1.0,
-                "output_cost_per_million": 2.0,
-            },
-        },
+        json=agent_payload,
     )
     assert agent_response.status_code == 201
     agent = agent_response.json()
@@ -107,6 +116,7 @@ def test_mock_agent_runtime_executes_task_and_records_usage(client: TestClient) 
     assert completed["status"] == "succeeded"
     assert completed["output_data"]["provider"] == "mock"
     assert completed["output_data"]["model"] == "mock-v1"
+    assert completed["output_data"]["agent_version"] == 1
     assert completed["output_data"]["usage"]["total_tokens"] > 0
     assert "payment reconciliation" in completed["output_data"]["text"].lower()
 
@@ -129,6 +139,79 @@ def test_mock_agent_runtime_executes_task_and_records_usage(client: TestClient) 
     event_types = [event["event_type"] for event in events.json()]
     assert "agent.runtime.started" in event_types
     assert "agent.runtime.completed" in event_types
+
+
+def test_agent_model_policy_allows_configured_runtime(client: TestClient) -> None:
+    token, organization_id = register_owner(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    task = create_runtime_task(
+        client,
+        token,
+        organization_id,
+        agent_overrides={
+            "allowed_model_providers": ["mock"],
+            "allowed_models": ["mock-v1"],
+        },
+    )
+
+    execute = client.post(
+        f"/api/v1/organizations/{organization_id}/tasks/{task['id']}/execute",
+        headers=headers,
+    )
+    assert execute.status_code == 200
+    assert execute.json()["output_data"]["agent_version"] == 1
+
+
+@pytest.mark.parametrize(
+    ("agent_overrides", "detail_fragment"),
+    [
+        (
+            {"allowed_model_providers": ["openai"]},
+            "Model provider 'mock' is not allowed",
+        ),
+        (
+            {
+                "allowed_model_providers": ["mock"],
+                "allowed_models": ["different-model"],
+            },
+            "Model 'mock-v1' is not allowed",
+        ),
+    ],
+)
+def test_agent_model_policy_blocks_before_invocation(
+    client: TestClient,
+    agent_overrides: dict,
+    detail_fragment: str,
+) -> None:
+    token, organization_id = register_owner(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    task = create_runtime_task(
+        client,
+        token,
+        organization_id,
+        agent_overrides=agent_overrides,
+    )
+
+    execute = client.post(
+        f"/api/v1/organizations/{organization_id}/tasks/{task['id']}/execute",
+        headers=headers,
+    )
+    assert execute.status_code == 409
+    assert detail_fragment in execute.json()["detail"]
+
+    unchanged_task = client.get(
+        f"/api/v1/organizations/{organization_id}/tasks/{task['id']}",
+        headers=headers,
+    )
+    assert unchanged_task.status_code == 200
+    assert unchanged_task.json()["status"] == "assigned"
+
+    invocations = client.get(
+        f"/api/v1/organizations/{organization_id}/model-invocations",
+        headers=headers,
+    )
+    assert invocations.status_code == 200
+    assert invocations.json() == []
 
 
 def test_unassigned_task_cannot_execute(client: TestClient) -> None:
