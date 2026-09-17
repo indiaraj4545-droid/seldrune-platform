@@ -1,7 +1,7 @@
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 
 from backend.app.api.dependencies import SessionDep, require_org_permission
@@ -10,6 +10,7 @@ from backend.app.core.rbac import Permission, Role
 from backend.app.models.membership import Membership
 from backend.app.models.orchestration import OrchestrationRun
 from backend.app.services.owner_attention import build_owner_attention
+from backend.app.services.owner_attention_snapshot import build_owner_attention_snapshot
 from backend.app.services.owner_dashboard import build_owner_dashboard
 
 router = APIRouter(prefix="/organizations", tags=["owner-attention"])
@@ -35,13 +36,7 @@ def _owner_commands(session: SessionDep, organization_id: UUID) -> list[Orchestr
     return [run for run in runs if (run.context or {}).get("owner_command")]
 
 
-@router.get("/{organization_id}/owner-attention", response_model=dict[str, Any])
-def get_owner_attention(
-    organization_id: UUID,
-    membership: OwnerDep,
-    session: SessionDep,
-) -> dict[str, Any]:
-    _require_owner(membership)
+def _owner_attention_state(session: SessionDep, organization_id: UUID) -> dict[str, Any]:
     dashboard = build_owner_dashboard(session, organization_id)
     executive_brief = _brief_with_lifecycle(session, organization_id)
     commands = _owner_commands(session, organization_id)
@@ -49,4 +44,36 @@ def get_owner_attention(
         dashboard=dashboard,
         executive_brief=executive_brief,
         commands=commands,
+    )
+
+
+@router.get("/{organization_id}/owner-attention", response_model=dict[str, Any])
+def get_owner_attention(
+    organization_id: UUID,
+    membership: OwnerDep,
+    session: SessionDep,
+) -> dict[str, Any]:
+    _require_owner(membership)
+    return _owner_attention_state(session, organization_id)
+
+
+@router.get("/{organization_id}/owner-attention/snapshot", response_model=dict[str, Any])
+def get_owner_attention_snapshot(
+    organization_id: UUID,
+    membership: OwnerDep,
+    session: SessionDep,
+    limit: int = Query(default=5, ge=1, le=20),
+    previous_fingerprint: str | None = Query(
+        default=None,
+        min_length=64,
+        max_length=64,
+        pattern="^[0-9a-fA-F]{64}$",
+    ),
+) -> dict[str, Any]:
+    _require_owner(membership)
+    attention = _owner_attention_state(session, organization_id)
+    return build_owner_attention_snapshot(
+        attention,
+        limit=limit,
+        previous_fingerprint=previous_fingerprint,
     )
