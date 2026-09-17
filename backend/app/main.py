@@ -12,6 +12,7 @@ from backend.app.api.routes.console import router as console_router
 from backend.app.api.routes.executive_brief import router as executive_brief_router
 from backend.app.api.routes.knowledge import router as knowledge_router
 from backend.app.api.routes.membership_admin import router as membership_admin_router
+from backend.app.api.routes.mfa import router as mfa_router
 from backend.app.api.routes.orchestrations import router as orchestrations_router
 from backend.app.api.routes.organization_kernel import router as organization_kernel_router
 from backend.app.api.routes.organizations import router as organizations_router
@@ -43,6 +44,7 @@ def create_app() -> FastAPI:
     for item in (
         status_router,
         auth_router,
+        mfa_router,
         organizations_router,
         membership_admin_router,
         organization_kernel_router,
