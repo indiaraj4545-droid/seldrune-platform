@@ -1,3 +1,5 @@
+from uuid import UUID
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
@@ -286,7 +288,7 @@ def test_existing_user_invitation_requires_mfa(client: TestClient) -> None:
         session.add(
             Membership(
                 organization_id=second.id,
-                user_id=owner_user_id,
+                user_id=UUID(owner_user_id),
                 role="owner",
             )
         )
