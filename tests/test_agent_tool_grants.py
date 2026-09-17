@@ -253,7 +253,9 @@ def test_legacy_unrestricted_agent_preserves_high_risk_approval(client: TestClie
     assert approved.json()["status"] == "succeeded"
 
 
-def test_tool_policy_changes_increment_version_and_are_org_scoped(client: TestClient) -> None:
+def test_tool_policy_changes_increment_version_and_reject_unknown_tools(
+    client: TestClient,
+) -> None:
     headers, organization_id = register_owner(client)
     tool = create_tool(
         client,
@@ -303,20 +305,13 @@ def test_tool_policy_changes_increment_version_and_are_org_scoped(client: TestCl
     assert cleared.status_code == 200
     assert cleared.json()["version"] == 3
 
-    foreign_headers, foreign_org_id = register_owner(client, "foreign")
-    create_tool(
-        client,
-        foreign_headers,
-        foreign_org_id,
-        slug="foreign-only-tool",
-        action_name="echo",
-    )
     rejected = client.patch(
         f"/api/v1/organizations/{organization_id}/agents/{agent['id']}",
         headers=headers,
         json={"allowed_tool_slugs": ["foreign-only-tool"]},
     )
     assert rejected.status_code == 422
+    assert rejected.json()["detail"] == {"unknown_tool_slugs": ["foreign-only-tool"]}
 
     fetched = client.get(
         f"/api/v1/organizations/{organization_id}/agents/{agent['id']}",
