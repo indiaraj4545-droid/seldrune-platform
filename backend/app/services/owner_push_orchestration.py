@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from threading import Lock
 from typing import Any
 from uuid import UUID
 
@@ -19,6 +20,11 @@ class OwnerPushDeliverySummary:
     delivered: int = 0
     failed: int = 0
     stale_removed: int = 0
+    deduplicated: bool = False
+
+
+_last_delivered_fingerprint: dict[tuple[UUID, UUID], str] = {}
+_delivery_lock = Lock()
 
 
 def deliver_owner_attention_pushes(
@@ -29,6 +35,17 @@ def deliver_owner_attention_pushes(
 ) -> OwnerPushDeliverySummary:
     if not delivery_configured():
         return OwnerPushDeliverySummary(configured=False)
+
+    fingerprint = envelope.get("fingerprint")
+    scope = (organization_id, user_id)
+
+    # v0.82: suppress an unchanged counts-only envelope for this owner scope.
+    # The cache is deliberately process-local: it reduces accidental duplicate
+    # delivery without adding a new persistence or command-execution surface.
+    if isinstance(fingerprint, str):
+        with _delivery_lock:
+            if _last_delivered_fingerprint.get(scope) == fingerprint:
+                return OwnerPushDeliverySummary(configured=True, deduplicated=True)
 
     subscriptions = list(
         session.scalars(
@@ -54,6 +71,12 @@ def deliver_owner_attention_pushes(
 
     if stale_removed:
         session.commit()
+
+    # Only successful delivery establishes the idempotency marker. A complete
+    # transient failure remains retryable on the next explicit delivery call.
+    if delivered and isinstance(fingerprint, str):
+        with _delivery_lock:
+            _last_delivered_fingerprint[scope] = fingerprint
 
     return OwnerPushDeliverySummary(
         configured=True,
