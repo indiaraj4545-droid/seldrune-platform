@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, JSON, String, Text, UniqueConstraint, Uuid, func
+from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.app.db.base import Base
@@ -32,8 +32,11 @@ class Agent(Base):
     slug: Mapped[str] = mapped_column(String(100), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
     capabilities: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     runtime_config: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    allowed_model_providers: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    allowed_models: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
