@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -10,6 +10,7 @@ class PlanStepInput(BaseModel):
     description: str = Field(min_length=3, max_length=4000)
     capabilities: list[str] = Field(default_factory=list)
     priority: int = Field(default=0, ge=-100, le=100)
+    requires_approval: bool = False
 
 
 class OrchestrationCreate(BaseModel):
@@ -32,6 +33,7 @@ class AutonomousExecutionReport(BaseModel):
     retried_steps: int
     failed_steps: int
     blocked_steps: int
+    approval_blocked_steps: int = 0
     halted_reason: str | None
     last_sequence: int | None
     budget_reservation_usd: float | None = None
@@ -51,6 +53,7 @@ class OrchestrationStepPublic(BaseModel):
     title: str
     objective: str
     required_capabilities: list[str]
+    requires_approval: bool
     match_score: int
     created_at: datetime
 
@@ -69,6 +72,26 @@ class OrchestrationRunPublic(BaseModel):
     created_at: datetime
     updated_at: datetime
     steps: list[OrchestrationStepPublic] = Field(default_factory=list)
+
+
+class ApprovalDecisionRequest(BaseModel):
+    decision: Literal["approved", "rejected"]
+    decision_note: str | None = Field(default=None, max_length=2000)
+
+
+class OrchestrationApprovalPublic(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    organization_id: UUID
+    orchestration_run_id: UUID
+    orchestration_step_id: UUID
+    status: Literal["pending", "approved", "rejected"]
+    requested_by_user_id: UUID | None
+    decided_by_user_id: UUID | None
+    decision_note: str | None
+    requested_at: datetime
+    decided_at: datetime | None
 
 
 class AutonomousExecutionResponse(BaseModel):

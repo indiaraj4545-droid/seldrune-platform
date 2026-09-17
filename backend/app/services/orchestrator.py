@@ -4,11 +4,16 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.app.core.orchestration import OrchestrationStatus, PlannedStep
+from backend.app.core.orchestration import ApprovalStatus, OrchestrationStatus, PlannedStep
 from backend.app.core.tasking import AgentStatus, TERMINAL_TASK_STATUSES, TaskStatus
 from backend.app.models.agent import Agent
-from backend.app.models.orchestration import OrchestrationRun, OrchestrationStep
+from backend.app.models.orchestration import (
+    OrchestrationApproval,
+    OrchestrationRun,
+    OrchestrationStep,
+)
 from backend.app.models.task import Task, TaskEvent
+from backend.app.services.audit import record_audit
 
 
 def normalize_capability(value: str) -> str:
@@ -91,7 +96,8 @@ def build_agent_performance_evidence(
         completed = [
             task
             for task in assigned
-            if task.status in {
+            if task.status
+            in {
                 TaskStatus.SUCCEEDED.value,
                 TaskStatus.FAILED.value,
                 TaskStatus.CANCELLED.value,
@@ -140,6 +146,7 @@ def create_orchestration_run(
     session.flush()
 
     matched_steps = 0
+    approval_required_steps = 0
     for sequence, planned in enumerate(plan, start=1):
         agent, score = select_best_agent(
             agents,
@@ -180,22 +187,50 @@ def create_orchestration_run(
                     "source": "executive-orchestrator",
                     "orchestration_run_id": str(run.id),
                     "status": task.status,
+                    "requires_approval": planned.requires_approval,
                 },
             )
         )
-        session.add(
-            OrchestrationStep(
-                orchestration_run_id=run.id,
-                organization_id=organization_id,
-                task_id=task.id,
-                assigned_agent_id=agent.id if agent is not None else None,
-                sequence=sequence,
-                title=planned.title,
-                objective=planned.objective,
-                required_capabilities=planned.required_capabilities,
-                match_score=score,
-            )
+        step = OrchestrationStep(
+            orchestration_run_id=run.id,
+            organization_id=organization_id,
+            task_id=task.id,
+            assigned_agent_id=agent.id if agent is not None else None,
+            sequence=sequence,
+            title=planned.title,
+            objective=planned.objective,
+            required_capabilities=planned.required_capabilities,
+            requires_approval=planned.requires_approval,
+            match_score=score,
         )
+        session.add(step)
+        session.flush()
+
+        if planned.requires_approval:
+            approval = OrchestrationApproval(
+                organization_id=organization_id,
+                orchestration_run_id=run.id,
+                orchestration_step_id=step.id,
+                status=ApprovalStatus.PENDING.value,
+                requested_by_user_id=created_by_user_id,
+            )
+            session.add(approval)
+            session.flush()
+            approval_required_steps += 1
+            record_audit(
+                session,
+                organization_id=organization_id,
+                actor_user_id=created_by_user_id,
+                action="orchestration.approval.requested",
+                resource_type="orchestration_approval",
+                resource_id=str(approval.id),
+                details={
+                    "orchestration_run_id": str(run.id),
+                    "orchestration_step_id": str(step.id),
+                    "sequence": sequence,
+                },
+            )
+
         if agent is not None:
             matched_steps += 1
 
@@ -205,6 +240,7 @@ def create_orchestration_run(
         "step_count": len(plan),
         "matched_steps": matched_steps,
         "unmatched_steps": len(plan) - matched_steps,
+        "approval_required_steps": approval_required_steps,
         "agent_routing": {
             "mode": "evidence-weighted-v1",
             "agents_with_completed_evidence": sum(

@@ -8,16 +8,21 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.app.core.config import settings
+from backend.app.core.orchestration import ApprovalStatus
 from backend.app.core.tasking import TaskStatus
 from backend.app.models.agent import Agent
 from backend.app.models.model_invocation import ModelInvocation
-from backend.app.models.orchestration import OrchestrationRun, OrchestrationStep
+from backend.app.models.orchestration import (
+    OrchestrationApproval,
+    OrchestrationRun,
+    OrchestrationStep,
+)
 from backend.app.models.task import Task, TaskEvent
 from backend.app.services.agent_runtime import AgentRuntimeError, execute_agent_task
 from backend.app.services.audit import record_audit
-from backend.app.services.project_delivery import sync_project_delivery_outcome
 from backend.app.services.model_gateway import ModelGateway
 from backend.app.services.orchestrator import refresh_orchestration_status
+from backend.app.services.project_delivery import sync_project_delivery_outcome
 
 
 class AutonomousExecutionError(RuntimeError):
@@ -181,6 +186,15 @@ def execute_orchestration_autonomously(
             .order_by(OrchestrationStep.sequence)
         )
     )
+    approvals_by_step = {
+        approval.orchestration_step_id: approval
+        for approval in session.scalars(
+            select(OrchestrationApproval).where(
+                OrchestrationApproval.orchestration_run_id == run.id,
+                OrchestrationApproval.organization_id == run.organization_id,
+            )
+        )
+    }
     report: dict[str, Any] = {
         "mode": "sequential-v1",
         "executed_steps": 0,
@@ -188,6 +202,7 @@ def execute_orchestration_autonomously(
         "retried_steps": 0,
         "failed_steps": 0,
         "blocked_steps": 0,
+        "approval_blocked_steps": 0,
         "halted_reason": None,
         "last_sequence": None,
         "budget_reservation_usd": _runtime_budget_reservation(run),
@@ -224,8 +239,8 @@ def execute_orchestration_autonomously(
             report["last_sequence"] = step.sequence
             break
 
-        status = TaskStatus(task.status)
-        if status is TaskStatus.SUCCEEDED:
+        task_status = TaskStatus(task.status)
+        if task_status is TaskStatus.SUCCEEDED:
             upstream.append(
                 _upstream_result(
                     step,
@@ -238,7 +253,7 @@ def execute_orchestration_autonomously(
             continue
 
         retries_used = 0
-        if status is TaskStatus.FAILED and max_retries_per_step > 0:
+        if task_status is TaskStatus.FAILED and max_retries_per_step > 0:
             task = _clone_failed_task(
                 session,
                 step=step,
@@ -247,17 +262,17 @@ def execute_orchestration_autonomously(
             )
             retries_used += 1
             report["retried_steps"] += 1
-            status = TaskStatus(task.status)
+            task_status = TaskStatus(task.status)
 
-        if status in {TaskStatus.FAILED, TaskStatus.CANCELLED}:
+        if task_status in {TaskStatus.FAILED, TaskStatus.CANCELLED}:
             report["failed_steps"] += 1
             report["last_sequence"] = step.sequence
             if stop_on_failure:
-                report["halted_reason"] = f"task_{status.value}"
+                report["halted_reason"] = f"task_{task_status.value}"
                 break
             continue
 
-        if status is not TaskStatus.ASSIGNED or task.assigned_agent_id is None:
+        if task_status is not TaskStatus.ASSIGNED or task.assigned_agent_id is None:
             report["blocked_steps"] += 1
             report["halted_reason"] = "unmatched_or_unassigned"
             report["last_sequence"] = step.sequence
@@ -269,6 +284,41 @@ def execute_orchestration_autonomously(
             report["halted_reason"] = "missing_agent"
             report["last_sequence"] = step.sequence
             break
+
+        if step.requires_approval:
+            approval = approvals_by_step.get(step.id)
+            approval_status = approval.status if approval is not None else None
+            if approval is None:
+                approval_block_reason = "approval_missing"
+            elif approval.status == ApprovalStatus.PENDING.value:
+                approval_block_reason = "approval_required"
+            elif approval.status == ApprovalStatus.REJECTED.value:
+                approval_block_reason = "approval_rejected"
+            elif approval.status == ApprovalStatus.APPROVED.value:
+                approval_block_reason = None
+            else:
+                approval_block_reason = "approval_invalid"
+
+            if approval_block_reason is not None:
+                report["blocked_steps"] += 1
+                report["approval_blocked_steps"] += 1
+                report["halted_reason"] = approval_block_reason
+                report["last_sequence"] = step.sequence
+                record_audit(
+                    session,
+                    organization_id=run.organization_id,
+                    actor_user_id=actor_user_id,
+                    action="orchestration.approval.blocked",
+                    resource_type="orchestration",
+                    resource_id=str(run.id),
+                    details={
+                        "orchestration_step_id": str(step.id),
+                        "sequence": step.sequence,
+                        "approval_status": approval_status,
+                        "halted_reason": approval_block_reason,
+                    },
+                )
+                break
 
         recorded_cost = _recorded_run_cost(session, steps=steps)
         report["recorded_cost_usd"] = recorded_cost

@@ -11,11 +11,18 @@ class OrchestrationStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class ApprovalStatus(StrEnum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
 class PlannedStep(NamedTuple):
     title: str
     objective: str
     required_capabilities: list[str]
     priority: int = 0
+    requires_approval: bool = False
 
 
 def build_default_plan(objective: str) -> list[PlannedStep]:
