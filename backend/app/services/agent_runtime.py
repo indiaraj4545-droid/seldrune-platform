@@ -25,16 +25,33 @@ class AgentRuntimeError(RuntimeError):
     pass
 
 
+class AgentPolicyError(AgentRuntimeError):
+    pass
+
+
 def _resolve_provider(agent: Agent) -> ModelProvider:
     value = str(agent.runtime_config.get("provider", settings.model_provider)).lower()
     try:
-        return ModelProvider(value)
+        provider = ModelProvider(value)
     except ValueError as exc:
         raise AgentRuntimeError(f"Unsupported model provider: {value}") from exc
+    if (
+        agent.allowed_model_providers is not None
+        and provider.value not in agent.allowed_model_providers
+    ):
+        raise AgentPolicyError(
+            f"Model provider '{provider.value}' is not allowed for agent version {agent.version}"
+        )
+    return provider
 
 
 def _resolve_model(agent: Agent) -> str:
-    return str(agent.runtime_config.get("model", settings.model_default)).strip()
+    model = str(agent.runtime_config.get("model", settings.model_default)).strip()
+    if agent.allowed_models is not None and model not in agent.allowed_models:
+        raise AgentPolicyError(
+            f"Model '{model}' is not allowed for agent version {agent.version}"
+        )
+    return model
 
 
 def _build_instructions(agent: Agent) -> str:
@@ -119,6 +136,7 @@ def execute_agent_task(
             details={
                 "provider": provider.value,
                 "model": model,
+                "agent_version": agent.version,
                 "context_refs": context_refs,
             },
         )
@@ -132,6 +150,7 @@ def execute_agent_task(
         resource_id=str(task.id),
         details={
             "agent_id": str(agent.id),
+            "agent_version": agent.version,
             "provider": provider.value,
             "model": model,
             "context_refs": context_refs,
@@ -146,7 +165,11 @@ def execute_agent_task(
         instructions=_build_instructions(agent),
         input_text=_build_input(task, knowledge_context),
         max_output_tokens=max_output_tokens,
-        metadata={"task_id": str(task.id), "agent_id": str(agent.id)},
+        metadata={
+            "task_id": str(task.id),
+            "agent_id": str(agent.id),
+            "agent_version": agent.version,
+        },
     )
 
     try:
@@ -164,7 +187,12 @@ def execute_agent_task(
                 actor_user_id=actor_user_id,
                 actor_agent_id=agent.id,
                 event_type="agent.runtime.failed",
-                details={"provider": provider.value, "model": model, "error": message},
+                details={
+                    "provider": provider.value,
+                    "model": model,
+                    "agent_version": agent.version,
+                    "error": message,
+                },
             )
         )
         record_audit(
@@ -174,7 +202,11 @@ def execute_agent_task(
             action="agent.runtime.failed",
             resource_type="task",
             resource_id=str(task.id),
-            details={"agent_id": str(agent.id), "error": message},
+            details={
+                "agent_id": str(agent.id),
+                "agent_version": agent.version,
+                "error": message,
+            },
         )
         session.commit()
         raise AgentRuntimeError(message) from exc
@@ -199,6 +231,7 @@ def execute_agent_task(
             "provider": result.provider.value,
             "model": result.model,
             "response_id": result.response_id,
+            "agent_version": agent.version,
             "context_refs": context_refs,
             "usage": {
                 "input_tokens": result.usage.input_tokens,
@@ -225,6 +258,7 @@ def execute_agent_task(
             details={
                 "provider": result.provider.value,
                 "model": result.model,
+                "agent_version": agent.version,
                 "total_tokens": result.usage.total_tokens,
                 "context_refs": context_refs,
             },
@@ -239,6 +273,7 @@ def execute_agent_task(
         resource_id=str(task.id),
         details={
             "agent_id": str(agent.id),
+            "agent_version": agent.version,
             "provider": result.provider.value,
             "model": result.model,
             "total_tokens": result.usage.total_tokens,
