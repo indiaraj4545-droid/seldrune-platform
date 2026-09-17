@@ -1,38 +1,84 @@
-# Seldrune Core v0.1 Architecture
+# Seldrune Platform Architecture — v1.x
 
-Seldrune is being built as an AI-native operating platform for research, software, automation, ventures, talent, and managed operations.
+Seldrune is an AI-native operating platform for research, software engineering, automation, ventures, talent, managed operations, and future products. The platform remains a modular monolith so governance, identity, orchestration, audit, billing, and execution share one authoritative transactional boundary while the product is still evolving rapidly.
 
-## v0.1 objective
+## Core architecture
 
-Establish a small, reliable platform kernel before adding specialized products.
+### API and operator surfaces
 
-## Initial layers
+FastAPI exposes the versioned `/api/v1` control plane. The repository also ships an owner console and runtime/status surfaces. Production API documentation can be disabled independently from the application endpoints.
 
-1. **API layer** — FastAPI service endpoints and future webhooks.
-2. **Configuration layer** — environment-driven application settings.
-3. **Identity and access** — users, organizations, roles, approvals. Planned next.
-4. **Task orchestration** — durable jobs, agent tasks, human approval checkpoints. Planned next.
-5. **Agent registry** — definitions, capabilities, model/tool permissions, versions. Planned next.
-6. **Knowledge layer** — structured memory, documents, retrieval, provenance. Planned later.
-7. **Audit and observability** — every important action traceable and reviewable. Planned next.
-8. **Product modules** — R&D, opportunity discovery, payroll, talent, client automation, and ventures built on the kernel rather than as disconnected systems.
+### Identity and access
+
+Identity is database-backed and organization-scoped. Seldrune currently provides:
+
+- one-time owner bootstrap followed by invitation-based onboarding,
+- organization roles and permission-based RBAC,
+- password hashing and signed access tokens,
+- rotating refresh-token families with replay detection,
+- server-side access-token and refresh-session revocation,
+- login brute-force throttling,
+- TOTP MFA with one-time recovery codes,
+- member administration with role ceilings,
+- organization-scoped security events and audit trails.
+
+The remaining broad-customer identity work includes email verification and account recovery beyond MFA recovery codes.
+
+### Organization kernel
+
+Organizations contain governed operating structure such as departments, goals, projects, tasks, budgets, resources, and accountable owners or agents. Tasks can be authoritatively linked to projects so downstream model usage and project accounting can be reconciled without relying on free-form metadata.
+
+### Agent, model, and tool governance
+
+The Agent Registry stores governed agent definitions, model policy, runtime configuration, tool grants, and immutable configuration revisions. Model calls pass through a provider abstraction and are recorded for usage, latency, token, and cost analysis. Tool execution is constrained by both user RBAC and agent-level tool policy, with human approval checkpoints for consequential actions.
+
+### Orchestration and execution
+
+Seldrune supports durable tasks and higher-level orchestration while preserving explicit human control. Execution paths include approval-aware orchestration, recovery/resume behavior, project attribution, and owner-facing command/attention surfaces. Consequential workflows are designed to fail closed rather than bypass governance when required state is unavailable.
+
+### Knowledge and research
+
+The knowledge layer stores reusable organizational context and retrieval material. Research connectors and live connector policy provide governed access to external information sources while keeping provider credentials outside normal application records.
+
+### Ingress, secrets, and external actions
+
+Signed inbound webhooks provide authenticated ingress. Secret references identify externally supplied credentials without storing secret values in normal application tables. Runtime secret resolution currently supports environment-backed references; production cloud secret-manager integration remains future hardening work.
+
+### Audit, security, and observability
+
+Security-relevant and governed actions are recorded with organization/user/resource attribution. The audit explorer, security center, owner-attention feeds, and privacy-safe push notifications provide operational visibility without embedding raw credentials, tokens, MFA codes, webhook signatures, or secret values.
+
+### Billing and accounting integrity
+
+Model invocations are visible through billing/usage reporting and can roll up by project and department. Unknown or unpriced model cost is preserved as unknown rather than silently treated as zero. Unresolved unpriced usage can block further governed budget execution until an authorized owner records an accounting correction.
+
+## Deployment and readiness
+
+Production uses PostgreSQL migrations through Alembic and starts by running `alembic upgrade head` before Uvicorn. CI exercises the same migration chain against PostgreSQL before a release can merge.
+
+Seldrune exposes two health surfaces:
+
+- `/api/v1/status` — informational diagnostics; it remains HTTP 200 so operators can inspect degraded state.
+- `/api/v1/ready` — strict deployment readiness; it returns HTTP 503 unless the database is reachable, the configured model provider is available, and the production database revision matches the code's Alembic head.
+
+Status responses include non-secret release provenance when available and expose only the current/expected schema revision, never database credentials or connection strings. Render uses `/api/v1/ready` as its health-check path.
 
 ## Engineering principles
 
-- Cloud-first, but development must remain usable from Termux and ordinary laptops.
+- Cloud-first while keeping local development practical on ordinary laptops and Termux-class environments.
 - Human approval for consequential financial, employment, security, legal, and production actions.
-- No secrets committed to Git.
-- Prefer modular monolith architecture initially; split services only when scale or isolation requires it.
-- Every production feature should have tests, logging, and an explicit owner.
-- Model providers must sit behind a model gateway so Seldrune is not locked to one AI vendor.
+- No passwords, API keys, private certificates, access tokens, or production secret values committed to Git.
+- Prefer a modular monolith until scale, isolation, or reliability requirements justify service separation.
+- Treat PostgreSQL migrations, production startup, and strict readiness as release gates rather than assuming unit tests imply deployability.
+- Keep model providers behind the model gateway so Seldrune is not locked to a single AI vendor.
+- Preserve tenant isolation and auditability through every execution, billing, and administration path.
+- Fail closed when security, approval, accounting, or schema state is incomplete.
 
-## Immediate roadmap
+## Current production-readiness priorities
 
-1. API foundation and CI.
-2. PostgreSQL persistence and migrations.
-3. User, organization, and RBAC models.
-4. Audit log.
-5. Agent registry and task execution model.
-6. Human approval engine.
-7. Model gateway.
-8. Owner command-center API.
+The v1.x core now has identity, organization governance, agent/tool/model controls, orchestration, audit/security monitoring, billing integrity, and deployment migration gates. The principal remaining production controls before broad external customer access are:
+
+1. email verification with a real outbound delivery provider,
+2. password/account recovery beyond MFA recovery codes,
+3. managed cloud secret-store integration,
+4. continued production observability, backup/recovery, and scaling validation as usage grows.
