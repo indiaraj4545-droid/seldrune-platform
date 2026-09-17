@@ -1,0 +1,27 @@
+.action-inbox{overflow:hidden}
+.action-inbox-heading{display:flex;justify-content:space-between;gap:20px;align-items:flex-start}
+.action-inbox-heading h2{margin-bottom:5px}
+.action-inbox-heading p{max-width:680px;color:var(--muted)}
+.action-inbox-counts{display:grid;grid-template-columns:repeat(4,minmax(92px,1fr));gap:8px;min-width:min(100%,460px)}
+.action-inbox-counts div{padding:10px 12px;border:1px solid rgba(125,223,181,.16);border-radius:10px;background:rgba(3,14,10,.36)}
+.action-inbox-counts small{display:block;color:var(--muted);font-size:9px;letter-spacing:.07em;text-transform:uppercase}
+.action-inbox-counts strong{display:block;margin-top:4px;font-size:20px;color:#f1fff6}
+.action-inbox-list{display:grid;gap:0;margin-top:14px;border-top:1px solid rgba(125,223,181,.13)}
+.action-inbox-item{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px;align-items:center;padding:13px 0;border-bottom:1px solid rgba(125,223,181,.13)}
+.action-inbox-item:last-child{border-bottom:0}
+.action-inbox-badge{display:inline-flex;align-items:center;justify-content:center;min-width:76px;padding:5px 8px;border-radius:999px;font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:.06em;border:1px solid rgba(125,223,181,.18)}
+.action-inbox-item strong{display:block;font-size:13px;color:var(--ink)}
+.action-inbox-item p{margin:4px 0 0;color:var(--muted);font-size:11px;line-height:1.45;overflow-wrap:anywhere}
+.action-inbox-item small{display:block;margin-top:5px;color:#6f8880;font-size:10px}
+.action-inbox-item a,.action-inbox-item button{white-space:nowrap;text-decoration:none;border-radius:8px;padding:8px 10px;font-size:10px;font-weight:800;cursor:pointer;background:rgba(255,255,255,.025);color:var(--ink);border:1px solid rgba(125,223,181,.2);box-shadow:none}
+.action-inbox-item a:hover,.action-inbox-item button:hover{transform:translateY(-1px);border-color:rgba(214,245,111,.4)}
+.action-inbox-critical .action-inbox-badge{background:rgba(255,129,116,.11);border-color:rgba(255,129,116,.28);color:#ffb3aa}
+.action-inbox-review .action-inbox-badge{background:rgba(214,245,111,.1);border-color:rgba(214,245,111,.28);color:#e8ff9b}
+.action-inbox-approval .action-inbox-badge{background:rgba(85,224,162,.1);border-color:rgba(85,224,162,.28);color:#9df1c5}
+.action-inbox-warning .action-inbox-badge{background:rgba(255,178,92,.09);border-color:rgba(255,178,92,.26);color:#ffd2a0}
+.action-inbox-clear{padding:18px 0;color:var(--muted);font-size:12px}
+.command-card:target,.command-card.inbox-focus{border-color:rgba(214,245,111,.52)!important;box-shadow:0 0 0 1px rgba(214,245,111,.16),0 24px 70px rgba(0,0,0,.3)!important}
+@media(max-width:1050px){.action-inbox-heading{display:block}.action-inbox-counts{margin-top:14px;min-width:0}}
+@media(max-width:720px){.action-inbox-counts{grid-template-columns:1fr 1fr}.action-inbox-item{grid-template-columns:auto 1fr}.action-inbox-item a,.action-inbox-item button{grid-column:1/-1;width:100%;text-align:center}}
+@media(max-width:460px){.action-inbox-counts{grid-template-columns:1fr}.action-inbox-item{grid-template-columns:1fr}.action-inbox-badge{justify-self:start}.action-inbox-item a,.action-inbox-item button{grid-column:auto}}
+@media(prefers-reduced-motion:reduce){.action-inbox-item a,.action-inbox-item button{transition:none!important}}
