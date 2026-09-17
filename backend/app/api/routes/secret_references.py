@@ -113,7 +113,10 @@ def create_secret_reference(
         session.flush()
     except IntegrityError as exc:
         session.rollback()
-        raise HTTPException(status_code=409, detail="Secret reference conflicts with existing data") from exc
+        raise HTTPException(
+            status_code=409,
+            detail="Secret reference conflicts with existing data",
+        ) from exc
     record_audit(
         session,
         organization_id=organization_id,
