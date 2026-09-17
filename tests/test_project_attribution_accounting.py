@@ -16,17 +16,19 @@ from backend.app.models.agent import Agent
 from backend.app.models.membership import Membership
 from backend.app.models.model_invocation import ModelInvocation
 from backend.app.models.organization import Organization
-from backend.app.models.organization_kernel import Department, OrganizationProject
+from backend.app.models.organization_kernel import OrganizationProject
 from backend.app.models.orchestration import OrchestrationRun, OrchestrationStep
 from backend.app.models.task import Task
-from backend.app.models.user import User
 from backend.app.services.command_recovery import create_recovery_command
 from backend.app.services.orchestrator import (
     OrchestrationAttributionError,
     create_orchestration_run,
 )
 from backend.app.services.portfolio_governor import evaluate_project_execution
-from backend.app.services.project_delivery import ProjectDeliveryError, sync_project_delivery_outcome
+from backend.app.services.project_delivery import (
+    ProjectDeliveryError,
+    sync_project_delivery_outcome,
+)
 
 PASSWORD = "correct horse battery staple"
 
@@ -78,7 +80,11 @@ def _register_owner(client: TestClient) -> tuple[dict[str, str], str, str]:
     )
 
 
-def _create_project(client: TestClient, headers: dict[str, str], organization_id: str) -> tuple[str, str]:
+def _create_project(
+    client: TestClient,
+    headers: dict[str, str],
+    organization_id: str,
+) -> tuple[str, str]:
     department = client.post(
         f"/api/v1/organizations/{organization_id}/departments",
         headers=headers,
