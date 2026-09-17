@@ -20,6 +20,7 @@ from backend.app.api.routes.runtime import router as runtime_router
 from backend.app.api.routes.sense import router as sense_router
 from backend.app.api.routes.status import router as status_router
 from backend.app.api.routes.tools import router as tools_router
+from backend.app.api.routes.webhooks import router as webhooks_router
 from backend.app.core.config import settings
 
 WEB_ROOT = Path(__file__).resolve().parent / "web"
@@ -51,6 +52,7 @@ def create_app() -> FastAPI:
         tools_router,
         knowledge_router,
         research_router,
+        webhooks_router,
     ):
         app.include_router(item, prefix=settings.api_v1_prefix)
     return app
