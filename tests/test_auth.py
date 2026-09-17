@@ -1,13 +1,20 @@
+from datetime import UTC, datetime, timedelta
+
+import jwt
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from backend.app import models  # noqa: F401
+from backend.app.core.config import settings
+from backend.app.core.security import ALGORITHM
 from backend.app.db.base import Base
 from backend.app.db.session import get_db
 from backend.app.main import app
+from backend.app.models.audit import AuditLog
+from backend.app.models.revoked_access_token import RevokedAccessToken
 
 
 @pytest.fixture
@@ -30,6 +37,7 @@ def client() -> TestClient:
             yield session
 
     app.dependency_overrides[get_db] = override_get_db
+    app.state.testing_session = testing_session
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
@@ -84,6 +92,79 @@ def test_register_login_and_protected_routes(client: TestClient) -> None:
     )
     assert login.status_code == 200
     assert login.json()["access_token"]
+    assert login.json()["access_token"] != token
+
+
+def test_logout_revokes_only_the_current_session(client: TestClient) -> None:
+    register = client.post("/api/v1/auth/register", json=registration_payload())
+    assert register.status_code == 201
+    first_token = register.json()["access_token"]
+
+    login = client.post(
+        "/api/v1/auth/login",
+        json={"email": "founder@example.com", "password": "correct horse battery staple"},
+    )
+    assert login.status_code == 200
+    second_token = login.json()["access_token"]
+    assert second_token != first_token
+
+    first_headers = {"Authorization": f"Bearer {first_token}"}
+    second_headers = {"Authorization": f"Bearer {second_token}"}
+
+    logout = client.post("/api/v1/auth/logout", headers=first_headers)
+    assert logout.status_code == 204
+    repeated = client.post("/api/v1/auth/logout", headers=first_headers)
+    assert repeated.status_code == 204
+
+    assert client.get("/api/v1/auth/me", headers=first_headers).status_code == 401
+    assert client.get("/api/v1/auth/me", headers=second_headers).status_code == 200
+
+    with client.app.state.testing_session() as session:
+        revoked = list(session.scalars(select(RevokedAccessToken)))
+        assert len(revoked) == 1
+        assert len(revoked[0].token_sha256) == 64
+        assert revoked[0].token_sha256 != first_token
+
+        logout_audit = session.scalar(select(AuditLog).where(AuditLog.action == "auth.logout"))
+        assert logout_audit is not None
+        assert logout_audit.details == {}
+        assert first_token not in str(logout_audit.details)
+
+
+def test_legacy_access_token_without_jti_remains_valid(client: TestClient) -> None:
+    register = client.post("/api/v1/auth/register", json=registration_payload())
+    assert register.status_code == 201
+    profile = client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {register.json()['access_token']}"},
+    ).json()
+    user_id = profile["user"]["id"]
+
+    now = datetime.now(UTC)
+    legacy_token = jwt.encode(
+        {
+            "sub": user_id,
+            "type": "access",
+            "iat": now,
+            "exp": now + timedelta(minutes=5),
+        },
+        settings.auth_secret_key,
+        algorithm=ALGORITHM,
+    )
+    response = client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {legacy_token}"},
+    )
+    assert response.status_code == 200
+
+
+def test_invalid_logout_token_is_rejected(client: TestClient) -> None:
+    client.post("/api/v1/auth/register", json=registration_payload())
+    response = client.post(
+        "/api/v1/auth/logout",
+        headers={"Authorization": "Bearer not-a-valid-token"},
+    )
+    assert response.status_code == 401
 
 
 def test_unauthenticated_me_is_rejected(client: TestClient) -> None:

@@ -9,9 +9,14 @@ from sqlalchemy.orm import Session
 
 from backend.app.core.config import settings
 from backend.app.core.rbac import Permission, has_permission
-from backend.app.core.security import TokenError, decode_access_token
+from backend.app.core.security import (
+    TokenError,
+    access_token_fingerprint,
+    decode_access_token_claims,
+)
 from backend.app.db.session import get_db
 from backend.app.models.membership import Membership
+from backend.app.models.revoked_access_token import RevokedAccessToken
 from backend.app.models.user import User
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.api_v1_prefix}/auth/login")
@@ -26,11 +31,20 @@ def get_current_user(token: TokenDep, session: SessionDep) -> User:
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
-        user_id = decode_access_token(token)
+        claims = decode_access_token_claims(token)
     except TokenError as exc:
         raise credentials_error from exc
 
-    user = session.get(User, user_id)
+    fingerprint = access_token_fingerprint(token)
+    revoked = session.scalar(
+        select(RevokedAccessToken.id).where(
+            RevokedAccessToken.token_sha256 == fingerprint,
+        )
+    )
+    if revoked is not None:
+        raise credentials_error
+
+    user = session.get(User, claims.user_id)
     if user is None or not user.is_active:
         raise credentials_error
     return user
