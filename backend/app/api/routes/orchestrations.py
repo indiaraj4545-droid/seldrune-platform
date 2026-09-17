@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -5,13 +6,19 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 
 from backend.app.api.dependencies import CurrentUserDep, SessionDep, require_org_permission
-from backend.app.core.orchestration import PlannedStep, build_default_plan
+from backend.app.core.orchestration import ApprovalStatus, PlannedStep, build_default_plan
 from backend.app.core.rbac import Permission
 from backend.app.models.membership import Membership
-from backend.app.models.orchestration import OrchestrationRun, OrchestrationStep
+from backend.app.models.orchestration import (
+    OrchestrationApproval,
+    OrchestrationRun,
+    OrchestrationStep,
+)
 from backend.app.schemas.orchestration import (
+    ApprovalDecisionRequest,
     AutonomousExecutionRequest,
     AutonomousExecutionResponse,
+    OrchestrationApprovalPublic,
     OrchestrationCreate,
     OrchestrationRunPublic,
     OrchestrationStepPublic,
@@ -25,7 +32,9 @@ from backend.app.services.orchestrator import create_orchestration_run, refresh_
 
 router = APIRouter(prefix="/organizations", tags=["orchestrations"])
 orchestration_dependency = require_org_permission(Permission.AGENTS_RUN)
+approval_dependency = require_org_permission(Permission.AGENTS_APPROVE)
 OrchestrationDep = Annotated[Membership, Depends(orchestration_dependency)]
+ApprovalDep = Annotated[Membership, Depends(approval_dependency)]
 
 
 def _get_run(session: SessionDep, organization_id: UUID, run_id: UUID) -> OrchestrationRun:
@@ -38,6 +47,24 @@ def _get_run(session: SessionDep, organization_id: UUID, run_id: UUID) -> Orches
     if run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Orchestration not found")
     return run
+
+
+def _get_approval(
+    session: SessionDep,
+    organization_id: UUID,
+    run_id: UUID,
+    approval_id: UUID,
+) -> OrchestrationApproval:
+    approval = session.scalar(
+        select(OrchestrationApproval).where(
+            OrchestrationApproval.id == approval_id,
+            OrchestrationApproval.organization_id == organization_id,
+            OrchestrationApproval.orchestration_run_id == run_id,
+        )
+    )
+    if approval is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Approval not found")
+    return approval
 
 
 def _to_public(session: SessionDep, run: OrchestrationRun) -> OrchestrationRunPublic:
@@ -73,6 +100,7 @@ def create_orchestration(
                 step.description,
                 step.capabilities,
                 step.priority,
+                step.requires_approval,
             )
             for step in payload.plan
         ]
@@ -155,6 +183,73 @@ def refresh_orchestration(
     session.commit()
     session.refresh(run)
     return _to_public(session, run)
+
+
+@router.get(
+    "/{organization_id}/orchestrations/{run_id}/approvals",
+    response_model=list[OrchestrationApprovalPublic],
+)
+def list_orchestration_approvals(
+    organization_id: UUID,
+    run_id: UUID,
+    _membership: OrchestrationDep,
+    session: SessionDep,
+) -> list[OrchestrationApproval]:
+    _get_run(session, organization_id, run_id)
+    return list(
+        session.scalars(
+            select(OrchestrationApproval)
+            .where(
+                OrchestrationApproval.organization_id == organization_id,
+                OrchestrationApproval.orchestration_run_id == run_id,
+            )
+            .order_by(OrchestrationApproval.requested_at, OrchestrationApproval.id)
+        )
+    )
+
+
+@router.post(
+    "/{organization_id}/orchestrations/{run_id}/approvals/{approval_id}/decision",
+    response_model=OrchestrationApprovalPublic,
+)
+def decide_orchestration_approval(
+    organization_id: UUID,
+    run_id: UUID,
+    approval_id: UUID,
+    payload: ApprovalDecisionRequest,
+    _membership: ApprovalDep,
+    current_user: CurrentUserDep,
+    session: SessionDep,
+) -> OrchestrationApproval:
+    _get_run(session, organization_id, run_id)
+    approval = _get_approval(session, organization_id, run_id, approval_id)
+    if approval.status != ApprovalStatus.PENDING.value:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Approval has already been decided",
+        )
+
+    approval.status = payload.decision
+    approval.decided_by_user_id = current_user.id
+    approval.decision_note = payload.decision_note
+    approval.decided_at = datetime.now(UTC)
+    record_audit(
+        session,
+        organization_id=organization_id,
+        actor_user_id=current_user.id,
+        action=f"orchestration.approval.{payload.decision}",
+        resource_type="orchestration_approval",
+        resource_id=str(approval.id),
+        details={
+            "orchestration_run_id": str(run_id),
+            "orchestration_step_id": str(approval.orchestration_step_id),
+            "decision": payload.decision,
+            "decision_note_present": bool(payload.decision_note),
+        },
+    )
+    session.commit()
+    session.refresh(approval)
+    return approval
 
 
 @router.post(
