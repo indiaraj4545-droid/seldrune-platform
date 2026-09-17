@@ -9,7 +9,10 @@ from backend.app.services.adaptive_planning import build_adaptive_planning_guida
 from backend.app.services.audit import record_audit
 from backend.app.services.founding_agents import ensure_founding_agents
 from backend.app.services.live_planner import build_live_plan
-from backend.app.services.orchestrator import create_orchestration_run
+from backend.app.services.orchestrator import (
+    OrchestrationAttributionError,
+    create_orchestration_run,
+)
 from backend.app.services.outcome_verification import assess_command_outcome
 from backend.app.services.playbook_engine import consolidate_playbooks
 from backend.app.services.playbook_guidance import build_playbook_guidance
@@ -18,6 +21,15 @@ from backend.app.services.playbook_overlay import merge_playbook
 
 class CommandRecoveryError(RuntimeError):
     pass
+
+
+def _source_project_id(source_delivery: dict | None) -> UUID | None:
+    if not source_delivery or not source_delivery.get("project_id"):
+        return None
+    try:
+        return UUID(str(source_delivery["project_id"]))
+    except (TypeError, ValueError) as exc:
+        raise CommandRecoveryError("Source project attribution is invalid") from exc
 
 
 def create_recovery_command(
@@ -70,6 +82,7 @@ def create_recovery_command(
     guidance = merge_playbook(adaptive_guidance, playbook_guidance)
     planned = build_live_plan(objective, adaptive_guidance=guidance)
     source_delivery = (source_run.context or {}).get("project_delivery")
+    project_id = _source_project_id(source_delivery)
     context = {
         "owner_command": {
             "approval_status": "awaiting_approval",
@@ -84,14 +97,18 @@ def create_recovery_command(
         },
         **({"project_delivery": source_delivery} if source_delivery else {}),
     }
-    recovery = create_orchestration_run(
-        session,
-        organization_id=source_run.organization_id,
-        created_by_user_id=actor_user_id,
-        objective=objective,
-        context=context,
-        plan=planned.steps,
-    )
+    try:
+        recovery = create_orchestration_run(
+            session,
+            organization_id=source_run.organization_id,
+            created_by_user_id=actor_user_id,
+            objective=objective,
+            context=context,
+            plan=planned.steps,
+            project_id=project_id,
+        )
+    except OrchestrationAttributionError as exc:
+        raise CommandRecoveryError(str(exc)) from exc
     recovery.planner_version = planned.planner_version
 
     owner_command = (source_run.context or {}).get("owner_command") or {}
@@ -107,6 +124,7 @@ def create_recovery_command(
         "recovery_command_id": str(recovery.id),
         "source_outcome": assessment.to_dict(),
         "step_count": len(planned.steps),
+        "project_id": str(project_id) if project_id else None,
     }
     record_audit(
         session,

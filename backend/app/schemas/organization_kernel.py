@@ -164,6 +164,7 @@ class ProjectPublic(BaseModel):
     priority: int
     budget_limit_usd: float
     budget_spent_usd: float
+    unpriced_model_invocation_count: int
     resource_limit_units: int
     resource_used_units: int
     start_at: datetime | None

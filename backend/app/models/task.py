@@ -24,6 +24,12 @@ class Task(Base):
         nullable=False,
         index=True,
     )
+    project_id: Mapped[UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("organization_projects.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     created_by_user_id: Mapped[UUID | None] = mapped_column(
         Uuid,
         ForeignKey("users.id", ondelete="SET NULL"),

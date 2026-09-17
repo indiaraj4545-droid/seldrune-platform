@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from backend.app.core.orchestration import ApprovalStatus, OrchestrationStatus, PlannedStep
 from backend.app.core.tasking import AgentStatus, TERMINAL_TASK_STATUSES, TaskStatus
 from backend.app.models.agent import Agent
+from backend.app.models.organization_kernel import OrganizationProject
 from backend.app.models.orchestration import (
     OrchestrationApproval,
     OrchestrationRun,
@@ -14,6 +15,10 @@ from backend.app.models.orchestration import (
 )
 from backend.app.models.task import Task, TaskEvent
 from backend.app.services.audit import record_audit
+
+
+class OrchestrationAttributionError(ValueError):
+    pass
 
 
 def normalize_capability(value: str) -> str:
@@ -113,6 +118,20 @@ def build_agent_performance_evidence(
     return evidence
 
 
+def _validated_project_id(
+    session: Session,
+    *,
+    organization_id: UUID,
+    project_id: UUID | None,
+) -> UUID | None:
+    if project_id is None:
+        return None
+    project = session.get(OrganizationProject, project_id)
+    if project is None or project.organization_id != organization_id:
+        raise OrchestrationAttributionError("Project attribution does not belong to organization")
+    return project.id
+
+
 def create_orchestration_run(
     session: Session,
     *,
@@ -121,7 +140,13 @@ def create_orchestration_run(
     objective: str,
     context: dict,
     plan: list[PlannedStep],
+    project_id: UUID | None = None,
 ) -> OrchestrationRun:
+    project_id = _validated_project_id(
+        session,
+        organization_id=organization_id,
+        project_id=project_id,
+    )
     agents = list(
         session.scalars(
             select(Agent).where(
@@ -156,6 +181,7 @@ def create_orchestration_run(
         task_status = TaskStatus.ASSIGNED if agent is not None else TaskStatus.QUEUED
         task = Task(
             organization_id=organization_id,
+            project_id=project_id,
             created_by_user_id=created_by_user_id,
             assigned_agent_id=agent.id if agent is not None else None,
             title=planned.title,
@@ -188,6 +214,7 @@ def create_orchestration_run(
                     "orchestration_run_id": str(run.id),
                     "status": task.status,
                     "requires_approval": planned.requires_approval,
+                    "project_id": str(project_id) if project_id else None,
                 },
             )
         )
