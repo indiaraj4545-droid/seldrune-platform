@@ -10,6 +10,8 @@ _SLUG_PATTERN = r"^[a-z0-9]+(?:-[a-z0-9]+)*$"
 
 
 class SecretReferenceCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(min_length=2, max_length=160)
     slug: str = Field(min_length=2, max_length=100, pattern=_SLUG_PATTERN)
     provider: SecretProvider = SecretProvider.ENV
@@ -27,6 +29,8 @@ class SecretReferenceCreate(BaseModel):
 
 
 class SecretReferenceUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str | None = Field(default=None, min_length=2, max_length=160)
     locator: str | None = Field(default=None, min_length=3, max_length=240)
     status: SecretStatus | None = None
