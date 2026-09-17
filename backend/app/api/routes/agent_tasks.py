@@ -80,6 +80,11 @@ def create_agent(
             detail="Agent slug already exists",
         )
 
+    allowed_model_providers = (
+        [provider.value for provider in payload.allowed_model_providers]
+        if payload.allowed_model_providers is not None
+        else None
+    )
     agent = Agent(
         organization_id=organization_id,
         created_by_user_id=current_user.id,
@@ -89,6 +94,8 @@ def create_agent(
         status=AgentStatus.ACTIVE.value,
         capabilities=payload.capabilities,
         runtime_config=payload.runtime_config,
+        allowed_model_providers=allowed_model_providers,
+        allowed_models=payload.allowed_models,
     )
     session.add(agent)
     session.flush()
@@ -99,7 +106,14 @@ def create_agent(
         action="agent.created",
         resource_type="agent",
         resource_id=str(agent.id),
-        details={"slug": agent.slug, "capabilities": agent.capabilities},
+        details={
+            "slug": agent.slug,
+            "capabilities": agent.capabilities,
+            "version": agent.version,
+            "model_policy_configured": (
+                agent.allowed_model_providers is not None or agent.allowed_models is not None
+            ),
+        },
     )
     session.commit()
     session.refresh(agent)
@@ -174,8 +188,22 @@ def update_agent(
         if agent.runtime_config != payload.runtime_config:
             agent.runtime_config = payload.runtime_config
             changed_fields.append("runtime_config")
+    if "allowed_model_providers" in fields_set:
+        allowed_model_providers = (
+            [provider.value for provider in payload.allowed_model_providers]
+            if payload.allowed_model_providers is not None
+            else None
+        )
+        if agent.allowed_model_providers != allowed_model_providers:
+            agent.allowed_model_providers = allowed_model_providers
+            changed_fields.append("allowed_model_providers")
+    if "allowed_models" in fields_set and agent.allowed_models != payload.allowed_models:
+        agent.allowed_models = payload.allowed_models
+        changed_fields.append("allowed_models")
 
     if changed_fields:
+        previous_version = agent.version
+        agent.version += 1
         record_audit(
             session,
             organization_id=organization_id,
@@ -183,7 +211,11 @@ def update_agent(
             action="agent.updated",
             resource_type="agent",
             resource_id=str(agent.id),
-            details={"changed_fields": changed_fields},
+            details={
+                "changed_fields": changed_fields,
+                "from_version": previous_version,
+                "to_version": agent.version,
+            },
         )
         session.commit()
         session.refresh(agent)
