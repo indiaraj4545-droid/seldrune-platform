@@ -4,9 +4,9 @@ Core platform for the **Seldrune AI-native virtual organization**.
 
 Seldrune is a reusable operating layer for governed AI work across research, software engineering, automation, ventures, talent, managed operations, and future products.
 
-## Current milestone — Seldrune v1.0
+## Current milestone — Seldrune v1.1
 
-The platform has progressed beyond the original foundation milestone and now includes production-oriented organization, agent, security, governance, audit, billing, and orchestration capabilities.
+The platform has progressed beyond the original foundation milestone and now includes production-oriented organization, agent, security, governance, audit, billing, orchestration, and deployment-integrity capabilities.
 
 Current platform capabilities include:
 
@@ -19,10 +19,11 @@ Current platform capabilities include:
 - audit explorer, AI usage/cost reporting, budget authority, project/department attribution, and accounting integrity
 - owner attention, browser/web-push notification infrastructure, and executive operating surfaces
 - PostgreSQL/Alembic migrations, automated tests, GitHub Actions CI, and Render deployment configuration
+- strict schema-aware deployment readiness with non-secret release provenance
 
-### v1.0.1 production-recovery patch
+### Deployment integrity
 
-The v1.0.1 patch hardens the deployment path by validating Alembic migrations against real PostgreSQL in CI and exercising a production-config startup health check. It also widens Alembic's internal revision identifier column before the first Seldrune migration whose revision ID exceeds Alembic's historical 32-character default.
+The v1.0.1 production-recovery patch added real PostgreSQL migration and production-startup gates after a migration-version-length defect kept production pinned to v0.85. v1.1 builds on that recovery by making readiness verify that the running database is at the exact Alembic head expected by the code and by exposing release provenance when the deployment platform provides it.
 
 ## Local development
 
@@ -40,7 +41,8 @@ Open:
 
 - API docs: `http://127.0.0.1:8000/docs`
 - Owner console: `http://127.0.0.1:8000/console`
-- Status/readiness: `http://127.0.0.1:8000/api/v1/status`
+- Diagnostics: `http://127.0.0.1:8000/api/v1/status`
+- Strict readiness: `http://127.0.0.1:8000/api/v1/ready`
 
 Run quality checks:
 
@@ -57,7 +59,7 @@ The Render web service runs database migrations before starting the API:
 alembic upgrade head && uvicorn backend.app.main:app --host 0.0.0.0 --port ${PORT}
 ```
 
-`/api/v1/status` reports application version, environment, database readiness, and model-provider readiness. Production deploys should not be considered healthy until that endpoint reports `"ready": true` on the intended release version.
+`/api/v1/status` always provides informational diagnostics, including application version, environment, model-provider state, schema revision state, and non-secret release provenance when available. `/api/v1/ready` is the deployment health endpoint: in production it returns HTTP 503 unless the database is reachable, the configured model provider is available, and the database revision matches the code's Alembic head.
 
 ## Security
 
