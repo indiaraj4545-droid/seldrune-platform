@@ -20,6 +20,11 @@ class RefreshTokenError(ValueError):
 class RefreshTokenReplay(RefreshTokenError):
     """Raised after a consumed refresh token is presented again."""
 
+    def __init__(self, user_id: UUID, family_id: UUID) -> None:
+        super().__init__("Refresh token reuse detected")
+        self.user_id = user_id
+        self.family_id = family_id
+
 
 @dataclass(frozen=True)
 class RefreshIssue:
@@ -77,9 +82,9 @@ def revoke_refresh_family(session: Session, family_id: UUID) -> None:
 
 def rotate_refresh_token(session: Session, raw_token: str) -> tuple[UUID, RefreshIssue]:
     token = session.scalar(
-        select(RefreshToken).where(
-            RefreshToken.token_sha256 == refresh_token_fingerprint(raw_token)
-        )
+        select(RefreshToken)
+        .where(RefreshToken.token_sha256 == refresh_token_fingerprint(raw_token))
+        .with_for_update()
     )
     if token is None:
         raise RefreshTokenError("Invalid refresh token")
@@ -88,7 +93,7 @@ def rotate_refresh_token(session: Session, raw_token: str) -> tuple[UUID, Refres
     if token.used_at is not None:
         revoke_refresh_family(session, token.family_id)
         session.flush()
-        raise RefreshTokenReplay("Refresh token reuse detected")
+        raise RefreshTokenReplay(token.user_id, token.family_id)
     if token.revoked_at is not None or _aware(token.expires_at) <= now:
         raise RefreshTokenError("Invalid refresh token")
 
