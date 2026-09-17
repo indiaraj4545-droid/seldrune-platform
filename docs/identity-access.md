@@ -15,7 +15,15 @@ Seldrune Core v0.3 introduced the first authentication and authorization boundar
 - Legacy valid access tokens without `sid` remain compatible until expiry or explicit access-token revocation.
 - Production refuses to start with the development JWT secret.
 - Authentication failures return the same response for unknown users and bad passwords.
-- Repeated bad-password attempts are rate-limited per credential/source pair using only a keyed SHA-256 throttle digest; raw credential identifiers and source addresses are not stored in throttle records.
+- Repeated bad-password or bad-MFA attempts are rate-limited per credential/source pair using only a keyed SHA-256 throttle digest; raw credential identifiers and source addresses are not stored in throttle records.
+
+## Multi-factor authentication
+
+Users can enroll a standard 6-digit TOTP authenticator through authenticated setup, confirmation, and disable endpoints. Setup requires current-password re-authentication, enabling requires a valid authenticator code, and disabling requires both the current password and a valid authenticator code.
+
+Seldrune does not persist the base32 TOTP seed. It stores only a random per-user enrollment nonce and derives the authenticator secret with HMAC domain separation from the server authentication key, user id, and nonce. Restarting setup before enable rotates the nonce; disabling clears it. MFA state changes revoke every active refresh-token family for the user.
+
+When MFA is enabled, password login and existing-user invitation acceptance require the TOTP code before any new access/refresh session is issued. Existing refresh sessions created before an MFA state change are invalidated.
 
 ## Registration and invitations
 
@@ -42,6 +50,7 @@ Initial producers include refresh-token reuse detection and inbound webhook auth
 
 - invite-only post-bootstrap onboarding,
 - organization member administration and role ceilings,
+- TOTP multi-factor authentication,
 - rotating refresh sessions with replay-family revocation,
 - server-side access-token revocation,
 - per-session logout,
@@ -56,6 +65,5 @@ Initial producers include refresh-token reuse detection and inbound webhook auth
 Before accepting broad external customer access, complete:
 
 - email verification,
-- MFA/passkeys,
 - account recovery,
 - cloud secret-manager integration for secret values.

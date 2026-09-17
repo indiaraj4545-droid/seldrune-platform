@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 
 from backend.app.api.dependencies import CurrentUserDep, SessionDep, TokenDep
 from backend.app.core.config import settings
+from backend.app.core.mfa import derive_totp_secret, verify_totp
 from backend.app.core.rbac import ROLE_PERMISSIONS, Role
 from backend.app.core.security import (
     TokenError,
@@ -87,6 +88,18 @@ def _raise_login_throttled(exc: LoginThrottleError) -> None:
         detail=str(exc),
         headers={"Retry-After": str(exc.retry_after_seconds)},
     ) from exc
+
+
+def _reject_login(session: SessionDep, throttle_key: str) -> None:
+    try:
+        record_login_failure(session, throttle_key)
+    except LoginThrottleError as exc:
+        _raise_login_throttled(exc)
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid email or password",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 
 def _refresh_credentials_error() -> HTTPException:
@@ -181,15 +194,14 @@ def login(payload: LoginRequest, request: Request, session: SessionDep) -> AuthR
         or not user.is_active
         or not verify_password(payload.password, user.password_hash)
     ):
-        try:
-            record_login_failure(session, throttle_key)
-        except LoginThrottleError as exc:
-            _raise_login_throttled(exc)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        _reject_login(session, throttle_key)
+
+    if user.mfa_enabled:
+        if not user.mfa_nonce or not payload.mfa_code:
+            _reject_login(session, throttle_key)
+        secret = derive_totp_secret(user.id, user.mfa_nonce)
+        if not verify_totp(secret, payload.mfa_code):
+            _reject_login(session, throttle_key)
 
     clear_login_failures(session, throttle_key)
     record_audit(

@@ -33,6 +33,7 @@ class InvitationAccept(BaseModel):
     token: str = Field(min_length=32, max_length=512)
     display_name: str = Field(min_length=1, max_length=200)
     password: str = Field(min_length=12, max_length=128)
+    mfa_code: str | None = Field(default=None, pattern=r"^\d{6}$")
 
 
 class MemberRoleUpdate(BaseModel):

@@ -80,6 +80,17 @@ def revoke_refresh_family(session: Session, family_id: UUID) -> None:
     )
 
 
+def revoke_user_refresh_sessions(session: Session, user_id: UUID) -> None:
+    session.execute(
+        update(RefreshToken)
+        .where(
+            RefreshToken.user_id == user_id,
+            RefreshToken.revoked_at.is_(None),
+        )
+        .values(revoked_at=_now())
+    )
+
+
 def rotate_refresh_token(session: Session, raw_token: str) -> tuple[UUID, RefreshIssue]:
     statement = select(RefreshToken).where(
         RefreshToken.token_sha256 == refresh_token_fingerprint(raw_token)

@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 
 from backend.app.api.dependencies import CurrentUserDep, SessionDep, require_org_permission
 from backend.app.core.config import settings
+from backend.app.core.mfa import derive_totp_secret, verify_totp
 from backend.app.core.rbac import Permission, Role
 from backend.app.core.security import create_access_token, hash_password, verify_password
 from backend.app.models.membership import Membership
@@ -271,8 +272,15 @@ def accept_invitation(payload: InvitationAccept, session: SessionDep) -> AuthRes
         )
         session.add(user)
         session.flush()
-    elif not user.is_active or not verify_password(payload.password, user.password_hash):
-        raise HTTPException(status_code=401, detail="Invalid existing-user credentials")
+    else:
+        if not user.is_active or not verify_password(payload.password, user.password_hash):
+            raise HTTPException(status_code=401, detail="Invalid existing-user credentials")
+        if user.mfa_enabled:
+            if not user.mfa_nonce or not payload.mfa_code:
+                raise HTTPException(status_code=401, detail="Invalid existing-user credentials")
+            secret = derive_totp_secret(user.id, user.mfa_nonce)
+            if not verify_totp(secret, payload.mfa_code):
+                raise HTTPException(status_code=401, detail="Invalid existing-user credentials")
 
     if session.scalar(
         select(Membership).where(

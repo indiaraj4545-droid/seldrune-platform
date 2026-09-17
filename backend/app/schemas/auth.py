@@ -28,6 +28,7 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=1, max_length=128)
+    mfa_code: str | None = Field(default=None, pattern=r"^\d{6}$")
 
 
 class RefreshRequest(BaseModel):
