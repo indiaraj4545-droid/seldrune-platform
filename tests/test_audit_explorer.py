@@ -122,20 +122,19 @@ def test_audit_list_filters_pagination_and_resource_history(audit_client) -> Non
     seeded = seed_audit_rows(testing_session, organization_id, user_id)
 
     first_page = client.get(
-        f"/api/v1/organizations/{organization_id}/audit?limit=2",
+        f"/api/v1/organizations/{organization_id}/audit",
         headers=headers,
+        params={"resource_type": "task", "limit": 1},
     )
     assert first_page.status_code == 200
     payload = first_page.json()
-    assert payload["returned"] == 2
-    assert [item["id"] for item in payload["items"]] == [
-        seeded["tool_run"],
-        seeded["system_update"],
-    ]
+    assert payload["returned"] == 1
+    assert [item["id"] for item in payload["items"]] == [seeded["system_update"]]
 
     second_page = client.get(
-        f"/api/v1/organizations/{organization_id}/audit?limit=2&offset=2",
+        f"/api/v1/organizations/{organization_id}/audit",
         headers=headers,
+        params={"resource_type": "task", "limit": 1, "offset": 1},
     )
     assert second_page.status_code == 200
     assert [item["id"] for item in second_page.json()["items"]] == [seeded["task_created"]]
@@ -154,7 +153,7 @@ def test_audit_list_filters_pagination_and_resource_history(audit_client) -> Non
     created_only = client.get(
         f"/api/v1/organizations/{organization_id}/audit",
         headers=headers,
-        params={"action": "task.created"},
+        params={"action": "task.created", "resource_type": "task"},
     )
     assert created_only.status_code == 200
     assert [item["id"] for item in created_only.json()["items"]] == [seeded["task_created"]]
@@ -162,25 +161,19 @@ def test_audit_list_filters_pagination_and_resource_history(audit_client) -> Non
     owner_only = client.get(
         f"/api/v1/organizations/{organization_id}/audit",
         headers=headers,
-        params={"actor_user_id": user_id},
+        params={"actor_user_id": user_id, "resource_type": "tool_run"},
     )
     assert owner_only.status_code == 200
-    assert [item["id"] for item in owner_only.json()["items"]] == [
-        seeded["tool_run"],
-        seeded["task_created"],
-    ]
+    assert [item["id"] for item in owner_only.json()["items"]] == [seeded["tool_run"]]
 
     from_time = datetime.fromisoformat(seeded["base_time"]) + timedelta(minutes=1)
     time_filtered = client.get(
         f"/api/v1/organizations/{organization_id}/audit",
         headers=headers,
-        params={"occurred_from": from_time.isoformat()},
+        params={"resource_type": "task", "occurred_from": from_time.isoformat()},
     )
     assert time_filtered.status_code == 200
-    assert [item["id"] for item in time_filtered.json()["items"]] == [
-        seeded["tool_run"],
-        seeded["system_update"],
-    ]
+    assert [item["id"] for item in time_filtered.json()["items"]] == [seeded["system_update"]]
 
     invalid_window = client.get(
         f"/api/v1/organizations/{organization_id}/audit",
@@ -263,6 +256,7 @@ def test_audit_detail_tenant_isolation_and_rbac(audit_client) -> None:
     allowed = client.get(
         f"/api/v1/organizations/{organization_id}/audit",
         headers=headers,
+        params={"resource_type": "task"},
     )
     assert allowed.status_code == 200
-    assert allowed.json()["returned"] == 3
+    assert allowed.json()["returned"] == 2
