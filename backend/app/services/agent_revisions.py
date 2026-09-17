@@ -76,18 +76,20 @@ def configuration_matches(agent: Agent, snapshot: dict[str, Any]) -> bool:
     return configuration_snapshot(agent) == snapshot
 
 
-def capture_agent_revision(
+def capture_snapshot_revision(
     session: Session,
     *,
     agent: Agent,
+    version: int,
+    snapshot: dict[str, Any],
     actor_user_id: UUID | None,
     change_kind: str,
 ) -> AgentConfigurationRevision:
-    validate_runtime_config(agent.runtime_config)
+    validate_runtime_config(snapshot.get("runtime_config", {}))
     existing = session.scalar(
         select(AgentConfigurationRevision).where(
             AgentConfigurationRevision.agent_id == agent.id,
-            AgentConfigurationRevision.version == agent.version,
+            AgentConfigurationRevision.version == version,
         )
     )
     if existing is not None:
@@ -96,9 +98,9 @@ def capture_agent_revision(
     revision = AgentConfigurationRevision(
         organization_id=agent.organization_id,
         agent_id=agent.id,
-        version=agent.version,
+        version=version,
         change_kind=change_kind,
-        snapshot=configuration_snapshot(agent),
+        snapshot=deepcopy(snapshot),
         created_by_user_id=actor_user_id,
     )
     session.add(revision)
@@ -112,11 +114,28 @@ def capture_agent_revision(
         resource_id=str(revision.id),
         details={
             "agent_id": str(agent.id),
-            "version": agent.version,
+            "version": version,
             "change_kind": change_kind,
         },
     )
     return revision
+
+
+def capture_agent_revision(
+    session: Session,
+    *,
+    agent: Agent,
+    actor_user_id: UUID | None,
+    change_kind: str,
+) -> AgentConfigurationRevision:
+    return capture_snapshot_revision(
+        session,
+        agent=agent,
+        version=agent.version,
+        snapshot=configuration_snapshot(agent),
+        actor_user_id=actor_user_id,
+        change_kind=change_kind,
+    )
 
 
 def apply_configuration_snapshot(agent: Agent, snapshot: dict[str, Any]) -> None:
