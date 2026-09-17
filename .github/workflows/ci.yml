@@ -47,3 +47,42 @@ jobs:
           SELDRUNE_DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/seldrune_ci
           SELDRUNE_MODEL_PROVIDER: mock
         run: alembic upgrade head
+
+      - name: Production startup health smoke
+        env:
+          SELDRUNE_DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/seldrune_ci
+          SELDRUNE_ENVIRONMENT: production
+          SELDRUNE_AUTH_SECRET_KEY: ci-production-secret-key-longer-than-thirty-two-characters
+          SELDRUNE_MODEL_PROVIDER: openai
+          SELDRUNE_MODEL_DEFAULT: gpt-5.6-sol
+          OPENAI_API_KEY: ci-placeholder-key
+        run: |
+          uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 > /tmp/seldrune-uvicorn.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8000/api/v1/status > /tmp/seldrune-status.json; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              cat /tmp/seldrune-uvicorn.log
+              exit 1
+            fi
+            sleep 1
+          done
+
+          cat /tmp/seldrune-status.json
+          python - <<'PY'
+          import json
+
+          with open('/tmp/seldrune-status.json', encoding='utf-8') as handle:
+              status = json.load(handle)
+
+          assert status['ready'] is True
+          assert status['status'] == 'ready'
+          assert status['environment'] == 'production'
+          assert status['checks']['database']['status'] == 'ok'
+          assert status['checks']['model_provider']['status'] == 'ok'
+          assert status['checks']['model_provider']['live_ai'] is True
+          PY
