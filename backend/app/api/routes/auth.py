@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
@@ -24,6 +26,7 @@ from backend.app.schemas.auth import (
     MeResponse,
     MembershipPublic,
     OrganizationPublic,
+    RefreshRequest,
     RegisterRequest,
     UserPublic,
 )
@@ -35,15 +38,40 @@ from backend.app.services.login_throttle import (
     login_throttle_key,
     record_login_failure,
 )
+from backend.app.services.refresh_sessions import (
+    RefreshIssue,
+    RefreshTokenError,
+    RefreshTokenReplay,
+    issue_refresh_token,
+    revoke_refresh_family,
+    rotate_refresh_token,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 _BOOTSTRAP_LOCK_ID = 7_341_337_006_011
 
 
-def _auth_response(user: User) -> AuthResponse:
+def _aware(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def _auth_response(
+    session: SessionDep,
+    user: User,
+    refresh_issue: RefreshIssue | None = None,
+) -> AuthResponse:
+    issue = refresh_issue or issue_refresh_token(session, user.id)
+    refresh_expires_in = max(
+        0,
+        int((_aware(issue.expires_at) - datetime.now(UTC)).total_seconds()),
+    )
     return AuthResponse(
-        access_token=create_access_token(user.id),
+        access_token=create_access_token(user.id, session_id=issue.family_id),
+        refresh_token=issue.token,
         expires_in=settings.auth_access_token_minutes * 60,
+        refresh_expires_in=refresh_expires_in,
         user=UserPublic.model_validate(user),
     )
 
@@ -58,6 +86,14 @@ def _raise_login_throttled(exc: LoginThrottleError) -> None:
         detail=str(exc),
         headers={"Retry-After": str(exc.retry_after_seconds)},
     ) from exc
+
+
+def _refresh_credentials_error() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid refresh token",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 
 @router.get("/bootstrap-status", response_model=BootstrapStatus)
@@ -115,6 +151,7 @@ def register(payload: RegisterRequest, session: SessionDep) -> AuthResponse:
             actor_user_id=user.id,
             resource_id=str(user.id),
         )
+        response = _auth_response(session, user)
         session.commit()
     except IntegrityError as exc:
         session.rollback()
@@ -123,7 +160,7 @@ def register(payload: RegisterRequest, session: SessionDep) -> AuthResponse:
             detail="Registration conflicts with an existing account",
         ) from exc
 
-    return _auth_response(user)
+    return response
 
 
 @router.post("/login", response_model=AuthResponse)
@@ -161,8 +198,47 @@ def login(payload: LoginRequest, request: Request, session: SessionDep) -> AuthR
         actor_user_id=user.id,
         resource_id=str(user.id),
     )
+    response = _auth_response(session, user)
     session.commit()
-    return _auth_response(user)
+    return response
+
+
+@router.post("/refresh", response_model=AuthResponse)
+def refresh(payload: RefreshRequest, session: SessionDep) -> AuthResponse:
+    try:
+        user_id, replacement = rotate_refresh_token(session, payload.refresh_token)
+    except RefreshTokenReplay as exc:
+        record_audit(
+            session,
+            action="auth.refresh_reuse_detected",
+            resource_type="user",
+            actor_user_id=exc.user_id,
+            resource_id=str(exc.user_id),
+            details={"family_id": str(exc.family_id)},
+        )
+        session.commit()
+        raise _refresh_credentials_error() from exc
+    except RefreshTokenError as exc:
+        session.rollback()
+        raise _refresh_credentials_error() from exc
+
+    user = session.get(User, user_id)
+    if user is None or not user.is_active:
+        revoke_refresh_family(session, replacement.family_id)
+        session.commit()
+        raise _refresh_credentials_error()
+
+    record_audit(
+        session,
+        action="auth.refresh_rotated",
+        resource_type="user",
+        actor_user_id=user.id,
+        resource_id=str(user.id),
+        details={"family_id": str(replacement.family_id)},
+    )
+    response = _auth_response(session, user, replacement)
+    session.commit()
+    return response
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
@@ -187,7 +263,8 @@ def logout(token: TokenDep, session: SessionDep) -> Response:
             RevokedAccessToken.token_sha256 == fingerprint,
         )
     )
-    if existing is None:
+    first_revocation = existing is None
+    if first_revocation:
         session.add(
             RevokedAccessToken(
                 user_id=user.id,
@@ -195,17 +272,26 @@ def logout(token: TokenDep, session: SessionDep) -> Response:
                 expires_at=claims.expires_at,
             )
         )
+    if claims.session_id is not None:
+        revoke_refresh_family(session, claims.session_id)
+
+    if first_revocation:
         record_audit(
             session,
             action="auth.logout",
             resource_type="user",
             actor_user_id=user.id,
             resource_id=str(user.id),
+            details=(
+                {"family_id": str(claims.session_id)}
+                if claims.session_id is not None
+                else {}
+            ),
         )
-        try:
-            session.commit()
-        except IntegrityError:
-            session.rollback()
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
