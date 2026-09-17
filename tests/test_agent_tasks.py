@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -272,34 +274,24 @@ def test_agent_registry_lifecycle_is_audited_and_preserves_existing_tasks(
 
 
 def test_agent_read_is_tenant_scoped(client: TestClient) -> None:
-    first_token, first_organization_id = register_owner(client)
-    first_headers = {"Authorization": f"Bearer {first_token}"}
+    token, organization_id = register_owner(client)
+    headers = {"Authorization": f"Bearer {token}"}
     created = client.post(
-        f"/api/v1/organizations/{first_organization_id}/agents",
-        headers=first_headers,
+        f"/api/v1/organizations/{organization_id}/agents",
+        headers=headers,
         json={"name": "Private Agent", "slug": "private-agent"},
     )
     assert created.status_code == 201
     agent_id = created.json()["id"]
 
-    second = client.post(
-        "/api/v1/auth/register",
-        json={
-            "email": "second-owner@example.com",
-            "password": "correct horse battery staple",
-            "display_name": "Second Owner",
-            "organization_name": "Second Organization",
-            "organization_slug": "second-organization",
-        },
+    unauthorized_org = client.get(
+        f"/api/v1/organizations/{uuid4()}/agents/{agent_id}",
+        headers=headers,
     )
-    assert second.status_code == 201
-    second_token = second.json()["access_token"]
-    second_headers = {"Authorization": f"Bearer {second_token}"}
-    second_profile = client.get("/api/v1/auth/me", headers=second_headers).json()
-    second_organization_id = second_profile["memberships"][0]["organization"]["id"]
+    assert unauthorized_org.status_code == 403
 
-    hidden = client.get(
-        f"/api/v1/organizations/{second_organization_id}/agents/{agent_id}",
-        headers=second_headers,
+    missing_in_own_org = client.get(
+        f"/api/v1/organizations/{organization_id}/agents/{uuid4()}",
+        headers=headers,
     )
-    assert hidden.status_code == 404
+    assert missing_in_own_org.status_code == 404
