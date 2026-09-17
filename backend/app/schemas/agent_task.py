@@ -64,6 +64,7 @@ class TaskCreate(BaseModel):
     priority: int = Field(default=0, ge=-100, le=100)
     input_data: dict[str, Any] = Field(default_factory=dict)
     assigned_agent_id: UUID | None = None
+    project_id: UUID | None = None
 
 
 class TaskAssignRequest(BaseModel):
@@ -81,6 +82,7 @@ class TaskPublic(BaseModel):
 
     id: UUID
     organization_id: UUID
+    project_id: UUID | None
     created_by_user_id: UUID | None
     assigned_agent_id: UUID | None
     title: str
