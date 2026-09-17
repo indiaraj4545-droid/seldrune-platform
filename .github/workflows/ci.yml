@@ -8,6 +8,21 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: seldrune_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d seldrune_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -26,3 +41,9 @@ jobs:
 
       - name: Test
         run: pytest -q
+
+      - name: PostgreSQL migration smoke
+        env:
+          SELDRUNE_DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/seldrune_ci
+          SELDRUNE_MODEL_PROVIDER: mock
+        run: alembic upgrade head
