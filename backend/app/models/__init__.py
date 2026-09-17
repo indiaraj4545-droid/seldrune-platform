@@ -23,6 +23,7 @@ from backend.app.models.owner_push_subscription import OwnerPushSubscription
 from backend.app.models.research_connector import ResearchConnector
 from backend.app.models.research_session import ResearchSession
 from backend.app.models.research_source import ResearchSource
+from backend.app.models.revoked_access_token import RevokedAccessToken
 from backend.app.models.secret_reference import SecretReference
 from backend.app.models.task import Task, TaskEvent
 from backend.app.models.tool_definition import ToolDefinition
@@ -52,6 +53,7 @@ __all__ = [
     "ResearchConnector",
     "ResearchSession",
     "ResearchSource",
+    "RevokedAccessToken",
     "SecretReference",
     "Task",
     "TaskEvent",
