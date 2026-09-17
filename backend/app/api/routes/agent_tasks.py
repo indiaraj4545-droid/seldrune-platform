@@ -13,6 +13,8 @@ from backend.app.models.task import Task, TaskEvent
 from backend.app.schemas.agent_task import (
     AgentCreate,
     AgentPublic,
+    AgentStatusUpdate,
+    AgentUpdate,
     TaskAssignRequest,
     TaskCreate,
     TaskEventPublic,
@@ -117,6 +119,105 @@ def list_agents(
             .order_by(Agent.name)
         )
     )
+
+
+@router.get("/{organization_id}/agents/{agent_id}", response_model=AgentPublic)
+def get_agent(
+    organization_id: UUID,
+    agent_id: UUID,
+    _membership: AgentsRunDep,
+    session: SessionDep,
+) -> Agent:
+    return _get_agent(session, organization_id, agent_id)
+
+
+@router.patch("/{organization_id}/agents/{agent_id}", response_model=AgentPublic)
+def update_agent(
+    organization_id: UUID,
+    agent_id: UUID,
+    payload: AgentUpdate,
+    _membership: AgentsManageDep,
+    current_user: CurrentUserDep,
+    session: SessionDep,
+) -> Agent:
+    agent = _get_agent(session, organization_id, agent_id)
+    changed_fields: list[str] = []
+    fields_set = payload.model_fields_set
+
+    if "name" in fields_set:
+        if payload.name is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Agent name cannot be null",
+            )
+        if agent.name != payload.name:
+            agent.name = payload.name
+            changed_fields.append("name")
+    if "description" in fields_set and agent.description != payload.description:
+        agent.description = payload.description
+        changed_fields.append("description")
+    if "capabilities" in fields_set:
+        if payload.capabilities is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Agent capabilities cannot be null",
+            )
+        if agent.capabilities != payload.capabilities:
+            agent.capabilities = payload.capabilities
+            changed_fields.append("capabilities")
+    if "runtime_config" in fields_set:
+        if payload.runtime_config is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Agent runtime_config cannot be null",
+            )
+        if agent.runtime_config != payload.runtime_config:
+            agent.runtime_config = payload.runtime_config
+            changed_fields.append("runtime_config")
+
+    if changed_fields:
+        record_audit(
+            session,
+            organization_id=organization_id,
+            actor_user_id=current_user.id,
+            action="agent.updated",
+            resource_type="agent",
+            resource_id=str(agent.id),
+            details={"changed_fields": changed_fields},
+        )
+        session.commit()
+        session.refresh(agent)
+    return agent
+
+
+@router.patch("/{organization_id}/agents/{agent_id}/status", response_model=AgentPublic)
+def update_agent_status(
+    organization_id: UUID,
+    agent_id: UUID,
+    payload: AgentStatusUpdate,
+    _membership: AgentsManageDep,
+    current_user: CurrentUserDep,
+    session: SessionDep,
+) -> Agent:
+    agent = _get_agent(session, organization_id, agent_id)
+    previous_status = agent.status
+    next_status = payload.status.value
+    if previous_status == next_status:
+        return agent
+
+    agent.status = next_status
+    record_audit(
+        session,
+        organization_id=organization_id,
+        actor_user_id=current_user.id,
+        action="agent.status_changed",
+        resource_type="agent",
+        resource_id=str(agent.id),
+        details={"from": previous_status, "to": next_status},
+    )
+    session.commit()
+    session.refresh(agent)
+    return agent
 
 
 @router.post(
