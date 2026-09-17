@@ -25,6 +25,8 @@ class Permission(StrEnum):
     RESEARCH_RUN = "research:run"
     RESEARCH_MANAGE = "research:manage"
     RESEARCH_APPROVE = "research:approve"
+    WEBHOOKS_READ = "webhooks:read"
+    WEBHOOKS_MANAGE = "webhooks:manage"
     SECRETS_MANAGE = "secrets:manage"
     AUDIT_READ = "audit:read"
     BILLING_READ = "billing:read"
@@ -51,6 +53,8 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
             Permission.RESEARCH_RUN,
             Permission.RESEARCH_MANAGE,
             Permission.RESEARCH_APPROVE,
+            Permission.WEBHOOKS_READ,
+            Permission.WEBHOOKS_MANAGE,
             Permission.SECRETS_MANAGE,
             Permission.AUDIT_READ,
             Permission.BILLING_READ,
@@ -74,6 +78,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
             Permission.MEMBERS_READ,
             Permission.KNOWLEDGE_READ,
             Permission.RESEARCH_READ,
+            Permission.WEBHOOKS_READ,
             Permission.AUDIT_READ,
             Permission.BILLING_READ,
         }
