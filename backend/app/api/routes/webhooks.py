@@ -39,7 +39,10 @@ def _get_org_endpoint(
         )
     )
     if endpoint is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook endpoint not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Webhook endpoint not found",
+        )
     return endpoint
 
 
@@ -241,7 +244,10 @@ async def receive_inbound_webhook(
 ) -> WebhookReceipt:
     endpoint = get_endpoint(session, endpoint_id)
     if endpoint is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook endpoint not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Webhook endpoint not found",
+        )
     body = await _read_bounded_body(request, endpoint.max_payload_bytes)
     try:
         event, duplicate = receive_webhook(
