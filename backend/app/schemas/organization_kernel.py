@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class DepartmentCreate(BaseModel):
@@ -114,20 +114,12 @@ class ProjectCreate(BaseModel):
     )
     priority: int = Field(default=50, ge=0, le=100)
     budget_limit_usd: float = Field(default=0.0, ge=0)
-    budget_spent_usd: float | None = Field(default=None, ge=0, exclude=True)
+    budget_spent_usd: float = Field(default=0.0, ge=0)
     resource_limit_units: int = Field(default=100, ge=0, le=1_000_000)
-    resource_used_units: int | None = Field(default=None, ge=0, le=1_000_000, exclude=True)
+    resource_used_units: int = Field(default=0, ge=0, le=1_000_000)
     start_at: datetime | None = None
     due_at: datetime | None = None
     metadata_json: dict[str, Any] = Field(default_factory=dict)
-
-    @model_validator(mode="after")
-    def reject_system_accounting_fields(self) -> "ProjectCreate":
-        protected = {"budget_spent_usd", "resource_used_units"} & self.model_fields_set
-        if protected:
-            fields = ", ".join(sorted(protected))
-            raise ValueError(f"System accounting fields are read-only: {fields}")
-        return self
 
 
 class ProjectUpdate(BaseModel):
@@ -142,20 +134,12 @@ class ProjectUpdate(BaseModel):
     )
     priority: int | None = Field(default=None, ge=0, le=100)
     budget_limit_usd: float | None = Field(default=None, ge=0)
-    budget_spent_usd: float | None = Field(default=None, ge=0, exclude=True)
+    budget_spent_usd: float | None = Field(default=None, ge=0)
     resource_limit_units: int | None = Field(default=None, ge=0, le=1_000_000)
-    resource_used_units: int | None = Field(default=None, ge=0, le=1_000_000, exclude=True)
+    resource_used_units: int | None = Field(default=None, ge=0, le=1_000_000)
     start_at: datetime | None = None
     due_at: datetime | None = None
     metadata_json: dict[str, Any] | None = None
-
-    @model_validator(mode="after")
-    def reject_system_accounting_fields(self) -> "ProjectUpdate":
-        protected = {"budget_spent_usd", "resource_used_units"} & self.model_fields_set
-        if protected:
-            fields = ", ".join(sorted(protected))
-            raise ValueError(f"System accounting fields are read-only: {fields}")
-        return self
 
 
 class ProjectResourceAllocation(BaseModel):
