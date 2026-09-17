@@ -47,6 +47,7 @@ class Agent(Base):
     runtime_config: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     allowed_model_providers: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     allowed_models: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    allowed_tool_slugs: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
