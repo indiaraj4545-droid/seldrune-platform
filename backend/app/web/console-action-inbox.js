@@ -77,158 +77,118 @@ function actionButton(label,action,id){
   return button;
 }
 
+function commandIds(root){
+  return [...root.querySelectorAll('.command-card[data-command-id]')]
+    .map(card=>card.dataset.commandId);
+}
+
+function commandListMatches(root,commands){
+  const expected=commands.map(command=>String(command.id));
+  const rendered=commandIds(root);
+  return expected.length===rendered.length
+    &&expected.every((value,index)=>value===rendered[index]);
+}
+
 function renderAllCommands(commands){
   const root=$('#command-list');
-  if(!root)return;
-  if(commandObserver)commandObserver.disconnect();
+  if(!root||commandListMatches(root,commands))return;
   root.replaceChildren();
   if(!commands.length){
     const empty=document.createElement('div');
     empty.className='empty';
     empty.textContent='No commands yet. Create your first objective.';
     root.append(empty);
-  }else{
-    commands.forEach(command=>{
-      const card=document.createElement('article');
-      card.className='command-card';
-      card.id=`command-${command.id}`;
-
-      const content=document.createElement('div');
-      const title=document.createElement('h3');
-      title.textContent=command.objective;
-      const meta=document.createElement('div');
-      meta.className='meta';
-      const status=document.createElement('span');
-      status.className='pill';
-      status.textContent=command.status;
-      const approval=document.createElement('span');
-      const approvalValue=approvalStatus(command);
-      approval.className=`pill ${approvalValue==='awaiting_approval'?'pending':''}`;
-      approval.textContent=approvalValue.replaceAll('_',' ');
-      meta.append(status,approval);
-      content.append(title,meta);
-      appendBudget(content,commandBudget(command));
-
-      const actions=document.createElement('div');
-      actions.className='actions';
-      actions.append(actionButton('Decision brief','brief',command.id));
-      if(approvalValue==='approved'){
-        actions.append(
-          actionButton('Execute','execute',command.id),
-          actionButton('Revoke approval','revoke',command.id),
-        );
-      }else{
-        actions.append(actionButton('Approve','approve',command.id));
-      }
-      card.append(content,actions);
-      root.append(card);
-    });
+    return;
   }
-  observeCommandList();
+  commands.forEach(command=>{
+    const card=document.createElement('article');
+    card.className='command-card';
+    card.id=`command-${command.id}`;
+    card.dataset.commandId=command.id;
+
+    const content=document.createElement('div');
+    const title=document.createElement('h3');
+    title.textContent=command.objective;
+    const meta=document.createElement('div');
+    meta.className='meta';
+    const status=document.createElement('span');
+    status.className='pill';
+    status.textContent=command.status;
+    const approval=document.createElement('span');
+    const approvalValue=approvalStatus(command);
+    approval.className=`pill ${approvalValue==='awaiting_approval'?'pending':''}`;
+    approval.textContent=approvalValue.replaceAll('_',' ');
+    meta.append(status,approval);
+    content.append(title,meta);
+    appendBudget(content,commandBudget(command));
+
+    const actions=document.createElement('div');
+    actions.className='actions';
+    actions.append(actionButton('Decision brief','brief',command.id));
+    if(approvalValue==='approved'){
+      actions.append(
+        actionButton('Execute','execute',command.id),
+        actionButton('Revoke approval','revoke',command.id),
+      );
+    }else{
+      actions.append(actionButton('Approve','approve',command.id));
+    }
+    card.append(content,actions);
+    root.append(card);
+  });
 }
 
 function setCount(id,value){
   const element=$(id);
-  if(element)element.textContent=String(value);
+  if(element)element.textContent=String(value||0);
 }
 
-function inboxItem(kind,badge,title,detail,meta){
-  const item=document.createElement('article');
-  item.className=`action-inbox-item action-inbox-${kind}`;
+function inboxItem(item){
+  const root=document.createElement('article');
+  root.className=`action-inbox-item action-inbox-${item.severity||'warning'}`;
   const marker=document.createElement('span');
   marker.className='action-inbox-badge';
-  marker.textContent=badge;
+  marker.textContent=(item.action?.label||item.severity||'Attention').replace('Open ','');
   const content=document.createElement('div');
   const heading=document.createElement('strong');
-  heading.textContent=title;
+  heading.textContent=item.title;
   const description=document.createElement('p');
-  description.textContent=detail;
+  description.textContent=item.detail;
   content.append(heading,description);
+  const meta=item.meta||(item.occurred_at?new Date(item.occurred_at).toLocaleString():'');
   if(meta){
     const small=document.createElement('small');
     small.textContent=meta;
     content.append(small);
   }
-  item.append(marker,content);
-  return item;
+  root.append(marker,content);
+
+  const action=item.action||{};
+  if(action.kind==='review_command'&&action.command_id){
+    const button=document.createElement('button');
+    button.type='button';
+    button.dataset.inboxCommand=action.command_id;
+    button.textContent=action.label||'Review command';
+    root.append(button);
+  }else if(action.kind==='navigate'&&action.href){
+    const link=document.createElement('a');
+    link.href=action.href;
+    link.textContent=action.label||'Open';
+    root.append(link);
+  }
+  return root;
 }
 
-function navigationLink(label,href){
-  const link=document.createElement('a');
-  link.href=href;
-  link.textContent=label;
-  return link;
-}
-
-function reviewCommandButton(commandId){
-  const button=document.createElement('button');
-  button.type='button';
-  button.dataset.inboxCommand=commandId;
-  button.textContent='Review command';
-  return button;
-}
-
-function renderInbox(dashboard,commands,brief){
+function renderInbox(attention){
   const root=$('#owner-action-list');
   if(!root)return;
-  const approvals=commands.filter(command=>approvalStatus(command)==='awaiting_approval');
-  const reviews=(brief.priorities||[]).filter(item=>{
-    const review=item.strategy_review||{};
-    return review.required&&!review.current;
-  });
-  const incidents=dashboard.operational_incidents?.recent||[];
-  const critical=incidents.filter(item=>item.severity==='critical');
-  const warnings=incidents.filter(item=>item.severity==='warning');
-
-  setCount('#action-approvals',approvals.length);
-  setCount('#action-reviews',reviews.length);
-  setCount('#action-critical',critical.length);
-  setCount('#action-warnings',warnings.length);
+  const summary=attention.summary||{};
+  setCount('#action-approvals',summary.approvals);
+  setCount('#action-reviews',summary.reviews);
+  setCount('#action-critical',summary.critical);
+  setCount('#action-warnings',summary.warnings);
   root.replaceChildren();
-
-  const appendIncident=(incident,kind,label)=>{
-    const item=inboxItem(
-      kind,
-      label,
-      incident.title,
-      incident.detail||incident.type,
-      incident.occurred_at?new Date(incident.occurred_at).toLocaleString():'',
-    );
-    item.append(navigationLink('Open incidents','#incident-title'));
-    root.append(item);
-  };
-  critical.forEach(item=>appendIncident(item,'critical','Critical'));
-
-  reviews.forEach(priority=>{
-    const review=priority.strategy_review||{};
-    const stale=review.status==='stale';
-    const item=inboxItem(
-      'review',
-      stale?'Re-review':'Review',
-      priority.title||'Strategy review required',
-      stale
-        ?'Previously reviewed strategy evidence changed. A current owner review is required before a new governed command can be created.'
-        :'A comparative strategy recommendation requires owner review before command creation.',
-      priority.detail||'',
-    );
-    item.append(navigationLink('Open Review Drift','/console-assets/executive-brief.html'));
-    root.append(item);
-  });
-
-  approvals.forEach(command=>{
-    const item=inboxItem(
-      'approval',
-      'Approval',
-      command.objective,
-      'Governed plan is waiting for the owner to inspect its decision brief and explicitly approve or reject execution.',
-      command.created_at?new Date(command.created_at).toLocaleString():'',
-    );
-    item.append(reviewCommandButton(command.id));
-    root.append(item);
-  });
-
-  warnings.forEach(item=>appendIncident(item,'warning','Warning'));
-
+  (attention.items||[]).forEach(item=>root.append(inboxItem(item)));
   if(!root.childElementCount){
     const clear=document.createElement('div');
     clear.className='action-inbox-clear';
@@ -254,13 +214,12 @@ async function loadActionSurface(){
   loading=true;
   try{
     if(!organizationId)await resolveOrganization();
-    const [dashboard,commands,brief]=await Promise.all([
-      request(`/organizations/${organizationId}/owner-dashboard`),
+    const [attention,commands]=await Promise.all([
+      request(`/organizations/${organizationId}/owner-attention`),
       request(`/organizations/${organizationId}/owner-commands`),
-      request(`/organizations/${organizationId}/executive-brief`),
     ]);
+    renderInbox(attention);
     renderAllCommands(commands);
-    renderInbox(dashboard,commands,brief);
   }catch(error){
     showInboxError(error.message);
   }finally{
@@ -270,17 +229,15 @@ async function loadActionSurface(){
 
 function scheduleReload(){
   clearTimeout(reloadTimer);
-  reloadTimer=setTimeout(loadActionSurface,120);
+  reloadTimer=setTimeout(loadActionSurface,160);
 }
 
 function observeCommandList(){
   const root=$('#command-list');
-  if(!root)return;
-  if(!commandObserver){
-    commandObserver=new MutationObserver(()=>{
-      if(!loading)scheduleReload();
-    });
-  }
+  if(!root||commandObserver)return;
+  commandObserver=new MutationObserver(()=>{
+    if(!loading)scheduleReload();
+  });
   commandObserver.observe(root,{childList:true});
 }
 
