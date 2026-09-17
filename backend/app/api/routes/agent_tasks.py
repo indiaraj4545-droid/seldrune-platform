@@ -10,6 +10,7 @@ from backend.app.core.tasking import AgentStatus, TaskStatus
 from backend.app.models.agent import Agent
 from backend.app.models.membership import Membership
 from backend.app.models.task import Task, TaskEvent
+from backend.app.models.tool_definition import ToolDefinition
 from backend.app.schemas.agent_task import (
     AgentCreate,
     AgentPublic,
@@ -56,6 +57,33 @@ def _get_task(session: SessionDep, organization_id: UUID, task_id: UUID) -> Task
     return task
 
 
+def _validate_allowed_tool_slugs(
+    session: SessionDep,
+    organization_id: UUID,
+    slugs: list[str] | None,
+) -> list[str] | None:
+    if slugs is None:
+        return None
+    normalized = list(dict.fromkeys(slugs))
+    if not normalized:
+        return []
+    existing = set(
+        session.scalars(
+            select(ToolDefinition.slug).where(
+                ToolDefinition.organization_id == organization_id,
+                ToolDefinition.slug.in_(normalized),
+            )
+        )
+    )
+    missing = sorted(set(normalized) - existing)
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"unknown_tool_slugs": missing},
+        )
+    return normalized
+
+
 @router.post(
     "/{organization_id}/agents",
     response_model=AgentPublic,
@@ -85,6 +113,11 @@ def create_agent(
         if payload.allowed_model_providers is not None
         else None
     )
+    allowed_tool_slugs = _validate_allowed_tool_slugs(
+        session,
+        organization_id,
+        payload.allowed_tool_slugs,
+    )
     agent = Agent(
         organization_id=organization_id,
         created_by_user_id=current_user.id,
@@ -96,6 +129,7 @@ def create_agent(
         runtime_config=payload.runtime_config,
         allowed_model_providers=allowed_model_providers,
         allowed_models=payload.allowed_models,
+        allowed_tool_slugs=allowed_tool_slugs,
     )
     session.add(agent)
     session.flush()
@@ -113,6 +147,7 @@ def create_agent(
             "model_policy_configured": (
                 agent.allowed_model_providers is not None or agent.allowed_models is not None
             ),
+            "tool_policy_configured": agent.allowed_tool_slugs is not None,
         },
     )
     session.commit()
@@ -157,6 +192,11 @@ def update_agent(
     agent = _get_agent(session, organization_id, agent_id)
     changed_fields: list[str] = []
     fields_set = payload.model_fields_set
+    validated_tool_slugs = (
+        _validate_allowed_tool_slugs(session, organization_id, payload.allowed_tool_slugs)
+        if "allowed_tool_slugs" in fields_set
+        else agent.allowed_tool_slugs
+    )
 
     if "name" in fields_set:
         if payload.name is None:
@@ -200,6 +240,9 @@ def update_agent(
     if "allowed_models" in fields_set and agent.allowed_models != payload.allowed_models:
         agent.allowed_models = payload.allowed_models
         changed_fields.append("allowed_models")
+    if "allowed_tool_slugs" in fields_set and agent.allowed_tool_slugs != validated_tool_slugs:
+        agent.allowed_tool_slugs = validated_tool_slugs
+        changed_fields.append("allowed_tool_slugs")
 
     if changed_fields:
         previous_version = agent.version

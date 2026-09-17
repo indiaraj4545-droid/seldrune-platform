@@ -56,6 +56,7 @@ def create_tool_run(
     requested_by_user_id: UUID,
     input_data: dict[str, Any],
     task_id: UUID | None = None,
+    agent_id: UUID | None = None,
 ) -> ToolRun:
     if tool.organization_id != organization_id:
         raise ToolGatewayError("Tool does not belong to this organization")
@@ -75,6 +76,7 @@ def create_tool_run(
         organization_id=organization_id,
         tool_id=tool.id,
         task_id=task_id,
+        agent_id=agent_id,
         requested_by_user_id=requested_by_user_id,
         status=status.value,
         input_data=input_data,
@@ -90,6 +92,7 @@ def create_tool_run(
         resource_id=str(run.id),
         details={
             "tool_id": str(tool.id),
+            "agent_id": str(agent_id) if agent_id else None,
             "status": run.status,
             "risk_level": tool.risk_level,
         },

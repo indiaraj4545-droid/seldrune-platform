@@ -51,6 +51,7 @@ class ToolRunPublic(BaseModel):
     organization_id: UUID
     tool_id: UUID
     task_id: UUID | None
+    agent_id: UUID | None
     requested_by_user_id: UUID | None
     decided_by_user_id: UUID | None
     status: str

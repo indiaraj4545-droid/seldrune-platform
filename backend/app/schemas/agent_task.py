@@ -22,6 +22,7 @@ class AgentCreate(BaseModel):
     runtime_config: dict[str, Any] = Field(default_factory=dict)
     allowed_model_providers: list[ModelProvider] | None = Field(default=None, max_length=20)
     allowed_models: list[str] | None = Field(default=None, max_length=100)
+    allowed_tool_slugs: list[str] | None = Field(default=None, max_length=100)
 
 
 class AgentUpdate(BaseModel):
@@ -31,6 +32,7 @@ class AgentUpdate(BaseModel):
     runtime_config: dict[str, Any] | None = None
     allowed_model_providers: list[ModelProvider] | None = Field(default=None, max_length=20)
     allowed_models: list[str] | None = Field(default=None, max_length=100)
+    allowed_tool_slugs: list[str] | None = Field(default=None, max_length=100)
 
 
 class AgentStatusUpdate(BaseModel):
@@ -51,6 +53,7 @@ class AgentPublic(BaseModel):
     runtime_config: dict[str, Any]
     allowed_model_providers: list[ModelProvider] | None
     allowed_models: list[str] | None
+    allowed_tool_slugs: list[str] | None
     created_at: datetime
     updated_at: datetime
 

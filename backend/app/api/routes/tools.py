@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from backend.app.api.dependencies import CurrentUserDep, SessionDep, require_org_permission
 from backend.app.core.rbac import Permission
 from backend.app.core.tools import ApprovalMode, ToolRisk, ToolRunStatus, ToolStatus
+from backend.app.models.agent import Agent
 from backend.app.models.membership import Membership
 from backend.app.models.task import Task
 from backend.app.models.tool_definition import ToolDefinition
@@ -157,6 +158,7 @@ def request_tool_run(
     session: SessionDep,
 ) -> ToolRun:
     tool = _get_tool(session, organization_id, payload.tool_id)
+    agent: Agent | None = None
     if payload.task_id is not None:
         task = session.scalar(
             select(Task).where(
@@ -166,6 +168,41 @@ def request_tool_run(
         )
         if task is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+        if task.assigned_agent_id is not None:
+            agent = session.scalar(
+                select(Agent).where(
+                    Agent.id == task.assigned_agent_id,
+                    Agent.organization_id == organization_id,
+                )
+            )
+            if agent is None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Assigned agent not found",
+                )
+            if (
+                agent.allowed_tool_slugs is not None
+                and tool.slug not in agent.allowed_tool_slugs
+            ):
+                record_audit(
+                    session,
+                    organization_id=organization_id,
+                    actor_user_id=current_user.id,
+                    action="agent.tool_access_denied",
+                    resource_type="agent",
+                    resource_id=str(agent.id),
+                    details={
+                        "tool_id": str(tool.id),
+                        "tool_slug": tool.slug,
+                        "task_id": str(task.id),
+                        "agent_version": agent.version,
+                    },
+                )
+                session.commit()
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Tool is not allowed for the assigned agent",
+                )
     try:
         run = create_tool_run(
             session,
@@ -174,6 +211,7 @@ def request_tool_run(
             requested_by_user_id=current_user.id,
             input_data=payload.input_data,
             task_id=payload.task_id,
+            agent_id=agent.id if agent else None,
         )
         if run.status == ToolRunStatus.APPROVED.value:
             run = execute_tool_run(
