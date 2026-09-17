@@ -11,11 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from backend.app.core.webhooks import (
-    SIGNATURE_PREFIX,
-    WEBHOOK_REPLAY_WINDOW_SECONDS,
-    WebhookEndpointStatus,
-)
+from backend.app.core.webhooks import WEBHOOK_REPLAY_WINDOW_SECONDS, WebhookEndpointStatus
 from backend.app.models.secret_reference import SecretReference
 from backend.app.models.webhook import WebhookEndpoint, WebhookEvent
 from backend.app.services.audit import record_audit
@@ -91,6 +87,10 @@ def _verify_signature(*, secret: str, timestamp: str, body: bytes, signature: st
         raise WebhookGatewayError("Invalid webhook signature", status_code=401)
 
 
+def _same_delivery(existing: WebhookEvent, *, event_type: str, payload_sha256: str) -> bool:
+    return existing.event_type == event_type and existing.payload_sha256 == payload_sha256
+
+
 def receive_webhook(
     session: Session,
     *,
@@ -145,6 +145,7 @@ def receive_webhook(
         )
         raise WebhookGatewayError("Webhook payload must be a JSON object")
 
+    payload_sha256 = hashlib.sha256(body).hexdigest()
     existing = session.scalar(
         select(WebhookEvent).where(
             WebhookEvent.endpoint_id == endpoint.id,
@@ -152,6 +153,18 @@ def receive_webhook(
         )
     )
     if existing is not None:
+        if not _same_delivery(existing, event_type=event_type, payload_sha256=payload_sha256):
+            _reject_authenticated(
+                session,
+                endpoint=endpoint,
+                delivery_id=delivery_id,
+                event_type=event_type,
+                reason="delivery_id_conflict",
+            )
+            raise WebhookGatewayError(
+                "Webhook delivery ID was already used for different content",
+                status_code=409,
+            )
         record_audit(
             session,
             organization_id=endpoint.organization_id,
@@ -170,7 +183,7 @@ def receive_webhook(
         delivery_id=delivery_id,
         event_type=event_type,
         payload_json=payload,
-        payload_sha256=hashlib.sha256(body).hexdigest(),
+        payload_sha256=payload_sha256,
     )
     session.add(event)
     try:
@@ -185,6 +198,11 @@ def receive_webhook(
         )
         if existing is None:
             raise
+        if not _same_delivery(existing, event_type=event_type, payload_sha256=payload_sha256):
+            raise WebhookGatewayError(
+                "Webhook delivery ID was already used for different content",
+                status_code=409,
+            )
         return existing, True
 
     record_audit(
