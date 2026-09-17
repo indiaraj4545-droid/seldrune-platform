@@ -12,10 +12,11 @@ class Settings(BaseSettings):
     )
 
     app_name: str = "Seldrune Platform"
-    app_version: str = "1.0.1"
+    app_version: str = "1.1.0"
     environment: str = "development"
     api_v1_prefix: str = "/api/v1"
     enable_docs: bool = True
+    release_sha: str | None = None
     database_url: str = "sqlite+pysqlite:///./seldrune.db"
     auth_secret_key: str = "development-only-change-this-secret"
     auth_access_token_minutes: int = 30
