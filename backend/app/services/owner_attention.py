@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Any
 
 from backend.app.models.orchestration import OrchestrationRun
+from backend.app.models.security_event import SecurityEvent
 
 
 def _approval_status(command: OrchestrationRun) -> str:
@@ -49,13 +50,48 @@ def _attention_item(
     }
 
 
+def _security_title(event: SecurityEvent) -> str:
+    if event.event_type == "refresh_token_reuse":
+        return "Refresh token reuse detected"
+    if event.event_type == "webhook_authentication_rejected":
+        return "Webhook authentication rejected"
+    return "Security event requires attention"
+
+
 def build_owner_attention(
     *,
     dashboard: dict[str, Any],
     executive_brief: dict[str, Any],
     commands: list[OrchestrationRun],
+    security_events: list[SecurityEvent] | None = None,
 ) -> dict[str, Any]:
     items: list[dict[str, Any]] = []
+
+    for event in security_events or []:
+        if event.status != "open" or event.severity not in {"critical", "warning"}:
+            continue
+        critical = event.severity == "critical"
+        items.append(
+            _attention_item(
+                kind="critical_security_event" if critical else "warning_security_event",
+                category="security",
+                severity=event.severity,
+                attention_rank=500 if critical else 200,
+                title=_security_title(event),
+                detail="Review and acknowledge this security event in the security center.",
+                resource_type="security_event",
+                resource_id=str(event.id),
+                occurred_at=event.occurred_at,
+                action={
+                    "kind": "navigate",
+                    "label": "Open security center",
+                    "href": (
+                        f"/api/v1/organizations/{event.organization_id}/security-events"
+                        "?status=open"
+                    ),
+                },
+            )
+        )
 
     incidents = (dashboard.get("operational_incidents") or {}).get("recent") or []
     for incident in incidents:
@@ -151,10 +187,14 @@ def build_owner_attention(
 
     summary = {
         "total": len(items),
-        "critical": sum(item["kind"] == "critical_incident" for item in items),
+        "critical": sum(
+            item["kind"] in {"critical_incident", "critical_security_event"} for item in items
+        ),
         "reviews": sum(item["category"] == "strategy_review" for item in items),
         "approvals": sum(item["kind"] == "command_approval" for item in items),
-        "warnings": sum(item["kind"] == "warning_incident" for item in items),
+        "warnings": sum(
+            item["kind"] in {"warning_incident", "warning_security_event"} for item in items
+        ),
     }
     return {
         "summary": summary,
