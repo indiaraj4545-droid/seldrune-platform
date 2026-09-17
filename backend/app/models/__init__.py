@@ -27,6 +27,7 @@ from backend.app.models.task import Task, TaskEvent
 from backend.app.models.tool_definition import ToolDefinition
 from backend.app.models.tool_run import ToolRun
 from backend.app.models.user import User
+from backend.app.models.webhook import WebhookEndpoint, WebhookEvent
 
 __all__ = [
     "Agent",
@@ -55,4 +56,6 @@ __all__ = [
     "ToolDefinition",
     "ToolRun",
     "User",
+    "WebhookEndpoint",
+    "WebhookEvent",
 ]
