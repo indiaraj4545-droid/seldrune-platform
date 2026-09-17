@@ -1,4 +1,5 @@
 from backend.app.models.agent import Agent
+from backend.app.models.agent_revision import AgentConfigurationRevision
 from backend.app.models.audit import AuditLog
 from backend.app.models.governance_policy import GovernancePolicy
 from backend.app.models.knowledge import KnowledgeEntry
@@ -25,6 +26,7 @@ from backend.app.models.user import User
 
 __all__ = [
     "Agent",
+    "AgentConfigurationRevision",
     "AuditLog",
     "GovernancePolicy",
     "Department",

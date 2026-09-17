@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from backend.app.api.routes.agent_revisions import router as agent_revisions_router
 from backend.app.api.routes.agent_tasks import router as agent_tasks_router
 from backend.app.api.routes.auth import router as auth_router
 from backend.app.api.routes.console import router as console_router
@@ -42,6 +43,7 @@ def create_app() -> FastAPI:
         owner_attention_router,
         owner_push_router,
         agent_tasks_router,
+        agent_revisions_router,
         orchestrations_router,
         sense_router,
         owner_commands_router,

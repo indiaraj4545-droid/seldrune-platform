@@ -22,6 +22,12 @@ from backend.app.schemas.agent_task import (
     TaskPublic,
     TaskTransitionRequest,
 )
+from backend.app.services.agent_revisions import (
+    capture_agent_revision,
+    capture_snapshot_revision,
+    configuration_snapshot,
+    runtime_config_secret_paths,
+)
 from backend.app.services.audit import record_audit
 from backend.app.services.task_engine import TaskTransitionError, transition_task
 
@@ -84,6 +90,15 @@ def _validate_allowed_tool_slugs(
     return normalized
 
 
+def _validate_runtime_config(runtime_config: dict) -> None:
+    matches = sorted(set(runtime_config_secret_paths(runtime_config)))
+    if matches:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"secret_like_runtime_config_keys": matches},
+        )
+
+
 @router.post(
     "/{organization_id}/agents",
     response_model=AgentPublic,
@@ -108,6 +123,7 @@ def create_agent(
             detail="Agent slug already exists",
         )
 
+    _validate_runtime_config(payload.runtime_config)
     allowed_model_providers = (
         [provider.value for provider in payload.allowed_model_providers]
         if payload.allowed_model_providers is not None
@@ -133,6 +149,12 @@ def create_agent(
     )
     session.add(agent)
     session.flush()
+    capture_agent_revision(
+        session,
+        agent=agent,
+        actor_user_id=current_user.id,
+        change_kind="created",
+    )
     record_audit(
         session,
         organization_id=organization_id,
@@ -192,6 +214,19 @@ def update_agent(
     agent = _get_agent(session, organization_id, agent_id)
     changed_fields: list[str] = []
     fields_set = payload.model_fields_set
+
+    if "runtime_config" in fields_set and payload.runtime_config is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Agent runtime_config cannot be null",
+        )
+    candidate_runtime_config = (
+        payload.runtime_config if "runtime_config" in fields_set else agent.runtime_config
+    )
+    _validate_runtime_config(candidate_runtime_config)
+    previous_snapshot = configuration_snapshot(agent)
+    previous_version = agent.version
+
     validated_tool_slugs = (
         _validate_allowed_tool_slugs(session, organization_id, payload.allowed_tool_slugs)
         if "allowed_tool_slugs" in fields_set
@@ -219,15 +254,9 @@ def update_agent(
         if agent.capabilities != payload.capabilities:
             agent.capabilities = payload.capabilities
             changed_fields.append("capabilities")
-    if "runtime_config" in fields_set:
-        if payload.runtime_config is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Agent runtime_config cannot be null",
-            )
-        if agent.runtime_config != payload.runtime_config:
-            agent.runtime_config = payload.runtime_config
-            changed_fields.append("runtime_config")
+    if "runtime_config" in fields_set and agent.runtime_config != payload.runtime_config:
+        agent.runtime_config = payload.runtime_config
+        changed_fields.append("runtime_config")
     if "allowed_model_providers" in fields_set:
         allowed_model_providers = (
             [provider.value for provider in payload.allowed_model_providers]
@@ -245,8 +274,28 @@ def update_agent(
         changed_fields.append("allowed_tool_slugs")
 
     if changed_fields:
-        previous_version = agent.version
+        try:
+            capture_snapshot_revision(
+                session,
+                agent=agent,
+                version=previous_version,
+                snapshot=previous_snapshot,
+                actor_user_id=current_user.id,
+                change_kind="baseline",
+            )
+        except ValueError:
+            # Pre-v0.86 configurations may contain secret-like runtime keys. When the
+            # same request replaces them with a safe runtime_config, preserve safety
+            # by starting immutable history at the new version instead of copying the
+            # legacy secret-bearing snapshot into revision storage.
+            pass
         agent.version += 1
+        capture_agent_revision(
+            session,
+            agent=agent,
+            actor_user_id=current_user.id,
+            change_kind="updated",
+        )
         record_audit(
             session,
             organization_id=organization_id,
