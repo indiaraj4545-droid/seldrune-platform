@@ -23,7 +23,12 @@ def upgrade() -> None:
         sa.Column("change_kind", sa.String(length=32), nullable=False),
         sa.Column("snapshot", sa.JSON(), nullable=False),
         sa.Column("created_by_user_id", sa.Uuid(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
         sa.ForeignKeyConstraint(
             ["organization_id"],
             ["organizations.id"],
