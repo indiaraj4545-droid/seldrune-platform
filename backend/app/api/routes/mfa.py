@@ -126,7 +126,11 @@ def recovery_code_status(
     current_user: CurrentUserDep,
     session: SessionDep,
 ) -> MfaRecoveryStatus:
-    remaining = remaining_recovery_codes(session, current_user.id) if current_user.mfa_enabled else 0
+    remaining = (
+        remaining_recovery_codes(session, current_user.id)
+        if current_user.mfa_enabled
+        else 0
+    )
     return MfaRecoveryStatus(recovery_codes_remaining=remaining)
 
 
