@@ -6,7 +6,11 @@ from backend.app.models.knowledge import KnowledgeEntry
 from backend.app.models.membership import Membership
 from backend.app.models.memory import MemoryItem
 from backend.app.models.model_invocation import ModelInvocation
-from backend.app.models.orchestration import OrchestrationRun, OrchestrationStep
+from backend.app.models.orchestration import (
+    OrchestrationApproval,
+    OrchestrationRun,
+    OrchestrationStep,
+)
 from backend.app.models.organization import Organization
 from backend.app.models.organization_kernel import (
     Department,
@@ -35,6 +39,7 @@ __all__ = [
     "Membership",
     "MemoryItem",
     "ModelInvocation",
+    "OrchestrationApproval",
     "OrchestrationRun",
     "OrchestrationStep",
     "Organization",
