@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from backend.app.core.rbac import Permission, Role, has_permission
@@ -36,7 +37,7 @@ def _invite_user(
     return _headers(accepted.json()["access_token"])
 
 
-def _produce_refresh_reuse(client) -> tuple[str, str]:
+def _produce_refresh_reuse(client) -> tuple[str, dict[str, str]]:
     owner_token, organization_id = register_owner(client)
     owner_headers = _headers(owner_token)
     login = client.post(
@@ -260,3 +261,83 @@ def test_refresh_reuse_security_event_lifecycle_and_owner_attention(client) -> N
     assert len(audit_items) == 1
     assert audit_items[0]["action"] == "security_event.acknowledged"
     assert set(audit_items[0]["details"]) == {"event_type", "severity"}
+
+
+def test_webhook_authentication_rejection_creates_privacy_safe_warning(
+    client,
+    monkeypatch,
+) -> None:
+    owner_token, organization_id = register_owner(client)
+    owner_headers = _headers(owner_token)
+    secret_value = "security-webhook-test-secret"
+    monkeypatch.setenv("SECURITY_WEBHOOK_SECRET", secret_value)
+
+    reference = client.post(
+        f"/api/v1/organizations/{organization_id}/secret-references",
+        headers=owner_headers,
+        json={
+            "name": "Security Webhook Secret",
+            "slug": "security-webhook-secret",
+            "provider": "env",
+            "locator": "SECURITY_WEBHOOK_SECRET",
+        },
+    )
+    assert reference.status_code == 201
+
+    endpoint = client.post(
+        f"/api/v1/organizations/{organization_id}/webhooks",
+        headers=owner_headers,
+        json={
+            "name": "Security Events",
+            "slug": "security-events",
+            "secret_reference_id": reference.json()["id"],
+            "allowed_event_types": ["security.fixture"],
+        },
+    )
+    assert endpoint.status_code == 201
+
+    body = b'{"private":"payload-marker"}'
+    signature = "sha256=" + ("0" * 64)
+    rejected = client.post(
+        f"/api/v1/webhooks/{endpoint.json()['id']}",
+        content=body,
+        headers={
+            "Content-Type": "application/json",
+            "X-Seldrune-Delivery": "security-rejected-1",
+            "X-Seldrune-Event": "security.fixture",
+            "X-Seldrune-Timestamp": str(int(datetime.now(UTC).timestamp())),
+            "X-Seldrune-Signature": signature,
+        },
+    )
+    assert rejected.status_code == 401
+
+    listed = client.get(
+        f"/api/v1/organizations/{organization_id}/security-events",
+        headers=owner_headers,
+        params={"event_type": "webhook_authentication_rejected"},
+    )
+    assert listed.status_code == 200
+    assert listed.json()["total"] == 1
+    event = listed.json()["items"][0]
+    assert event["severity"] == "warning"
+    assert event["status"] == "open"
+    assert event["resource_type"] == "webhook_endpoint"
+    assert event["resource_id"] == endpoint.json()["id"]
+    assert event["details"] == {}
+    serialized = str(event)
+    assert secret_value not in serialized
+    assert signature not in serialized
+    assert "payload-marker" not in serialized
+
+    attention = client.get(
+        f"/api/v1/organizations/{organization_id}/owner-attention",
+        headers=owner_headers,
+    )
+    assert attention.status_code == 200
+    warning_items = [
+        item
+        for item in attention.json()["items"]
+        if item["kind"] == "warning_security_event"
+    ]
+    assert len(warning_items) == 1
+    assert attention.json()["summary"]["warnings"] >= 1
