@@ -355,7 +355,14 @@ def create_project(
     current_user: CurrentUserDep,
     session: SessionDep,
 ) -> OrganizationProject:
-    if payload.budget_limit_usd > 0:
+    seeded_accounting = any(
+        (
+            payload.budget_limit_usd > 0,
+            payload.budget_spent_usd > 0,
+            payload.resource_used_units > 0,
+        )
+    )
+    if seeded_accounting:
         _require_billing_manage(_membership)
     existing = session.scalar(
         select(OrganizationProject).where(
@@ -378,8 +385,12 @@ def create_project(
     session.add(project)
     session.flush()
     details: dict[str, Any] = {"slug": project.slug}
-    if payload.budget_limit_usd > 0:
-        details["budget_limit_usd"] = project.budget_limit_usd
+    if seeded_accounting:
+        details["accounting"] = {
+            "budget_limit_usd": project.budget_limit_usd,
+            "budget_spent_usd": project.budget_spent_usd,
+            "resource_used_units": project.resource_used_units,
+        }
     _audit(
         session,
         organization_id=organization_id,
@@ -419,8 +430,13 @@ def update_project(
     session: SessionDep,
 ) -> OrganizationProject:
     project = _project(session, organization_id, project_id)
-    budget_changed = "budget_limit_usd" in payload.model_fields_set
-    if budget_changed:
+    accounting_fields = {
+        "budget_limit_usd",
+        "budget_spent_usd",
+        "resource_used_units",
+    }
+    changed_accounting = accounting_fields & payload.model_fields_set
+    if changed_accounting:
         _require_billing_manage(_membership)
     if "department_id" in payload.model_fields_set and payload.department_id is not None:
         _department(session, organization_id, payload.department_id)
@@ -428,18 +444,23 @@ def update_project(
         _goal(session, organization_id, payload.goal_id)
     if "lead_agent_id" in payload.model_fields_set:
         _agent(session, organization_id, payload.lead_agent_id)
-    before_budget = project.budget_limit_usd
+    before_accounting = {
+        "budget_limit_usd": project.budget_limit_usd,
+        "budget_spent_usd": project.budget_spent_usd,
+        "resource_used_units": project.resource_used_units,
+    }
     _apply_patch(project, payload)
-    details = (
-        {
-            "budget_limit_usd": {
-                "before": before_budget,
-                "after": project.budget_limit_usd,
+    details = None
+    if changed_accounting:
+        details = {
+            "accounting": {
+                field: {
+                    "before": before_accounting[field],
+                    "after": getattr(project, field),
+                }
+                for field in sorted(changed_accounting)
             }
         }
-        if budget_changed
-        else None
-    )
     _audit(
         session,
         organization_id=organization_id,
