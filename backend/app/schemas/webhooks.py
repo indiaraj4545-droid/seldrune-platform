@@ -10,6 +10,10 @@ from backend.app.core.webhooks import (
     WebhookEndpointStatus,
 )
 
+_EVENT_TYPE_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-"
+)
+
 
 class WebhookEndpointCreate(BaseModel):
     name: str = Field(min_length=3, max_length=160)
@@ -30,7 +34,7 @@ class WebhookEndpointCreate(BaseModel):
             event_type = item.strip()
             if not event_type or len(event_type) > 200:
                 raise ValueError("event types must be 1-200 characters")
-            if any(char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-" for char in event_type):
+            if any(char not in _EVENT_TYPE_CHARS for char in event_type):
                 raise ValueError("event types contain unsupported characters")
             if event_type not in cleaned:
                 cleaned.append(event_type)
