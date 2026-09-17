@@ -15,6 +15,7 @@ class Permission(StrEnum):
     MEMBERS_MANAGE = "members:manage"
     AGENTS_RUN = "agents:run"
     AGENTS_MANAGE = "agents:manage"
+    AGENTS_APPROVE = "agents:approve"
     TOOLS_RUN = "tools:run"
     TOOLS_MANAGE = "tools:manage"
     TOOLS_APPROVE = "tools:approve"
@@ -40,6 +41,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
             Permission.MEMBERS_MANAGE,
             Permission.AGENTS_RUN,
             Permission.AGENTS_MANAGE,
+            Permission.AGENTS_APPROVE,
             Permission.TOOLS_RUN,
             Permission.TOOLS_MANAGE,
             Permission.TOOLS_APPROVE,
