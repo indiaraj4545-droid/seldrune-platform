@@ -23,6 +23,9 @@ class ToolRun(Base):
     task_id: Mapped[UUID | None] = mapped_column(
         Uuid, ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    agent_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("agents.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     requested_by_user_id: Mapped[UUID | None] = mapped_column(
         Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
