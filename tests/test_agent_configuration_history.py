@@ -1,4 +1,4 @@
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -204,14 +204,15 @@ def test_legacy_agent_gets_baseline_before_first_v086_update(client_and_session)
     client, testing_session = client_and_session
     headers, organization_id = register_owner(client)
     agent = create_agent(client, headers, organization_id, slug="legacy-agent")
+    agent_id = UUID(agent["id"])
 
     with testing_session() as session:
         session.execute(
             delete(AgentConfigurationRevision).where(
-                AgentConfigurationRevision.agent_id == agent["id"]
+                AgentConfigurationRevision.agent_id == agent_id
             )
         )
-        stored_agent = session.scalar(select(Agent).where(Agent.id == agent["id"]))
+        stored_agent = session.scalar(select(Agent).where(Agent.id == agent_id))
         assert stored_agent is not None
         stored_agent.version = 5
         session.commit()
