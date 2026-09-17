@@ -89,12 +89,9 @@ def launch_project_delivery(
             "resource_used_units": project.resource_used_units,
             "cost_forecast": {
                 "step_count": len(planned.steps),
-                "estimated_cost_per_step_usd": (
-                    settings.project_estimated_cost_per_step_usd
-                ),
+                "estimated_cost_per_step_usd": settings.project_estimated_cost_per_step_usd,
                 "estimated_execution_cost_usd": round(
-                    len(planned.steps)
-                    * settings.project_estimated_cost_per_step_usd,
+                    len(planned.steps) * settings.project_estimated_cost_per_step_usd,
                     8,
                 ),
             },
@@ -107,6 +104,7 @@ def launch_project_delivery(
         objective=objective,
         context=context,
         plan=planned.steps,
+        project_id=project.id,
     )
     command.planner_version = planned.planner_version
     project.status = "active"
@@ -139,7 +137,6 @@ def launch_project_delivery(
         },
     )
     return command
-
 
 
 def create_project_recovery(
@@ -190,12 +187,9 @@ def create_project_recovery(
             "resource_used_units": project.resource_used_units,
             "cost_forecast": {
                 "step_count": recovery_step_count,
-                "estimated_cost_per_step_usd": (
-                    settings.project_estimated_cost_per_step_usd
-                ),
+                "estimated_cost_per_step_usd": settings.project_estimated_cost_per_step_usd,
                 "estimated_execution_cost_usd": round(
-                    recovery_step_count
-                    * settings.project_estimated_cost_per_step_usd,
+                    recovery_step_count * settings.project_estimated_cost_per_step_usd,
                     8,
                 ),
             },
@@ -235,7 +229,7 @@ def sync_project_delivery_outcome(
     project_id = project_id or delivery.get("project_id")
     expected_delivery = bool(project_id or project)
     if project is None and project_id:
-        project = session.get(OrganizationProject, UUID(project_id))
+        project = session.get(OrganizationProject, UUID(str(project_id)))
     if project is None:
         candidates = list(
             session.scalars(
@@ -284,6 +278,15 @@ def sync_project_delivery_outcome(
         )
     )
     task_ids = [step.task_id for step in steps]
+    tasks = (
+        list(session.scalars(select(Task).where(Task.id.in_(task_ids)))) if task_ids else []
+    )
+    conflicting_tasks = [
+        task for task in tasks if task.project_id is not None and task.project_id != project.id
+    ]
+    if conflicting_tasks:
+        raise ProjectDeliveryError("Delivery contains task attribution for another project")
+
     invocations = (
         list(
             session.scalars(
@@ -293,28 +296,41 @@ def sync_project_delivery_outcome(
         if task_ids
         else []
     )
-    successful_units = sum(
-        (task := session.get(Task, task_id)) is not None and task.status == "succeeded"
-        for task_id in task_ids
-    )
-    recorded_cost = round(
-        sum(invocation.estimated_cost_usd or 0 for invocation in invocations),
+    successful_units = sum(task.status == "succeeded" for task in tasks)
+    known_cost = round(
+        sum(
+            invocation.estimated_cost_usd
+            for invocation in invocations
+            if invocation.estimated_cost_usd is not None
+        ),
         8,
     )
+    unpriced_count = sum(
+        invocation.estimated_cost_usd is None for invocation in invocations
+    )
+    cost_complete = unpriced_count == 0
+    actual_cost = known_cost if cost_complete else None
+
     outcome = assessment.to_dict()
     reservation = release_project_budget(
         project=project,
         command_id=str(run.id),
-        actual_cost_usd=recorded_cost,
+        actual_cost_usd=actual_cost,
+        known_cost_usd=known_cost,
+        unpriced_invocation_count=unpriced_count,
     )
-    project.budget_spent_usd = round(project.budget_spent_usd + recorded_cost, 8)
+    project.budget_spent_usd = round(project.budget_spent_usd + known_cost, 8)
+    project.unpriced_model_invocation_count += unpriced_count
     project.resource_used_units += successful_units
     project.metadata_json = {
         **(project.metadata_json or {}),
         "delivery_state": state_by_verdict[assessment.verdict],
         "delivery_outcome": outcome,
         "delivery_synced_command_id": str(run.id),
-        "delivery_recorded_cost_usd": recorded_cost,
+        "delivery_recorded_cost_usd": actual_cost,
+        "delivery_known_cost_usd": known_cost,
+        "delivery_unpriced_invocation_count": unpriced_count,
+        "delivery_cost_complete": cost_complete,
         "delivery_resource_units": successful_units,
         **({"delivery_budget_reconciliation": reservation} if reservation else {}),
     }
@@ -346,9 +362,12 @@ def sync_project_delivery_outcome(
         details={
             "delivery_command_id": str(run.id),
             "project_status": project.status,
-            "outcome": outcome,
-            "recorded_cost_usd": recorded_cost,
+            "recorded_cost_usd": actual_cost,
+            "known_cost_usd": known_cost,
+            "unpriced_invocation_count": unpriced_count,
+            "cost_complete": cost_complete,
             "resource_units": successful_units,
+            "outcome": outcome,
             **({"budget_reconciliation": reservation} if reservation else {}),
         },
     )
