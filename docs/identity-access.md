@@ -32,6 +32,12 @@ Current roles:
 - member
 - auditor
 
+## Security monitoring
+
+High-signal security events are stored in an organization-scoped security center. Owner, admin, and auditor roles can read events; owner and admin roles can acknowledge them. Open critical and warning events feed the existing owner-attention snapshot and privacy-safe counts-only push envelope.
+
+Initial producers include refresh-token reuse detection and inbound webhook authentication rejection. Security-event records intentionally exclude raw passwords, bearer tokens, refresh tokens, webhook signatures, request bodies, and secret values.
+
 ## Implemented production controls
 
 - invite-only post-bootstrap onboarding,
@@ -42,6 +48,7 @@ Current roles:
 - login brute-force rate limiting,
 - database-backed RBAC,
 - audit trails for security-relevant authenticated actions,
+- organization-scoped security-event monitoring and owner alerts,
 - secret-reference management without secret-value persistence.
 
 ## Production controls still required
@@ -51,5 +58,4 @@ Before accepting broad external customer access, complete:
 - email verification,
 - MFA/passkeys,
 - account recovery,
-- cloud secret-manager integration for secret values,
-- expanded security-event monitoring and alerting.
+- cloud secret-manager integration for secret values.
