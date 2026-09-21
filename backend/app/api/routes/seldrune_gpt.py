@@ -215,7 +215,10 @@ def seldrune_gpt_capabilities(
     _require_owner_role(membership)
     return SeldruneGPTCapabilitiesResponse(
         mode="governed-owner-operator",
-        execution="single-order plan, execute, verify; fresh confirmation for high-impact commitments",
+        execution=(
+            "single-order plan, execute, verify; fresh confirmation for "
+            "high-impact commitments"
+        ),
         supported_controls=[
             "organization analysis and planning",
             "research and evidence preparation",
