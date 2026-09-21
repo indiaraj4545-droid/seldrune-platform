@@ -2,7 +2,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from pydantic import BaseModel, Field
 
 from backend.app.api.dependencies import CurrentUserDep, SessionDep, require_org_permission
@@ -20,6 +20,12 @@ AgentsRunDep = Annotated[Membership, Depends(run_dependency)]
 
 class SeldruneGPTRequest(BaseModel):
     message: str = Field(min_length=1, max_length=20000)
+
+
+class SeldruneGPTHistoryMessage(BaseModel):
+    role: str
+    content: str
+    model: str | None = None
 
 
 class SeldruneGPTResponse(BaseModel):
@@ -54,7 +60,10 @@ def seldrune_gpt(
         )
     )
     history.reverse()
-    context = "\\n".join(f"{item.role}: {item.content}" for item in history)
+    context_lines = [f"{item.role}: {item.content}" for item in history]
+    while sum(len(line) for line in context_lines) > 24000 and context_lines:
+        context_lines.pop(0)
+    context = "\\n".join(context_lines)
     input_text = payload.message
     if context:
         input_text = f"Recent conversation:\\n{context}\\n\\nUser: {payload.message}"
@@ -106,3 +115,43 @@ def seldrune_gpt(
         latency_ms=int(_latency_ms),
         provider=settings.model_provider,
     )
+
+
+@router.get("/{organization_id}/gpt/history", response_model=list[SeldruneGPTHistoryMessage])
+def seldrune_gpt_history(
+    organization_id: UUID,
+    _membership: AgentsRunDep,
+    current_user: CurrentUserDep,
+    session: SessionDep,
+) -> list[SeldruneGPTHistoryMessage]:
+    messages = list(
+        session.scalars(
+            select(SeldruneGPTMessage)
+            .where(
+                SeldruneGPTMessage.organization_id == organization_id,
+                SeldruneGPTMessage.user_id == current_user.id,
+            )
+            .order_by(SeldruneGPTMessage.created_at.asc())
+            .limit(100)
+        )
+    )
+    return [
+        SeldruneGPTHistoryMessage(role=item.role, content=item.content, model=item.model)
+        for item in messages
+    ]
+
+
+@router.delete("/{organization_id}/gpt/history", status_code=204)
+def clear_seldrune_gpt_history(
+    organization_id: UUID,
+    _membership: AgentsRunDep,
+    current_user: CurrentUserDep,
+    session: SessionDep,
+) -> None:
+    session.execute(
+        delete(SeldruneGPTMessage).where(
+            SeldruneGPTMessage.organization_id == organization_id,
+            SeldruneGPTMessage.user_id == current_user.id,
+        )
+    )
+    session.commit()
