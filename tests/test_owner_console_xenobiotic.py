@@ -243,3 +243,24 @@ def test_xenobiotic_v16_operational_phase_space_maps_measured_state(client) -> N
     assert ".xeno-phase-space" in stylesheet.text
     assert "@keyframes xeno-phase-pulse" in stylesheet.text
     assert "prefers-reduced-motion:reduce" in stylesheet.text
+
+
+def test_xenobiotic_v17_mission_coherence_uses_measured_alignment(client) -> None:
+    script = client.get("/console-assets/console-xenobiotic.js")
+    assert script.status_code == 200
+    assert "V17" in script.text
+    assert "MISSION COHERENCE" in script.text
+    assert "xeno-mission-coherence" in script.text
+    for source_id in ("pending", "sti-running", "sti-verified", "sti-failed"):
+        assert source_id in script.text
+    for state in ("STABLE", "DRIFT", "ALIGNING", "COHERENT", "FRACTURED"):
+        assert state in script.text
+    assert "--xeno-coherence" in script.text
+    assert "MutationObserver" in script.text
+
+    stylesheet = client.get("/console-assets/console-xenobiotic.css")
+    assert stylesheet.status_code == 200
+    assert "V17" in stylesheet.text
+    assert ".xeno-mission-coherence" in stylesheet.text
+    assert "@keyframes xeno-coherence-pulse" in stylesheet.text
+    assert "prefers-reduced-motion:reduce" in stylesheet.text
