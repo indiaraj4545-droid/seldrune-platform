@@ -366,3 +366,39 @@ def test_xenobiotic_v21_autonomy_aperture_uses_measured_capacity(client) -> None
     assert ".xeno-autonomy-aperture" in stylesheet.text
     assert "@keyframes xeno-aperture-iris" in stylesheet.text
     assert "prefers-reduced-motion:reduce" in stylesheet.text
+
+
+def test_xenobiotic_v22_v100_evolution_matrix_uses_measured_telemetry(client) -> None:
+    script = client.get("/console-assets/console-xenobiotic.js")
+    assert script.status_code == 200
+    assert "V22–V100" in script.text
+    assert "EVOLUTION MATRIX" in script.text
+    assert "xeno-evolution-matrix" in script.text
+    assert "i+22" in script.text
+    assert "i/78" in script.text
+    assert "79 measured stages" in script.text
+    source_ids = (
+        "pending",
+        "action-approvals",
+        "incident-critical",
+        "sti-running",
+        "sti-verified",
+        "sti-failed",
+        "ls-cuda",
+        "ls-onnx",
+    )
+    for source_id in source_ids:
+        assert source_id in script.text
+    for state in ("dormant", "guarded", "aligned", "forming", "transcendent"):
+        assert state in script.text
+    assert "--xeno-stage" in script.text
+    assert "--xeno-evolution" in script.text
+    assert "MutationObserver" in script.text
+
+    stylesheet = client.get("/console-assets/console-xenobiotic.css")
+    assert stylesheet.status_code == 200
+    assert "V22–V100" in stylesheet.text
+    assert ".xeno-evolution-matrix" in stylesheet.text
+    assert ".xeno-evolution-cell" in stylesheet.text
+    assert "@keyframes xeno-evolution-breathe" in stylesheet.text
+    assert "prefers-reduced-motion:reduce" in stylesheet.text
