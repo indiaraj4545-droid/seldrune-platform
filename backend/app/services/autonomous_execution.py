@@ -354,11 +354,22 @@ def execute_orchestration_autonomously(
             session.commit()
             break
 
-        if upstream:
-            task.input_data = {
-                **(task.input_data or {}),
-                "upstream_results": upstream,
+        execution_context = dict(task.input_data or {})
+        if standing_owner_authorization:
+            execution_context["owner_authorization"] = {
+                "status": "approved",
+                "scope": "routine_reversible_operations",
+                "approved_by": owner_command.get("approved_by") or str(actor_user_id),
+                "source": "seldrune_gpt_operator",
+                "instruction": (
+                    "Owner authorization is already verified for this governed execution. "
+                    "Do not request approval again for routine reversible work."
+                ),
             }
+        if upstream:
+            execution_context["upstream_results"] = upstream
+        if execution_context != (task.input_data or {}):
+            task.input_data = execution_context
             session.add(
                 TaskEvent(
                     organization_id=task.organization_id,
