@@ -188,7 +188,7 @@ def execute_orchestration_autonomously(
     )
     owner_command = (run.context or {}).get("owner_command") or {}
     operator_context = (run.context or {}).get("seldrune_gpt_operator") or {}
-    standing_owner_authorization = bool(operator_context) and owner_command.get("approval_status") == "approved"
+    standing_owner_authorization = (\n        bool(operator_context)\n        and owner_command.get("approval_status") == "approved"\n    )
 
     approvals_by_step = {
         approval.orchestration_step_id: approval
