@@ -69,3 +69,30 @@ written as verified evidence.
 
 This collector does not run inference or calculate identity similarity. Those values
 must come from the real GPU inference and benchmark stages.
+
+## Production delivery verification
+
+After a real live session writes production measurements, bind them to the verified
+Face receipt and evaluate the product gates with:
+
+```bash
+python -m services.live_media.face_production_verify \
+  --evidence /evidence/face-production.json \
+  --receipt /evidence/face-verification.json
+```
+
+A zero exit status requires verified live delivery, mobile HD output and HD voice
+output. Valid but incomplete evidence prints `"status": "partial"` and exits with
+status 2. Missing, malformed, unauthorized or hash-mismatched evidence fails without
+promoting the Owner Console gates.
+
+## Production session recorder
+
+The runtime-facing `FaceProductionRecorder` accepts measured returned-frame latency,
+session duration, output dimensions and optional audio duration/sample rate. It computes
+p95 latency, hashes the exact verification receipt and atomically writes the production
+evidence JSON. It refuses empty sessions, missing receipts, invalid measurements,
+unauthorized identities and sessions without verified synthetic-media disclosure.
+
+The recorder does not fabricate camera, resolution, latency or audio measurements. The
+WebRTC/mobile transport must provide those values from the actual delivered session.

@@ -42,6 +42,22 @@ def test_owner_console_is_served() -> None:
         assert "face-verification-receipt" in response.text
         assert "face-file-evidence" in response.text
         assert "face-verification-cli" in response.text
+        assert "face-frame-execution" in response.text
+        assert "face-stream-execution" in response.text
+        assert "face-onnx-backend" in response.text
+        assert "face-live-onnx-adapter" in response.text
+        assert "face-production-live" in response.text
+        assert "face-mobile-hd" in response.text
+        assert "face-voice-hd" in response.text
+        assert "face-production-recorder" in response.text
+        assert "face-session-evidence" in response.text
+        assert "face-production-verifier" in response.text
+        assert "face-production-evidence" in response.text
+        assert "EVIDENCE TRUTH LAYER" in response.text
+        assert "evidence-verified" in response.text
+        assert "evidence-implemented" in response.text
+        assert "evidence-simulated" in response.text
+        assert "evidence-planned" in response.text
 
 
 def test_owner_console_assets_are_served() -> None:

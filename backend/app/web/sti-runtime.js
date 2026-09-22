@@ -11,6 +11,12 @@
     q('#sti-runtime-source').textContent =
       'Measured from ' + (data.source || 'durable-run-store') + ' · no simulated activity';
 
+    const evidence = data.evidence_levels || {};
+    q('#evidence-verified').title = evidence.verified || 'Runtime proof required.';
+    q('#evidence-implemented').title = evidence.implemented || 'Code and tests only.';
+    q('#evidence-simulated').title = evidence.simulated || 'Controlled inputs only.';
+    q('#evidence-planned').title = evidence.planned || 'Not implemented.';
+
     const liveshift = data.liveshift || {};
     const stateText = value => value ? 'READY' : 'PENDING';
     q('#ls-webrtc').textContent = stateText(liveshift.webrtc_runtime);
@@ -46,6 +52,18 @@
     q('#face-verification-receipt').textContent = faceState(face.verification_receipt);
     q('#face-file-evidence').textContent = faceState(face.file_evidence_collector);
     q('#face-verification-cli').textContent = faceState(face.verification_cli);
+    q('#face-frame-execution').textContent = faceState(face.single_frame_execution);
+    q('#face-stream-execution').textContent = faceState(face.continuous_stream_execution);
+    q('#face-onnx-backend').textContent = faceState(face.onnx_cuda_backend);
+    q('#face-live-onnx-adapter').textContent = faceState(face.liveshift_onnx_adapter);
+    const verifiedState = value => value ? 'VERIFIED' : 'PENDING';
+    q('#face-production-live').textContent = verifiedState(face.production_live_session_verified);
+    q('#face-mobile-hd').textContent = verifiedState(face.mobile_hd_output_verified);
+    q('#face-voice-hd').textContent = verifiedState(face.voice_hd_output_verified);
+    q('#face-production-recorder').textContent = faceState(face.production_evidence_recorder);
+    q('#face-session-evidence').textContent = faceState(face.session_evidence_integration);
+    q('#face-production-verifier').textContent = faceState(face.production_evidence_verifier);
+    q('#face-production-evidence').textContent = faceState(face.production_evidence_status);
     q('#face-v01-gpu').textContent = face.gpu_training_completed
       ? 'GPU training verified'
       : 'GPU training pending';

@@ -7,6 +7,7 @@ import asyncio
 import json
 from fractions import Fraction
 from pathlib import Path
+from time import monotonic
 
 
 async def run_proof(args: argparse.Namespace) -> dict[str, object]:
@@ -18,12 +19,14 @@ async def run_proof(args: argparse.Namespace) -> dict[str, object]:
         raise RuntimeError("aiortc, PyAV, and NumPy are required") from exc
 
     from .av_return_evidence import capture_av_return_evidence
+    from .client_receipt import ClientVideoReceipt, record_client_video_receipt
     from .combined_av_runtime import (
         attach_reference_av_tracks,
         build_reference_av_pipeline,
     )
     from .face_onnx_loader import load_face_onnx
     from .gpu_runtime_proof import _load_tensor
+    from .receiver_observation import ReceiverObservationRecorder
 
     session, loaded = load_face_onnx(
         args.model, expected_sha256=args.sha256, prefer_cuda=True
@@ -40,6 +43,7 @@ async def run_proof(args: argparse.Namespace) -> dict[str, object]:
         def __init__(self) -> None:
             super().__init__()
             self._pts = 0
+            self.sent_at_by_pts: dict[int, float] = {}
 
         async def recv(self):
             await asyncio.sleep(1 / 30)
@@ -48,6 +52,7 @@ async def run_proof(args: argparse.Namespace) -> dict[str, object]:
             frame = VideoFrame.from_ndarray(rgb, format="rgb24")
             frame.pts = self._pts
             frame.time_base = Fraction(1, 90000)
+            self.sent_at_by_pts[self._pts] = monotonic()
             self._pts += 3000
             return frame
 
@@ -90,8 +95,12 @@ async def run_proof(args: argparse.Namespace) -> dict[str, object]:
     returned_video = asyncio.get_running_loop().create_future()
     returned_audio = asyncio.get_running_loop().create_future()
     server_tracks = {}
+    receiver_observations = ReceiverObservationRecorder()
+    video_target_frames = max(30, args.video_frames)
+    audio_target_duration_seconds = max(1.0, args.audio_duration_seconds)
 
-    client.addTrack(VideoSource())
+    video_source = VideoSource()
+    client.addTrack(video_source)
     client.addTrack(AudioSource())
 
     @server.on("track")
@@ -114,7 +123,34 @@ async def run_proof(args: argparse.Namespace) -> dict[str, object]:
 
             async def receive_one():
                 try:
-                    target.set_result(await track.recv())
+                    frame = None
+                    while True:
+                        frame = await track.recv()
+                        if track.kind == "video":
+                            receiver_observations.record_video(frame)
+                            if frame.pts is not None:
+                                sent_at = video_source.sent_at_by_pts.pop(frame.pts, None)
+                                if sent_at is not None:
+                                    latency_ms = (monotonic() - sent_at) * 1000
+                                    receiver_observations.record_video_return_latency(
+                                        latency_ms
+                                    )
+                                    # Controlled proof only: exercise the same validated
+                                    # client-receipt contract used by production telemetry.
+                                    record_client_video_receipt(
+                                        receiver_observations,
+                                        ClientVideoReceipt(latency_ms=latency_ms),
+                                    )
+                            if receiver_observations.video_frames >= video_target_frames:
+                                break
+                        else:
+                            receiver_observations.record_audio(frame)
+                            if (
+                                receiver_observations.audio_duration_seconds
+                                >= audio_target_duration_seconds
+                            ):
+                                break
+                    target.set_result(frame)
                 except Exception as exc:
                     if not target.done():
                         target.set_exception(exc)
@@ -133,6 +169,10 @@ async def run_proof(args: argparse.Namespace) -> dict[str, object]:
             asyncio.gather(returned_video, returned_audio),
             timeout=args.timeout,
         )
+        video_observation = receiver_observations.latest_video
+        audio_observation = receiver_observations.latest_audio
+        if video_observation is None or audio_observation is None:
+            raise RuntimeError("client receive observations are incomplete")
         video = video_frame.to_ndarray(format="rgb24")
         audio = audio_frame.to_ndarray()
         if video.shape != (256, 256, 3) or not np.isfinite(video).all():
@@ -149,6 +189,22 @@ async def run_proof(args: argparse.Namespace) -> dict[str, object]:
                 "providers": list(loaded.providers),
                 "video_shape": list(video.shape),
                 "audio_sample_rate": audio_frame.sample_rate,
+                "client_received_video_frames": receiver_observations.video_frames,
+                "client_received_video_p95_return_latency_ms": (
+                    receiver_observations.p95_video_return_latency_ms
+                ),
+                "client_received_audio_duration_seconds": (
+                    receiver_observations.audio_duration_seconds
+                ),
+                "client_received_video": {
+                    "width": video_observation.width,
+                    "height": video_observation.height,
+                    "timestamp_ms": video_observation.timestamp_ms,
+                },
+                "client_received_audio": {
+                    "sample_rate_hz": audio_observation.sample_rate_hz,
+                    "timestamp_ms": audio_observation.timestamp_ms,
+                },
             }
         )
         if not evidence.verified:
@@ -172,6 +228,8 @@ def main() -> None:
     parser.add_argument("--voice-profile-id", default="authorized-voice-proof")
     parser.add_argument("--receipt", required=True)
     parser.add_argument("--timeout", type=float, default=30.0)
+    parser.add_argument("--video-frames", type=int, default=30)
+    parser.add_argument("--audio-duration-seconds", type=float, default=1.0)
     print(json.dumps(asyncio.run(run_proof(parser.parse_args())), indent=2))
 
 
