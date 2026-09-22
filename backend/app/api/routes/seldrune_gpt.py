@@ -35,7 +35,7 @@ OwnerOperatorDep = Annotated[
 _OPERATOR_RISK_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "destructive_change",
-        re.compile(r"\b(delete|erase|wipe|drop|destroy|terminate|revoke)\b", re.I),
+        re.compile(r"\b(delete|erase|wipe|drop|destroy)\b", re.I),
     ),
     (
         "financial_commitment",
@@ -45,19 +45,11 @@ _OPERATOR_RISK_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         ),
     ),
     (
-        "external_communication",
-        re.compile(r"\b(send|email|message|publish|post|invite|notify)\b", re.I),
-    ),
-    (
         "credential_or_access_change",
         re.compile(
             r"\b(password|credential|secret|api[ -]?key|token|mfa|permission|access)\b",
             re.I,
         ),
-    ),
-    (
-        "production_change",
-        re.compile(r"\b(deploy|release|merge|push to main|production)\b", re.I),
     ),
     (
         "legal_or_people_commitment",
@@ -223,7 +215,10 @@ def seldrune_gpt_capabilities(
     _require_owner_role(membership)
     return SeldruneGPTCapabilitiesResponse(
         mode="governed-owner-operator",
-        execution="single-order plan, approve, execute, verify",
+        execution=(
+            "single-order plan, execute, verify; fresh confirmation for "
+            "high-impact commitments"
+        ),
         supported_controls=[
             "organization analysis and planning",
             "research and evidence preparation",
