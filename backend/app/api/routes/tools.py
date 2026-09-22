@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -10,6 +10,7 @@ from backend.app.core.rbac import Permission
 from backend.app.core.tools import ApprovalMode, ToolRisk, ToolRunStatus, ToolStatus
 from backend.app.models.agent import Agent
 from backend.app.models.membership import Membership
+from backend.app.models.secret_reference import SecretReference
 from backend.app.models.task import Task
 from backend.app.models.tool_definition import ToolDefinition
 from backend.app.models.tool_run import ToolRun
@@ -21,12 +22,20 @@ from backend.app.schemas.tooling import (
     ToolRunPublic,
 )
 from backend.app.services.audit import record_audit
+from backend.app.services.external_actions import default_external_action_catalog
+from backend.app.services.provider_preflight import preflight_configured_providers
+from backend.app.services.tool_bootstrap import (
+    configured_external_tool_status,
+    ensure_configured_external_tools,
+)
+from backend.app.services.tool_input_defaults import external_action_defaults_status
 from backend.app.services.tool_gateway import (
     ToolGatewayError,
     allowed_internal_actions,
     approve_tool_run,
     create_tool_run,
     execute_tool_run,
+    external_action_registered,
     reject_tool_run,
 )
 
@@ -69,6 +78,136 @@ def _gateway_conflict(exc: ToolGatewayError) -> HTTPException:
 
 
 @router.post(
+    "/{organization_id}/tool-bootstrap/preflight",
+    response_model=dict[str, Any],
+)
+def preflight_tools(
+    organization_id: UUID,
+    _membership: ToolsManageDep,
+    current_user: CurrentUserDep,
+    session: SessionDep,
+) -> dict[str, Any]:
+    results = preflight_configured_providers(
+        session,
+        organization_id=organization_id,
+    )
+    record_audit(
+        session,
+        organization_id=organization_id,
+        actor_user_id=current_user.id,
+        action="tool_bootstrap.provider_preflight",
+        resource_type="organization",
+        resource_id=str(organization_id),
+        details={
+            "providers": [
+                {
+                    "provider": item["provider"],
+                    "status": item["status"],
+                    "verified": item["verified"],
+                    "http_status": item["http_status"],
+                }
+                for item in results
+            ]
+        },
+    )
+    session.commit()
+    return {
+        "providers": results,
+        "verified": sum(bool(item["verified"]) for item in results),
+        "total": len(results),
+    }
+
+
+@router.get(
+    "/{organization_id}/tool-bootstrap/status",
+    response_model=dict[str, Any],
+)
+def get_tool_bootstrap_status(
+    organization_id: UUID,
+    _membership: ToolsRunDep,
+    session: SessionDep,
+) -> dict[str, Any]:
+    return configured_external_tool_status(
+        session,
+        organization_id=organization_id,
+    )
+
+
+@router.post(
+    "/{organization_id}/tool-bootstrap",
+    response_model=dict[str, Any],
+)
+def bootstrap_tools(
+    organization_id: UUID,
+    _membership: ToolsManageDep,
+    current_user: CurrentUserDep,
+    session: SessionDep,
+) -> dict[str, Any]:
+    result = ensure_configured_external_tools(
+        session,
+        organization_id=organization_id,
+        actor_user_id=current_user.id,
+    )
+    session.commit()
+    return result
+
+
+@router.get(
+    "/{organization_id}/tool-defaults",
+    response_model=list[dict[str, Any]],
+)
+def list_tool_defaults(
+    organization_id: UUID,
+    _membership: ToolsRunDep,
+    current_user: CurrentUserDep,
+    session: SessionDep,
+) -> list[dict[str, Any]]:
+    tools = list(
+        session.scalars(
+            select(ToolDefinition)
+            .where(
+                ToolDefinition.organization_id == organization_id,
+                ToolDefinition.status == ToolStatus.ACTIVE.value,
+            )
+            .order_by(ToolDefinition.name)
+        )
+    )
+    return external_action_defaults_status(
+        session,
+        tools=tools,
+        requested_by_user_id=current_user.id,
+    )
+
+
+@router.get(
+    "/{organization_id}/tool-adapters",
+    response_model=list[dict[str, Any]],
+)
+def list_tool_adapters(
+    organization_id: UUID,
+    _membership: ToolsRunDep,
+) -> list[dict[str, Any]]:
+    del organization_id
+    internal = [
+        {
+            "provider": "internal",
+            "action_name": action_name,
+            "name": f"Internal · {action_name}",
+            "description": "Seldrune built-in deterministic action.",
+            "risk_level": "low",
+            "credential_required": False,
+            "input_schema": {},
+        }
+        for action_name in allowed_internal_actions()
+    ]
+    external = [
+        {**item, "credential_required": True}
+        for item in default_external_action_catalog()
+    ]
+    return [*internal, *external]
+
+
+@router.post(
     "/{organization_id}/tools",
     response_model=ToolDefinitionPublic,
     status_code=status.HTTP_201_CREATED,
@@ -80,13 +219,61 @@ def create_tool(
     current_user: CurrentUserDep,
     session: SessionDep,
 ) -> ToolDefinition:
-    if payload.action_name not in allowed_internal_actions():
+    if payload.provider == "internal" and payload.action_name not in allowed_internal_actions():
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"allowed_actions": allowed_internal_actions()},
         )
+    if payload.provider == "internal" and payload.credential_reference_id is not None:
+        raise HTTPException(status_code=422, detail="Internal tools cannot bind credentials")
+    if (
+        payload.provider != "internal"
+        and not external_action_registered(payload.provider, payload.action_name)
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "External tool adapter is not registered: "
+                f"{payload.provider}:{payload.action_name}"
+            ),
+        )
+    if payload.credential_reference_id is not None:
+        credential_reference = session.scalar(
+            select(SecretReference).where(
+                SecretReference.id == payload.credential_reference_id,
+                SecretReference.organization_id == organization_id,
+                SecretReference.status == "active",
+            )
+        )
+        if credential_reference is None:
+            raise HTTPException(status_code=422, detail="Credential reference is unavailable")
+    risk_level = payload.risk_level
+    risk_rank = {
+        ToolRisk.LOW.value: 0,
+        ToolRisk.MEDIUM.value: 1,
+        ToolRisk.HIGH.value: 2,
+    }
+    adapter = next(
+        (
+            item
+            for item in default_external_action_catalog()
+            if item["provider"] == payload.provider
+            and item["action_name"] == payload.action_name
+        ),
+        None,
+    )
+    if adapter is not None:
+        if payload.credential_reference_id is None:
+            raise HTTPException(
+                status_code=422,
+                detail="Built-in external adapters require a credential reference",
+            )
+        adapter_risk = str(adapter.get("risk_level") or ToolRisk.LOW.value)
+        if risk_rank[adapter_risk] > risk_rank[risk_level]:
+            risk_level = adapter_risk
+
     approval_mode = payload.approval_mode
-    if payload.risk_level == ToolRisk.HIGH.value:
+    if risk_level == ToolRisk.HIGH.value:
         approval_mode = ApprovalMode.ALWAYS.value
 
     tool = ToolDefinition(
@@ -95,10 +282,11 @@ def create_tool(
         name=payload.name,
         slug=payload.slug,
         description=payload.description,
-        provider="internal",
+        provider=payload.provider,
         action_name=payload.action_name,
+        credential_reference_id=payload.credential_reference_id,
         status=ToolStatus.ACTIVE.value,
-        risk_level=payload.risk_level,
+        risk_level=risk_level,
         approval_mode=approval_mode,
         input_schema=payload.input_schema,
     )
@@ -120,7 +308,11 @@ def create_tool(
         resource_id=str(tool.id),
         details={
             "slug": tool.slug,
+            "provider": tool.provider,
             "action_name": tool.action_name,
+            "credential_reference_id": (
+                str(tool.credential_reference_id) if tool.credential_reference_id else None
+            ),
             "risk_level": tool.risk_level,
             "approval_mode": tool.approval_mode,
         },

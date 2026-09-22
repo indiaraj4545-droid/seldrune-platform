@@ -13,11 +13,13 @@ from sqlalchemy.orm.attributes import flag_modified
 from backend.app.api.dependencies import CurrentUserDep, SessionDep, require_org_permission
 from backend.app.api.routes.orchestrations import _get_run, _to_public
 from backend.app.core.rbac import Permission, Role
+from backend.app.core.tools import ToolStatus
 from backend.app.models.audit import AuditLog
 from backend.app.models.governance_policy import GovernancePolicy
 from backend.app.models.membership import Membership
 from backend.app.models.organization_kernel import OrganizationProject
 from backend.app.models.orchestration import OrchestrationRun, OrchestrationStep
+from backend.app.models.tool_definition import ToolDefinition
 from backend.app.schemas.orchestration import (
     AutonomousExecutionRequest,
     AutonomousExecutionResponse,
@@ -36,10 +38,15 @@ from backend.app.services.evidence_execution import prepare_orchestration_resear
 from backend.app.services.founding_agents import ensure_founding_agents
 from backend.app.services.live_planner import build_live_plan
 from backend.app.services.orchestrator import create_orchestration_run, refresh_orchestration_status
+from backend.app.services.owner_action_compiler import (
+    compile_required_external_action_steps,
+)
 from backend.app.services.owner_dashboard import build_decision_brief, build_owner_dashboard
 from backend.app.services.playbook_engine import consolidate_playbooks
 from backend.app.services.playbook_guidance import build_playbook_guidance
 from backend.app.services.playbook_overlay import merge_playbook
+from backend.app.services.tool_bootstrap import ensure_configured_external_tools
+from backend.app.services.tool_input_defaults import external_action_default_fields
 from backend.app.services.portfolio_governor import (
     evaluate_project_execution,
     reserve_project_budget,
@@ -342,14 +349,64 @@ def create_owner_command(
         objective=payload.objective,
     )
     adaptive_guidance = merge_playbook(adaptive_guidance, playbook_guidance)
+    ensure_configured_external_tools(
+        session,
+        organization_id=organization_id,
+        actor_user_id=current_user.id,
+    )
+    active_tools = list(
+        session.scalars(
+            select(ToolDefinition).where(
+                ToolDefinition.organization_id == organization_id,
+                ToolDefinition.status == ToolStatus.ACTIVE.value,
+            )
+        )
+    )
+    tool_catalog: list[dict[str, Any]] = []
+    for tool in active_tools:
+        input_defaults = external_action_default_fields(
+            session,
+            tool=tool,
+            requested_by_user_id=current_user.id,
+        )
+        planner_schema = dict(tool.input_schema or {})
+        required_fields = planner_schema.get("required")
+        if isinstance(required_fields, list) and input_defaults:
+            planner_schema["required"] = [
+                field
+                for field in required_fields
+                if field not in input_defaults
+            ]
+        tool_catalog.append(
+            {
+                "slug": tool.slug,
+                "description": tool.description,
+                "provider": tool.provider,
+                "action_name": tool.action_name,
+                "risk_level": tool.risk_level,
+                "input_schema": planner_schema,
+                "input_defaults": input_defaults,
+            }
+        )
     planned = build_live_plan(
         payload.objective,
         adaptive_guidance=adaptive_guidance,
+        available_tools=tool_catalog,
     )
+    compiled_steps, action_compiler = compile_required_external_action_steps(
+        payload.objective,
+        available_tools=tool_catalog,
+        planned_steps=planned.steps,
+    )
+    planner_metadata = {
+        **planned.metadata,
+        "deterministic_action_compiler": action_compiler,
+        "tool_steps": sum(bool(step.tool_slug) for step in compiled_steps),
+    }
     context = {
         **payload.context,
         "owner_command": {"approval_status": "awaiting_approval", "approved_by": None},
-        "planner": planned.metadata,
+        "planner": planner_metadata,
         "operational_playbook": playbook_guidance,
     }
     run = create_orchestration_run(
@@ -358,7 +415,7 @@ def create_owner_command(
         created_by_user_id=current_user.id,
         objective=payload.objective,
         context=context,
-        plan=planned.steps,
+        plan=compiled_steps,
     )
     run.planner_version = planned.planner_version
     record_audit(
@@ -371,9 +428,9 @@ def create_owner_command(
         details={
             "approval_status": "awaiting_approval",
             "planner_version": planned.planner_version,
-            "planner": planned.metadata,
+            "planner": planner_metadata,
             "operational_playbook": playbook_guidance,
-            "step_count": len(planned.steps),
+            "step_count": len(compiled_steps),
         },
     )
     session.commit()

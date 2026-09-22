@@ -8,6 +8,7 @@ from backend.app import models  # noqa: F401
 from backend.app.db.base import Base
 from backend.app.db.session import get_db
 from backend.app.main import app
+from backend.app.services.tool_gateway import register_external_action
 
 
 @pytest.fixture
@@ -63,6 +64,7 @@ def create_tool(
     action_name: str,
     risk_level: str = "low",
     approval_mode: str = "never",
+    provider: str = "internal",
 ) -> dict:
     response = client.post(
         f"/api/v1/organizations/{organization_id}/tools",
@@ -70,6 +72,7 @@ def create_tool(
         json={
             "name": slug.replace("-", " ").title(),
             "slug": slug,
+            "provider": provider,
             "action_name": action_name,
             "risk_level": risk_level,
             "approval_mode": approval_mode,
@@ -145,3 +148,146 @@ def test_unknown_internal_action_is_rejected(client: TestClient) -> None:
         },
     )
     assert response.status_code == 422
+
+
+def test_external_provider_requires_registered_adapter(client: TestClient) -> None:
+    headers, organization_id = register_owner(client)
+    response = client.post(
+        f"/api/v1/organizations/{organization_id}/tools",
+        headers=headers,
+        json={
+            "name": "Missing Adapter",
+            "slug": "missing-adapter",
+            "provider": "example",
+            "action_name": "send",
+        },
+    )
+    assert response.status_code == 422
+    assert "adapter is not registered" in response.json()["detail"]
+
+
+def test_external_provider_requires_execution_receipt(client: TestClient) -> None:
+    register_external_action(
+        "example-no-evidence",
+        "send",
+        lambda payload, credential: {"sent": True},
+    )
+    headers, organization_id = register_owner(client)
+    tool = create_tool(
+        client,
+        headers,
+        organization_id,
+        slug="no-evidence",
+        provider="example-no-evidence",
+        action_name="send",
+    )
+    response = client.post(
+        f"/api/v1/organizations/{organization_id}/tool-runs",
+        headers=headers,
+        json={"tool_id": tool["id"], "input_data": {"message": "hello"}},
+    )
+    assert response.status_code == 201
+    run = response.json()
+    assert run["status"] == "failed"
+    assert "receipt_id" in run["error_message"]
+
+
+def test_external_provider_succeeds_with_execution_receipt(client: TestClient) -> None:
+    register_external_action(
+        "example-evidence",
+        "send",
+        lambda payload, credential: {
+            "sent": True,
+            "evidence": {"receipt_id": "provider-message-123"},
+        },
+    )
+    headers, organization_id = register_owner(client)
+    tool = create_tool(
+        client,
+        headers,
+        organization_id,
+        slug="evidence-backed",
+        provider="example-evidence",
+        action_name="send",
+    )
+    response = client.post(
+        f"/api/v1/organizations/{organization_id}/tool-runs",
+        headers=headers,
+        json={"tool_id": tool["id"], "input_data": {"message": "hello"}},
+    )
+    assert response.status_code == 201
+    run = response.json()
+    assert run["status"] == "succeeded"
+    assert run["output_data"]["evidence"]["receipt_id"] == "provider-message-123"
+
+
+def test_default_external_adapter_catalog_is_exposed(client: TestClient) -> None:
+    headers, organization_id = register_owner(client)
+    response = client.get(
+        f"/api/v1/organizations/{organization_id}/tool-adapters",
+        headers=headers,
+    )
+    assert response.status_code == 200
+    adapters = {
+        (item["provider"], item["action_name"]): item
+        for item in response.json()
+    }
+    assert ("gmail", "send-message") in adapters
+    assert ("github", "create-issue") in adapters
+    assert ("github", "comment") in adapters
+    assert ("github", "create-pull-request") in adapters
+    assert ("github", "merge-pull-request") in adapters
+    assert ("github", "dispatch-workflow") in adapters
+    assert ("render", "deploy-service") in adapters
+    assert adapters[("gmail", "send-message")]["credential_required"] is True
+
+
+def test_builtin_adapter_enforces_minimum_risk(client: TestClient) -> None:
+    headers, organization_id = register_owner(client)
+    reference = client.post(
+        f"/api/v1/organizations/{organization_id}/secret-references",
+        headers=headers,
+        json={
+            "name": "GitHub Token",
+            "slug": "github-token",
+            "provider": "env",
+            "locator": "GITHUB_TOOL_TOKEN",
+        },
+    )
+    assert reference.status_code == 201
+    response = client.post(
+        f"/api/v1/organizations/{organization_id}/tools",
+        headers=headers,
+        json={
+            "name": "Dispatch Production Workflow",
+            "slug": "dispatch-production-workflow",
+            "provider": "github",
+            "action_name": "dispatch-workflow",
+            "credential_reference_id": reference.json()["id"],
+            "risk_level": "low",
+            "approval_mode": "never",
+        },
+    )
+    assert response.status_code == 201
+    tool = response.json()
+    assert tool["risk_level"] == "high"
+    assert tool["approval_mode"] == "always"
+
+
+def test_builtin_external_adapter_requires_credential_reference(
+    client: TestClient,
+) -> None:
+    headers, organization_id = register_owner(client)
+    response = client.post(
+        f"/api/v1/organizations/{organization_id}/tools",
+        headers=headers,
+        json={
+            "name": "Owner Gmail",
+            "slug": "owner-gmail",
+            "provider": "gmail",
+            "action_name": "send-message",
+            "risk_level": "medium",
+        },
+    )
+    assert response.status_code == 422
+    assert "require a credential reference" in response.json()["detail"]

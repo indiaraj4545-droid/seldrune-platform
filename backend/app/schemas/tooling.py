@@ -9,7 +9,9 @@ class ToolDefinitionCreate(BaseModel):
     name: str = Field(min_length=2, max_length=160)
     slug: str = Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$", max_length=100)
     description: str | None = Field(default=None, max_length=2000)
+    provider: str = Field(default="internal", pattern=r"^[a-z0-9][a-z0-9_-]{1,39}$")
     action_name: str = Field(min_length=2, max_length=100)
+    credential_reference_id: UUID | None = None
     risk_level: str = Field(default="low", pattern=r"^(low|medium|high)$")
     approval_mode: str = Field(default="never", pattern=r"^(never|always)$")
     input_schema: dict[str, Any] = Field(default_factory=dict)
@@ -26,6 +28,7 @@ class ToolDefinitionPublic(BaseModel):
     description: str | None
     provider: str
     action_name: str
+    credential_reference_id: UUID | None
     status: str
     risk_level: str
     approval_mode: str
