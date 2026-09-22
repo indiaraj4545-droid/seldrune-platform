@@ -292,7 +292,7 @@ def execute_orchestration_autonomously(
             report["last_sequence"] = step.sequence
             break
 
-        if step.requires_approval:
+        if step.requires_approval and not standing_owner_authorization:
             approval = approvals_by_step.get(step.id)
             approval_status = approval.status if approval is not None else None
             if approval is None:
