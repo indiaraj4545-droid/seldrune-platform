@@ -1,4 +1,5 @@
 (() => {
+function initCosmicConsole() {
   const consoleView = document.querySelector('#console-view');
   const main = consoleView?.querySelector('main');
   if (!consoleView || !main || document.querySelector('.cosmic-command-bar')) return;
@@ -155,4 +156,13 @@
   const runtimeModel = document.querySelector('#runtime-version')?.textContent;
   if (runtimeModel) document.querySelector('#cosmic-runtime-model').textContent = runtimeModel;
   activate(location.hash.slice(1) || 'nexus', false);
+}
+
+// Initialize after deferred scripts parse, and retry when auth reveals the console.
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initCosmicConsole, {once: true});
+} else {
+  initCosmicConsole();
+}
+document.addEventListener('seldrune:console-ready', initCosmicConsole);
 })();
