@@ -6,12 +6,12 @@ def test_operator_risk_classification_is_explicit():
     from backend.app.api.routes.seldrune_gpt import _operator_risk_reasons
 
     assert _operator_risk_reasons("Analyze the organization") == []
-    reasons = _operator_risk_reasons(
-        "Deploy to production, send an email, and pay the invoice"
-    )
-    assert "production_change" in reasons
-    assert "external_communication" in reasons
+    assert _operator_risk_reasons("Deploy to production and send an email") == []
+    reasons = _operator_risk_reasons("Delete records, pay invoice, rotate API key, sign contract")
+    assert "destructive_change" in reasons
     assert "financial_commitment" in reasons
+    assert "credential_or_access_change" in reasons
+    assert "legal_or_people_commitment" in reasons
 
 
 def test_gpt_operator_requires_auth(client):
@@ -41,7 +41,7 @@ def test_safe_owner_order_executes_in_one_request(_client):  # noqa: F811
     assert body["evidence_url"].endswith(f"/{body['command_id']}/brief")
 
 
-def test_sensitive_owner_order_pauses_for_confirmation(_client):  # noqa: F811
+def test_routine_deploy_and_email_use_standing_owner_authorization(_client):  # noqa: F811
     client = _client
     token, organization_id = register_owner(client)
     headers = {"Authorization": f"Bearer {token}"}
@@ -52,8 +52,24 @@ def test_sensitive_owner_order_pauses_for_confirmation(_client):  # noqa: F811
     )
     assert response.status_code == 200
     body = response.json()
+    assert body["approval_required"] is False
+    assert "production_change" not in body["risk_reasons"]
+    assert "external_communication" not in body["risk_reasons"]
+
+
+def test_high_impact_owner_order_pauses_for_fresh_confirmation(_client):  # noqa: F811
+    client = _client
+    token, organization_id = register_owner(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    response = client.post(
+        f"/api/v1/organizations/{organization_id}/gpt/operate",
+        headers=headers,
+        json={"order": "Delete the records and pay the invoice"},
+    )
+    assert response.status_code == 200
+    body = response.json()
     assert body["status"] == "approval_required"
     assert body["approval_required"] is True
-    assert "production_change" in body["risk_reasons"]
-    assert "external_communication" in body["risk_reasons"]
+    assert "destructive_change" in body["risk_reasons"]
+    assert "financial_commitment" in body["risk_reasons"]
     assert body["executed_steps"] == 0
