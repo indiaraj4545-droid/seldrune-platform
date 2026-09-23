@@ -294,7 +294,7 @@ def _replace_operation(instruction: str) -> dict[str, Any] | None:
         target, replacement = quoted[0], quoted[1]
     else:
         patterns = (
-            r"\b(?:replace|change|update|correct)\s+(.+?)\s+(?:with|to|into)\s+(.+)$",
+            r"\b(?:replace|change|update|correct|modify)\s+(.+?)\s+(?:with|to|into)\s+(.+)$",
             r"\bswap\s+(.+?)\s+for\s+(.+)$",
             r"\bmake\s+(.+?)\s+read\s+(.+)$",
             r"\bedit\s+(.+?)\s+and\s+make\s+it\s+(.+)$",
@@ -438,11 +438,38 @@ _DETERMINISTIC_HINTS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "replace_text",
         re.compile(
-            r"\b(?:replace|change|update|correct|swap|make|edit)\b",
+            r"\b(?:replace|change|update|correct|modify|swap|make|edit)\b",
             re.IGNORECASE,
         ),
     ),
 )
+
+
+def _batch_replace_operations(
+    instruction: str,
+) -> list[dict[str, Any]]:
+    pattern = re.compile(
+        r"\b(?:replace|change|update|correct|modify)\s+(.+?)"
+        r"\s+(?:with|to|into)\s+(.+?)"
+        r"(?=(?:\s+(?:and|,)\s+"
+        r"(?:replace|change|update|correct|modify)\b)|[;\n]|$)",
+        re.IGNORECASE,
+    )
+    operations: list[dict[str, Any]] = []
+    for match in pattern.finditer(instruction):
+        target = _clean_slot(match.group(1))
+        replacement_text = _clean_slot(match.group(2))
+        if not target or replacement_text is None:
+            continue
+        operation = _empty_operation(
+            "replace_text",
+            page=_page(instruction),
+        )
+        operation["target_text"] = target
+        operation["replacement_text"] = replacement_text
+        operation["occurrence"] = _occurrence(instruction)
+        operations.append(operation)
+    return operations if len(operations) > 1 else []
 
 
 def _deterministic_operation(
@@ -515,6 +542,22 @@ def predict_pdf_plan(
     *,
     minimum_confidence: float = 0.78,
 ) -> PDFBrainPrediction:
+    batch_replacements = _batch_replace_operations(instruction)
+    if batch_replacements:
+        return PDFBrainPrediction(
+            model_version=MODEL_VERSION,
+            model_fingerprint=MODEL.fingerprint,
+            intent="replace_text",
+            confidence=1.0,
+            plan={
+                "summary": (
+                    f"Local {MODEL_VERSION} deterministic batch replacement plan"
+                ),
+                "operations": batch_replacements,
+            },
+            fallback_reason=None,
+        )
+
     deterministic = _deterministic_operation(instruction)
     if deterministic is not None:
         intent, operation = deterministic
