@@ -200,7 +200,16 @@ def ai_spend_budget_status(
         if settings.ai_monthly_max_usd > 0
         else 1.0
     )
+    if monthly_utilization >= 1:
+        budget_mode = "hard-stop"
+    elif monthly_utilization >= settings.ai_conservation_ratio:
+        budget_mode = "conservation"
+    elif monthly_utilization >= settings.ai_spend_warning_ratio:
+        budget_mode = "economy"
+    else:
+        budget_mode = "normal"
     return {
+        "budget_mode": budget_mode,
         "daily_spent_usd": round(snapshot.daily_usd, 6),
         "daily_limit_usd": round(settings.ai_daily_max_usd, 6),
         "daily_remaining_usd": round(daily_remaining, 6),

@@ -27,9 +27,11 @@ from backend.app.models.seldrune_gpt_message import SeldruneGPTMessage
 from backend.app.models.task import Task
 from backend.app.models.tool_definition import ToolDefinition
 from backend.app.schemas.orchestration import AutonomousExecutionRequest, OrchestrationCreate
-from backend.app.services.ai_cost_governor import choose_cost_route
+from backend.app.services.ai_cost_governor import apply_budget_pressure, choose_cost_route
+from backend.app.services.ai_media_budget import build_media_cost_policy
 from backend.app.services.ai_spend_guard import (
     AISpendBudgetExceeded,
+    ai_spend_budget_status,
     enforce_ai_spend_budget,
 )
 from backend.app.services.audit import record_audit
@@ -422,6 +424,7 @@ class SeldruneGPTOperatorResponse(BaseModel):
     evidence_url: str | None = None
     missing_tools: list[str] = Field(default_factory=list)
     configuration_hints: list[str] = Field(default_factory=list)
+    cost_policy: dict = Field(default_factory=dict)
     brief: dict | None = None
 
 
@@ -528,12 +531,21 @@ def seldrune_gpt(
         + (", ".join(missing_provider_env) if missing_provider_env else "none")
         + "."
     )
-    route = choose_cost_route(
+    spend_status = ai_spend_budget_status(
+        session,
+        organization_id=organization_id,
+        settings=settings,
+    )
+    route = apply_budget_pressure(
         settings,
-        purpose="chat",
-        text=payload.message,
-        has_images=bool(input_images),
-        has_files=bool(input_files),
+        choose_cost_route(
+            settings,
+            purpose="chat",
+            text=payload.message,
+            has_images=bool(input_images),
+            has_files=bool(input_files),
+        ),
+        monthly_utilization=float(spend_status["monthly_utilization"]),
     )
     try:
         enforce_ai_spend_budget(
@@ -694,13 +706,22 @@ def edit_seldrune_gpt_pdf(
         f"image_only_pages={inspection.image_only_pages}; "
         f"form_fields={inspection.form_fields}."
     )
-    pdf_route = choose_cost_route(
+    spend_status = ai_spend_budget_status(
+        session,
+        organization_id=organization_id,
+        settings=settings,
+    )
+    pdf_route = apply_budget_pressure(
         settings,
-        purpose="pdf",
-        text=payload.instruction,
-        attempt=0,
-        has_images=bool(initial_images),
-        has_files=True,
+        choose_cost_route(
+            settings,
+            purpose="pdf",
+            text=payload.instruction,
+            attempt=0,
+            has_images=bool(initial_images),
+            has_files=True,
+        ),
+        monthly_utilization=float(spend_status["monthly_utilization"]),
     )
     try:
         enforce_ai_spend_budget(
@@ -910,13 +931,17 @@ def edit_seldrune_gpt_pdf(
             str(render.page_number) for render in retry_page_renders
         ) or "none"
 
-        retry_route = choose_cost_route(
+        retry_route = apply_budget_pressure(
             settings,
-            purpose="pdf",
-            text=payload.instruction,
-            attempt=attempt_index + 1,
-            has_images=bool(retry_images),
-            has_files=False,
+            choose_cost_route(
+                settings,
+                purpose="pdf",
+                text=payload.instruction,
+                attempt=attempt_index + 1,
+                has_images=bool(retry_images),
+                has_files=False,
+            ),
+            monthly_utilization=float(spend_status["monthly_utilization"]),
         )
         remaining_pdf_budget = max(
             0.001,
@@ -1150,6 +1175,15 @@ def seldrune_gpt_capabilities(
             if not provider["secret_available"]
         }
     )
+    spend_status = ai_spend_budget_status(
+        session,
+        organization_id=organization_id,
+        settings=settings,
+    )
+    media_policy = build_media_cost_policy(
+        settings,
+        monthly_utilization=float(spend_status["monthly_utilization"]),
+    )
     return SeldruneGPTCapabilitiesResponse(
         mode="governed-owner-operator",
         execution=(
@@ -1169,6 +1203,27 @@ def seldrune_gpt_capabilities(
         registered_tools=sorted(tool.slug for tool in tools),
         provider_readiness=provider_readiness,
         configuration_hints=configuration_hints,
+        cost_policy={
+            "monthly_hard_limit_usd": settings.ai_monthly_max_usd,
+            "daily_limit_usd": settings.ai_daily_max_usd,
+            "budget_mode": spend_status["budget_mode"],
+            "monthly_remaining_usd": spend_status["monthly_remaining_usd"],
+            "default_text_model": settings.model_economy,
+            "image": {
+                "model": media_policy.image_model,
+                "quality": media_policy.image_quality,
+                "size": media_policy.image_size,
+                "job_max_usd": media_policy.image_job_max_usd,
+            },
+            "video": {
+                "model": media_policy.video_model,
+                "resolution": media_policy.video_resolution,
+                "default_seconds": media_policy.video_default_seconds,
+                "max_seconds": media_policy.video_max_seconds,
+                "job_max_usd": media_policy.video_job_max_usd,
+                "prefer_batch": media_policy.prefer_batch,
+            },
+        },
     )
 
 

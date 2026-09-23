@@ -27,21 +27,33 @@ services:
       - key: SELDRUNE_AI_COST_GOVERNOR_ENABLED
         value: true
       - key: SELDRUNE_AI_REQUEST_MAX_USD
-        value: 0.15
+        value: 0.04
       - key: SELDRUNE_AI_DAILY_MAX_USD
-        value: 2.0
+        value: 1.0
       - key: SELDRUNE_AI_MONTHLY_MAX_USD
-        value: 30.0
+        value: 15.0
       - key: SELDRUNE_AI_SPEND_WARNING_RATIO
-        value: 0.8
+        value: 0.70
+      - key: SELDRUNE_AI_CONSERVATION_RATIO
+        value: 0.80
+      - key: SELDRUNE_AI_IMAGE_JOB_MAX_USD
+        value: 0.08
+      - key: SELDRUNE_AI_VIDEO_JOB_MAX_USD
+        value: 0.40
+      - key: SELDRUNE_AI_VIDEO_DEFAULT_SECONDS
+        value: 4
+      - key: SELDRUNE_AI_VIDEO_MAX_SECONDS
+        value: 6
+      - key: SELDRUNE_AI_MEDIA_BATCH_PREFERRED
+        value: true
       - key: SELDRUNE_AI_PDF_REQUEST_MAX_USD
-        value: 0.10
+        value: 0.04
       - key: SELDRUNE_AI_PDF_MAX_TOTAL_USD
-        value: 0.25
+        value: 0.10
       - key: SELDRUNE_AI_PDF_MAX_ATTEMPTS
-        value: 3
+        value: 2
       - key: SELDRUNE_AI_PDF_MAX_OUTPUT_TOKENS
-        value: 3200
+        value: 2200
       - key: SELDRUNE_AI_IMAGE_DETAIL
         value: low
       - key: SELDRUNE_AI_PDF_DETAIL
@@ -96,21 +108,33 @@ services:
       - key: SELDRUNE_AI_COST_GOVERNOR_ENABLED
         value: true
       - key: SELDRUNE_AI_REQUEST_MAX_USD
-        value: 0.15
+        value: 0.04
       - key: SELDRUNE_AI_DAILY_MAX_USD
-        value: 2.0
+        value: 1.0
       - key: SELDRUNE_AI_MONTHLY_MAX_USD
-        value: 30.0
+        value: 15.0
       - key: SELDRUNE_AI_SPEND_WARNING_RATIO
-        value: 0.8
+        value: 0.70
+      - key: SELDRUNE_AI_CONSERVATION_RATIO
+        value: 0.80
+      - key: SELDRUNE_AI_IMAGE_JOB_MAX_USD
+        value: 0.08
+      - key: SELDRUNE_AI_VIDEO_JOB_MAX_USD
+        value: 0.40
+      - key: SELDRUNE_AI_VIDEO_DEFAULT_SECONDS
+        value: 4
+      - key: SELDRUNE_AI_VIDEO_MAX_SECONDS
+        value: 6
+      - key: SELDRUNE_AI_MEDIA_BATCH_PREFERRED
+        value: true
       - key: SELDRUNE_AI_PDF_REQUEST_MAX_USD
-        value: 0.10
+        value: 0.04
       - key: SELDRUNE_AI_PDF_MAX_TOTAL_USD
-        value: 0.25
+        value: 0.10
       - key: SELDRUNE_AI_PDF_MAX_ATTEMPTS
-        value: 3
+        value: 2
       - key: SELDRUNE_AI_PDF_MAX_OUTPUT_TOKENS
-        value: 3200
+        value: 2200
       - key: SELDRUNE_AI_IMAGE_DETAIL
         value: low
       - key: SELDRUNE_AI_PDF_DETAIL
@@ -138,7 +162,7 @@ services:
       - key: SELDRUNE_AGENT_AUTO_GRANT_PRODUCTION_TOOLS
         value: true
       - key: SELDRUNE_LIFE_WORKER_INTERVAL_SECONDS
-        value: 30
+        value: 20
 databases:
   - name: seldrune-db
     databaseName: seldrune
