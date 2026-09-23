@@ -3784,8 +3784,10 @@ class UnarchiEngine:
 
         def independent_supported_count(
             trials: list[ContextCausalityTrial],
-        ) -> int:
-            used_refs: set[str] = set()
+            *,
+            prior_refs: set[str] | None = None,
+        ) -> tuple[int, set[str]]:
+            used_refs = set(prior_refs or ())
             count = 0
             for item in trials:
                 if not supported(item):
@@ -3801,12 +3803,17 @@ class UnarchiEngine:
                     continue
                 used_refs.update(batch_refs)
                 count += 1
-            return count
+            return count, used_refs
 
         forward_supported = sum(1 for item in forward if supported(item))
         reverse_supported = sum(1 for item in reverse if supported(item))
-        independent_forward = independent_supported_count(forward)
-        independent_reverse = independent_supported_count(reverse)
+        independent_forward, used_batch_refs = independent_supported_count(
+            forward
+        )
+        independent_reverse, _ = independent_supported_count(
+            reverse,
+            prior_refs=used_batch_refs,
+        )
         forward_rate = forward_supported / max(1, len(forward))
         reverse_rate = reverse_supported / max(1, len(reverse))
         reversal_followed = bool(reverse) and all(
