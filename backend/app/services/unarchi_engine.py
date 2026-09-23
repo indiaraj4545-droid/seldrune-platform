@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 
-UNARCHI_VERSION = "unarchi-v0.28"
+UNARCHI_VERSION = "unarchi-v0.29"
 _STOPWORDS = {
     "a",
     "an",
@@ -731,6 +731,28 @@ class ContextValidityRollbackHoldoutValidation:
 
 
 @dataclass(frozen=True)
+class ContextValidityReactivationDriftWatch:
+    id: int
+    holdout_validation_id: int
+    hypothesis_id: int
+    reactivation_selection_id: int
+    active_map_id: int
+    decision_gate_watermark_id: int
+    observed_outcome_ids: tuple[int, ...]
+    degraded_signatures: tuple[str, ...]
+    mean_post_reactivation_advantage: float
+    holdout_advantage: float
+    advantage_delta: float
+    status: str
+    recommended_action: str
+    reason: str
+    evidence_refs: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class ContextValidityClassification:
     map_id: int
     hypothesis_id: int
@@ -879,7 +901,7 @@ class UnarchiEngine:
     """
     CPU-only experimental cognitive kernel.
 
-    v0.28 includes causal internal dynamics, bounded endogenous goals, a
+    v0.29 includes causal internal dynamics, bounded endogenous goals, a
     calibrated predictive self-model, prospective memory, evidence-grounded
     metacognition, explicit value arbitration, competing causal hypotheses,
     controlled self-intervention trials, a bounded recurrent global workspace,
@@ -894,7 +916,8 @@ class UnarchiEngine:
     calibration, immutable calibration-aware validity-map revisions,
     lineage-checked active revision selection with auditable rollback,
     evidence-triggered active-revision degradation recommendations, explicit
-    recommendation resolution, and separate rollback recovery/holdout gates.
+    recommendation resolution, separate rollback recovery/holdout gates, and
+    post-reactivation drift monitoring isolated from prior validation data.
     """
 
     state: UnarchiState = field(default_factory=UnarchiState)
@@ -1004,6 +1027,10 @@ class UnarchiEngine:
         ContextValidityRollbackHoldoutValidation
     ] = field(default_factory=list)
     next_context_validity_rollback_holdout_validation_id: int = 1
+    context_validity_reactivation_drift_watches: list[
+        ContextValidityReactivationDriftWatch
+    ] = field(default_factory=list)
+    next_context_validity_reactivation_drift_watch_id: int = 1
     success_prediction_bias: float = 0.0
     uncertainty_prediction_bias: float = 0.0
     stress_prediction_bias: float = 0.0
@@ -6110,6 +6137,187 @@ class UnarchiEngine:
         )
         return record
 
+    def watch_reactivated_context_validity_drift(
+        self,
+        hypothesis_id: int,
+        *,
+        min_samples: int = 3,
+        degradation_margin: float = 0.05,
+        max_holdout_drop: float = 0.05,
+    ) -> ContextValidityReactivationDriftWatch:
+        """
+        Inspect only outcomes observed after holdout-confirmed reactivation.
+
+        Recovery and holdout evidence are excluded by the reactivation
+        selection's decision-gate watermark. This method records a governance
+        recommendation only and never changes the active validity map.
+        """
+        active = self.active_context_causal_validity_map(hypothesis_id)
+        if active is None:
+            raise ValueError("no active validity map exists for hypothesis")
+
+        holdout = next(
+            (
+                item
+                for item in reversed(
+                    self.context_validity_rollback_holdout_validations
+                )
+                if item.hypothesis_id == hypothesis_id
+                and item.reactivation_allowed
+                and item.blocked_descendant_map_id == active.id
+            ),
+            None,
+        )
+        if holdout is None:
+            raise ValueError(
+                "reactivation drift watch requires a confirmed rollback holdout"
+            )
+
+        reactivation = next(
+            (
+                item
+                for item in reversed(
+                    self.context_validity_map_selection_history
+                )
+                if item.hypothesis_id == hypothesis_id
+                and item.selected_map_id == active.id
+                and item.action == "advance"
+                and item.id > holdout.rollback_selection_id
+            ),
+            None,
+        )
+        if reactivation is None:
+            raise ValueError(
+                "reactivation drift watch requires an explicit descendant advance"
+            )
+
+        min_samples = max(2, min(int(min_samples), 20))
+        margin = _clamp(degradation_margin, 0.01, 0.50)
+        max_drop = _clamp(max_holdout_drop, 0.0, 0.50)
+        signatures = set(holdout.degraded_signatures)
+        gate_map = {
+            item.id: item
+            for item in self.context_validity_decision_gates
+            if item.validity_map_id == active.id
+            and item.id > reactivation.decision_gate_watermark_id
+            and item.environment_signature in signatures
+        }
+        outcomes = [
+            item
+            for item in self.context_validity_gate_outcomes
+            if item.gate_id in gate_map
+        ]
+        counts: dict[str, int] = {}
+        for outcome in outcomes:
+            signature = gate_map[outcome.gate_id].environment_signature
+            counts[signature] = counts.get(signature, 0) + 1
+
+        enough = bool(signatures) and all(
+            counts.get(signature, 0) >= min_samples
+            for signature in signatures
+        )
+        mean_advantage = (
+            sum(
+                item.gated_advantage_vs_alternative
+                for item in outcomes
+            )
+            / len(outcomes)
+            if outcomes
+            else 0.0
+        )
+        delta = mean_advantage - holdout.mean_holdout_advantage
+        holdout_drop = holdout.mean_holdout_advantage - mean_advantage
+
+        if not enough:
+            status = "insufficient_post_reactivation_evidence"
+            recommended_action = "observe_more"
+            reason = (
+                "not every previously degraded signature has enough new "
+                "post-reactivation outcomes"
+            )
+        elif (
+            mean_advantage <= -margin
+            and holdout_drop >= margin
+        ):
+            status = "renewed_degradation_detected"
+            recommended_action = "review_for_rollback"
+            reason = (
+                "post-reactivation outcomes show renewed negative calibration "
+                "and a material drop from the confirmed holdout baseline"
+            )
+        elif (
+            mean_advantage >= margin
+            and holdout_drop <= max_drop
+        ):
+            status = "post_reactivation_stable"
+            recommended_action = "continue_monitoring"
+            reason = (
+                "post-reactivation calibration remains positive and within "
+                "the tolerated drop from the holdout baseline"
+            )
+        else:
+            status = "post_reactivation_warning"
+            recommended_action = "collect_more_evidence"
+            reason = (
+                "post-reactivation evidence is neither stably confirmed nor "
+                "strong enough to establish renewed degradation"
+            )
+
+        refs = [
+            f"context_validity_rollback_holdout_validation:{holdout.id}",
+            f"context_validity_map_selection:{reactivation.id}",
+            f"context_causal_validity_map:{active.id}",
+        ]
+        refs.extend(
+            f"context_validity_gate_outcome:{item.id}"
+            for item in outcomes
+        )
+        record = ContextValidityReactivationDriftWatch(
+            id=self.next_context_validity_reactivation_drift_watch_id,
+            holdout_validation_id=holdout.id,
+            hypothesis_id=hypothesis_id,
+            reactivation_selection_id=reactivation.id,
+            active_map_id=active.id,
+            decision_gate_watermark_id=(
+                reactivation.decision_gate_watermark_id
+            ),
+            observed_outcome_ids=tuple(sorted(item.id for item in outcomes)),
+            degraded_signatures=tuple(sorted(signatures)),
+            mean_post_reactivation_advantage=round(mean_advantage, 6),
+            holdout_advantage=holdout.mean_holdout_advantage,
+            advantage_delta=round(delta, 6),
+            status=status,
+            recommended_action=recommended_action,
+            reason=reason,
+            evidence_refs=tuple(dict.fromkeys(refs)),
+        )
+        self.next_context_validity_reactivation_drift_watch_id += 1
+        self.context_validity_reactivation_drift_watches.append(record)
+        if len(self.context_validity_reactivation_drift_watches) > self.max_memory:
+            self.context_validity_reactivation_drift_watches = (
+                self.context_validity_reactivation_drift_watches[-self.max_memory:]
+            )
+
+        self.stage_global_workspace_item(
+            source="intervention",
+            content=(
+                f"context validity reactivation drift={record.id}; "
+                f"active_map={record.active_map_id}; "
+                f"status={record.status}; "
+                f"recommended_action={record.recommended_action}"
+            ),
+            salience=(
+                0.78
+                if record.status == "renewed_degradation_detected"
+                else 0.55
+            ),
+            evidence_refs=(
+                f"context_validity_reactivation_drift_watch:{record.id}",
+                *record.evidence_refs[-4:],
+            ),
+        )
+        return record
+
     def evaluate_active_context_validity_gated_decision(
         self,
         hypothesis_id: int,
@@ -7485,6 +7693,38 @@ class UnarchiEngine:
             details.append(detail)
 
         if focus in {
+            "context_validity_reactivation_drift",
+            "reactivation_drift",
+            "post_reactivation_drift",
+        }:
+            if self.context_validity_reactivation_drift_watches:
+                item = self.context_validity_reactivation_drift_watches[-1]
+                add(
+                    f"context_validity_reactivation_drift_watch:{item.id}",
+                    (
+                        f"holdout={item.holdout_validation_id}; "
+                        f"reactivation={item.reactivation_selection_id}; "
+                        f"active_map={item.active_map_id}; "
+                        f"outcomes={len(item.observed_outcome_ids)}; "
+                        f"mean_advantage="
+                        f"{item.mean_post_reactivation_advantage}; "
+                        f"holdout_advantage={item.holdout_advantage}; "
+                        f"delta={item.advantage_delta}; "
+                        f"status={item.status}; "
+                        f"recommended_action={item.recommended_action}"
+                    ),
+                )
+                for ref in item.evidence_refs[-8:]:
+                    add(ref, "post-reactivation evidence isolated by watermark")
+                summary = (
+                    "The reactivation drift watch uses only outcomes after "
+                    "the explicit descendant re-advance and can recommend a "
+                    "new governance review without automatically rolling back."
+                )
+            else:
+                summary = "No post-reactivation drift watch has been recorded."
+
+        elif focus in {
             "context_validity_holdout",
             "rollback_holdout",
             "holdout_validation",
@@ -8833,6 +9073,13 @@ class UnarchiEngine:
             "next_context_validity_rollback_holdout_validation_id": (
                 self.next_context_validity_rollback_holdout_validation_id
             ),
+            "context_validity_reactivation_drift_watches": [
+                item.to_dict()
+                for item in self.context_validity_reactivation_drift_watches
+            ],
+            "next_context_validity_reactivation_drift_watch_id": (
+                self.next_context_validity_reactivation_drift_watch_id
+            ),
             "success_prediction_bias": self.success_prediction_bias,
             "uncertainty_prediction_bias": self.uncertainty_prediction_bias,
             "stress_prediction_bias": self.stress_prediction_bias,
@@ -8938,6 +9185,10 @@ class UnarchiEngine:
             "context_validity_rollback_holdout_validations",
             [],
         )
+        context_validity_reactivation_drift_watches_payload = payload.get(
+            "context_validity_reactivation_drift_watches",
+            [],
+        )
         value_weights_payload = payload.get("value_weights", _default_value_weights())
         if not isinstance(state_payload, dict):
             raise ValueError("invalid UNARCHI state")
@@ -9030,6 +9281,13 @@ class UnarchiEngine:
         ):
             raise ValueError(
                 "invalid UNARCHI context validity rollback holdout validations"
+            )
+        if not isinstance(
+            context_validity_reactivation_drift_watches_payload,
+            list,
+        ):
+            raise ValueError(
+                "invalid UNARCHI context validity reactivation drift watches"
             )
 
         memory: list[Experience] = []
@@ -9564,6 +9822,28 @@ class UnarchiEngine:
                 ContextValidityRollbackHoldoutValidation(**restored_item)
             )
 
+        context_validity_reactivation_drift_watches: list[
+            ContextValidityReactivationDriftWatch
+        ] = []
+        for item in context_validity_reactivation_drift_watches_payload:
+            if not isinstance(item, dict):
+                raise ValueError(
+                    "invalid UNARCHI context validity reactivation drift watch"
+                )
+            restored_item = dict(item)
+            restored_item["observed_outcome_ids"] = tuple(
+                restored_item.get("observed_outcome_ids", ())
+            )
+            restored_item["degraded_signatures"] = tuple(
+                restored_item.get("degraded_signatures", ())
+            )
+            restored_item["evidence_refs"] = tuple(
+                restored_item.get("evidence_refs", ())
+            )
+            context_validity_reactivation_drift_watches.append(
+                ContextValidityReactivationDriftWatch(**restored_item)
+            )
+
         max_memory = max(16, min(int(payload.get("max_memory") or 256), 4096))
         max_active = max(
             1,
@@ -9920,6 +10200,25 @@ class UnarchiEngine:
                 )
                 + 1,
             ),
+            context_validity_reactivation_drift_watches=(
+                context_validity_reactivation_drift_watches[-max_memory:]
+            ),
+            next_context_validity_reactivation_drift_watch_id=max(
+                int(
+                    payload.get(
+                        "next_context_validity_reactivation_drift_watch_id"
+                    )
+                    or 1
+                ),
+                max(
+                    (
+                        item.id
+                        for item in context_validity_reactivation_drift_watches
+                    ),
+                    default=0,
+                )
+                + 1,
+            ),
             success_prediction_bias=float(
                 payload.get("success_prediction_bias") or 0.0
             ),
@@ -10119,6 +10418,16 @@ class UnarchiEngine:
                     item
                     for item in self.context_validity_rollback_holdout_validations
                     if item.reactivation_allowed
+                ]
+            ),
+            "post_reactivation_drift_watch_count": len(
+                self.context_validity_reactivation_drift_watches
+            ),
+            "renewed_degradation_count": len(
+                [
+                    item
+                    for item in self.context_validity_reactivation_drift_watches
+                    if item.status == "renewed_degradation_detected"
                 ]
             ),
             "observed_counterfactual_count": len(

@@ -4,8 +4,8 @@ from backend.app.services.unarchi_benchmark import run_unarchi_ablation_benchmar
 def test_unarchi_ablation_benchmark_passes_all_scenarios() -> None:
     result = run_unarchi_ablation_benchmark()
 
-    assert result["scenario_count"] == 29
-    assert result["passed_scenarios"] == 29
+    assert result["scenario_count"] == 30
+    assert result["passed_scenarios"] == 30
     assert result["pass_rate"] == 1.0
     assert result["claims_phenomenal_consciousness"] is False
 
@@ -491,3 +491,22 @@ def test_unarchi_benchmark_covers_rollback_holdout_validation() -> None:
     assert holdout["evidence_overlap"] is False
     assert holdout["readvance_action"] == "advance"
     assert holdout["restart_preserved"] is True
+
+
+
+def test_unarchi_benchmark_covers_post_reactivation_drift_monitoring() -> None:
+    result = run_unarchi_ablation_benchmark()
+    scenarios = {item["name"]: item for item in result["scenarios"]}
+
+    drift = scenarios["post_reactivation_holdout_drift_monitoring"]
+
+    assert drift["passed"] is True
+    assert drift["initial_status"] == "insufficient_post_reactivation_evidence"
+    assert drift["stable_status"] == "post_reactivation_stable"
+    assert drift["stable_action"] == "continue_monitoring"
+    assert drift["degraded_status"] == "renewed_degradation_detected"
+    assert drift["degraded_action"] == "review_for_rollback"
+    assert drift["evidence_overlap_with_holdout"] is False
+    assert drift["automatic_selection_change"] is False
+    assert drift["active_map_unchanged"] is True
+    assert drift["restart_preserved"] is True

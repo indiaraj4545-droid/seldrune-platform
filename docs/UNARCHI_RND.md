@@ -1533,13 +1533,67 @@ anti-overfitting evidence-governance mechanism and does not establish
 subjective identity, sentience, phenomenal consciousness, qualia, or
 unrestricted real-world causation.
 
-## Next checkpoint: v0.29 rollback holdout drift monitoring
+## v0.29 post-reactivation holdout-drift checkpoint
 
-The next research step should monitor an already confirmed rollback after
-reactivation and detect whether the holdout-supported recovery remains stable
-under later observations.
+UNARCHI v0.29 monitors a descendant only after it has passed the complete
+rollback recovery and independent holdout process from v0.28 and has then been
+explicitly reactivated.
 
-The measurable target is post-reactivation robustness: use only outcomes that
-arrive after reactivation, detect renewed degradation without reusing the
-recovery or holdout batches, and recommend a new governance action while
-preserving the full prior rollback/holdout audit trail.
+The reactivation selection already records a decision-gate watermark. v0.29
+uses that watermark as a strict evidence boundary:
+
+- recovery outcomes are older than the reactivation watermark and cannot count;
+- holdout outcomes are older than the reactivation watermark and cannot count;
+- only later gate outcomes on the reactivated descendant can enter drift
+  monitoring;
+- only the environment signatures that triggered the original degradation are
+  evaluated.
+
+The drift watch requires the configured minimum number of new outcomes for
+every previously degraded signature. It compares mean post-reactivation
+gated-policy advantage with the confirmed holdout baseline.
+
+Possible statuses are:
+
+- `insufficient_post_reactivation_evidence`: not every tracked signature has
+  enough new evidence;
+- `post_reactivation_stable`: calibration remains positive and within the
+  configured tolerated drop from holdout performance;
+- `post_reactivation_warning`: evidence is inconclusive and should continue
+  accumulating;
+- `renewed_degradation_detected`: calibration is negative and has materially
+  fallen from the confirmed holdout baseline.
+
+A drift watch never changes the active validity-map pointer. Renewed degradation
+produces only the auditable recommendation `review_for_rollback`; an explicit
+governance decision is still required for any later map change.
+
+Each drift record stores the confirmed holdout ID, reactivation selection ID,
+post-reactivation watermark, active map, observed outcome IDs, tracked
+signatures, mean post-reactivation advantage, holdout baseline, advantage
+delta, status, recommendation, reason, and evidence references.
+
+The deterministic v0.29 benchmark requires:
+
+confirmed recovery -> confirmed independent holdout -> explicit descendant
+reactivation -> initial drift watch sees no new evidence -> branch A receives
+three favorable post-reactivation outcomes and remains stable -> branch B
+receives three unfavorable post-reactivation outcomes and detects renewed
+degradation -> branch B outcomes do not overlap recovery or holdout outcomes ->
+the watch recommends governance review without creating a rollback or changing
+the active pointer -> export/restore preserves the drift history.
+
+This remains bounded functional causal research. Post-reactivation drift
+monitoring is an evidence-governance mechanism and does not establish subjective
+identity, sentience, phenomenal consciousness, qualia, or unrestricted
+real-world causation.
+
+## Next checkpoint: v0.30 renewed-degradation resolution
+
+The next research step should add an explicit resolution workflow for v0.29
+renewed-degradation recommendations.
+
+The measurable target is closed-loop post-reactivation governance: permit
+defer, dismiss, or explicit rollback review decisions; keep all prior recovery,
+holdout, reactivation, and drift evidence immutable; and require a new evidence
+cycle before any later descendant reactivation.

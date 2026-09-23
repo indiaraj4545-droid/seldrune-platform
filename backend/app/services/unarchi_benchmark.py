@@ -6,7 +6,7 @@ from typing import Any
 from backend.app.services.unarchi_engine import UnarchiEngine
 
 
-BENCHMARK_VERSION = "unarchi-ablation-v0.28"
+BENCHMARK_VERSION = "unarchi-ablation-v0.29"
 
 
 def _failure_sensitization() -> dict[str, Any]:
@@ -3759,6 +3759,179 @@ def _rollback_holdout_validation() -> dict[str, Any]:
     }
 
 
+def _post_reactivation_holdout_drift_monitoring() -> dict[str, Any]:
+    (
+        engine,
+        hypothesis_id,
+        _,
+        revision_two,
+        watch,
+        signature,
+        candidates,
+        action,
+    ) = _build_v27_recommendation_engine()
+
+    accepted = engine.resolve_context_validity_degradation_watch(
+        watch.id,
+        decision="accept",
+        reason="prepare post-reactivation drift benchmark",
+    )
+
+    for index in range(3):
+        gate = engine.evaluate_active_context_validity_gated_decision(
+            hypothesis_id,
+            environment_signature=signature,
+            candidates=candidates,
+            context="production release",
+        )
+        engine.record_context_validity_gate_outcome(
+            gate.id,
+            actual_success_by_action={
+                action: False,
+                "request independent review": True,
+            },
+            evidence_refs=(f"drift:recovery:{index}",),
+        )
+    recovery = engine.validate_context_validity_rollback(accepted.id)
+
+    for index in range(3):
+        gate = engine.evaluate_active_context_validity_gated_decision(
+            hypothesis_id,
+            environment_signature=signature,
+            candidates=candidates,
+            context="production release",
+        )
+        engine.record_context_validity_gate_outcome(
+            gate.id,
+            actual_success_by_action={
+                action: False,
+                "request independent review": True,
+            },
+            evidence_refs=(f"drift:holdout:{index}",),
+        )
+    holdout = engine.validate_context_validity_rollback_holdout(recovery.id)
+    reactivation = engine.select_context_validity_map_revision(
+        hypothesis_id,
+        map_id=revision_two.id,
+        reason="reactivate only after confirmed holdout",
+        evidence_refs=(
+            f"context_validity_rollback_holdout_validation:{holdout.id}",
+        ),
+    )
+
+    initial = engine.watch_reactivated_context_validity_drift(hypothesis_id)
+    stable_engine = deepcopy(engine)
+    degraded_engine = deepcopy(engine)
+
+    for index in range(3):
+        gate = stable_engine.evaluate_active_context_validity_gated_decision(
+            hypothesis_id,
+            environment_signature=signature,
+            candidates=candidates,
+            context="production release",
+        )
+        stable_engine.record_context_validity_gate_outcome(
+            gate.id,
+            actual_success_by_action={
+                action: False,
+                "request independent review": True,
+            },
+            evidence_refs=(f"drift:stable:{index}",),
+        )
+    stable = stable_engine.watch_reactivated_context_validity_drift(
+        hypothesis_id
+    )
+
+    selection_count_before = len(
+        degraded_engine.context_validity_map_selection_history
+    )
+    for index in range(3):
+        gate = degraded_engine.evaluate_active_context_validity_gated_decision(
+            hypothesis_id,
+            environment_signature=signature,
+            candidates=candidates,
+            context="production release",
+        )
+        degraded_engine.record_context_validity_gate_outcome(
+            gate.id,
+            actual_success_by_action={
+                action: True,
+                "request independent review": False,
+            },
+            evidence_refs=(f"drift:renewed_negative:{index}",),
+        )
+    degraded = degraded_engine.watch_reactivated_context_validity_drift(
+        hypothesis_id
+    )
+    active_after_watch = degraded_engine.active_context_causal_validity_map(
+        hypothesis_id
+    )
+    narrative = degraded_engine.build_metacognitive_narrative(
+        "context_validity_reactivation_drift"
+    )
+    restored = UnarchiEngine.from_export(degraded_engine.export_state())
+
+    return {
+        "name": "post_reactivation_holdout_drift_monitoring",
+        "expected_direction": (
+            "only outcomes after explicit holdout-confirmed reactivation can "
+            "establish stability or renewed degradation, and a drift watch "
+            "may recommend review without automatically moving the active map"
+        ),
+        "passed": (
+            recovery.status == "rollback_recovery_passed"
+            and holdout.status == "holdout_confirmed"
+            and reactivation.action == "advance"
+            and initial.status == "insufficient_post_reactivation_evidence"
+            and initial.observed_outcome_ids == ()
+            and stable.status == "post_reactivation_stable"
+            and stable.recommended_action == "continue_monitoring"
+            and stable.mean_post_reactivation_advantage >= 0.05
+            and degraded.status == "renewed_degradation_detected"
+            and degraded.recommended_action == "review_for_rollback"
+            and degraded.mean_post_reactivation_advantage <= -0.05
+            and degraded.advantage_delta <= -0.05
+            and not set(degraded.observed_outcome_ids).intersection(
+                holdout.holdout_outcome_ids
+            )
+            and not set(degraded.observed_outcome_ids).intersection(
+                recovery.observed_outcome_ids
+            )
+            and len(
+                degraded_engine.context_validity_map_selection_history
+            ) == selection_count_before
+            and active_after_watch is not None
+            and active_after_watch.id == revision_two.id
+            and restored.context_validity_reactivation_drift_watches
+            == degraded_engine.context_validity_reactivation_drift_watches
+            and narrative.unsupported_claims == 0
+            and bool(narrative.evidence_refs)
+        ),
+        "initial_status": initial.status,
+        "stable_status": stable.status,
+        "stable_action": stable.recommended_action,
+        "degraded_status": degraded.status,
+        "degraded_action": degraded.recommended_action,
+        "evidence_overlap_with_holdout": bool(
+            set(degraded.observed_outcome_ids).intersection(
+                holdout.holdout_outcome_ids
+            )
+        ),
+        "automatic_selection_change": (
+            len(degraded_engine.context_validity_map_selection_history)
+            != selection_count_before
+        ),
+        "active_map_unchanged": (
+            active_after_watch is not None
+            and active_after_watch.id == revision_two.id
+        ),
+        "restart_preserved": (
+            restored.context_validity_reactivation_drift_watches
+            == degraded_engine.context_validity_reactivation_drift_watches
+        ),
+    }
+
+
 def run_unarchi_ablation_benchmark() -> dict[str, Any]:
     scenarios = [
         _failure_sensitization(),
@@ -3790,6 +3963,7 @@ def run_unarchi_ablation_benchmark() -> dict[str, Any]:
         _active_revision_degradation_watch(),
         _rollback_recommendation_resolution(),
         _rollback_holdout_validation(),
+        _post_reactivation_holdout_drift_monitoring(),
     ]
     passed = sum(bool(item["passed"]) for item in scenarios)
     return {
