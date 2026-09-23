@@ -4,8 +4,8 @@ from backend.app.services.unarchi_benchmark import run_unarchi_ablation_benchmar
 def test_unarchi_ablation_benchmark_passes_all_scenarios() -> None:
     result = run_unarchi_ablation_benchmark()
 
-    assert result["scenario_count"] == 30
-    assert result["passed_scenarios"] == 30
+    assert result["scenario_count"] == 31
+    assert result["passed_scenarios"] == 31
     assert result["pass_rate"] == 1.0
     assert result["claims_phenomenal_consciousness"] is False
 
@@ -510,3 +510,24 @@ def test_unarchi_benchmark_covers_post_reactivation_drift_monitoring() -> None:
     assert drift["automatic_selection_change"] is False
     assert drift["active_map_unchanged"] is True
     assert drift["restart_preserved"] is True
+
+
+
+def test_unarchi_benchmark_covers_renewed_degradation_resolution() -> None:
+    result = run_unarchi_ablation_benchmark()
+    scenarios = {item["name"]: item for item in result["scenarios"]}
+
+    resolution = scenarios["renewed_degradation_resolution"]
+
+    assert resolution["passed"] is True
+    assert resolution["defer_pointer_unchanged"] is True
+    assert resolution["dismiss_pointer_unchanged"] is True
+    assert resolution["rollback_target_map_id"] is not None
+    assert resolution["rollback_active_map_id"] == (
+        resolution["rollback_target_map_id"]
+    )
+    assert resolution["requires_new_evidence_cycle"] is True
+    assert resolution["stale_holdout_blocked"] is True
+    assert resolution["terminal_resolution_blocked"] is True
+    assert resolution["descendant_preserved"] is True
+    assert resolution["restart_preserved"] is True
