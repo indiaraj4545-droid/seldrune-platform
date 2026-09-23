@@ -167,7 +167,7 @@ def test_snapshot_never_claims_phenomenal_consciousness() -> None:
     snapshot = engine.snapshot()
 
     assert snapshot["claims_phenomenal_consciousness"] is False
-    assert snapshot["version"] == "unarchi-v0.5"
+    assert snapshot["version"] == "unarchi-v0.6"
 
 
 def test_export_restore_preserves_identity_state_and_memory() -> None:
@@ -638,3 +638,104 @@ def test_export_restore_preserves_temporal_self_memory() -> None:
     assert restored.prospective_intentions == engine.prospective_intentions
     assert restored.next_intention_id == engine.next_intention_id
     assert restored.snapshot() == engine.snapshot()
+
+
+def test_metacognitive_narrative_explains_caution_from_real_failure() -> None:
+    engine = UnarchiEngine()
+    engine.learn(
+        observation="A risky local migration was attempted.",
+        goal="protect data",
+        action="run migration",
+        outcome="the migration corrupted a test dataset",
+        success=False,
+        reward=-1.0,
+        predicted_success=0.9,
+    )
+
+    narrative = engine.build_metacognitive_narrative("caution")
+
+    assert narrative.unsupported_claims == 0
+    assert narrative.fidelity_score == 1.0
+    assert "experience:0" in narrative.evidence_refs
+    assert any("corrupted" in item for item in narrative.evidence_details)
+    assert "state:current" in narrative.evidence_refs
+
+
+def test_metacognitive_narrative_traces_future_intention_to_prediction() -> None:
+    engine = UnarchiEngine()
+    prediction = engine.predict_action(
+        action="review future validation evidence",
+        expected_success=0.8,
+        expected_information_gain=0.6,
+        risk=0.1,
+    )
+    engine.remember_future_intention(
+        condition="validation evidence ready",
+        intended_action="review validation evidence",
+        reason="compare the later evidence with the earlier forecast",
+        linked_prediction_id=prediction.id,
+    )
+
+    narrative = engine.build_metacognitive_narrative("intention")
+
+    assert narrative.unsupported_claims == 0
+    assert "intention:0" in narrative.evidence_refs
+    assert "prediction:0" in narrative.evidence_refs
+    assert any("earlier forecast" in item for item in narrative.evidence_details)
+
+
+def test_metacognitive_narrative_traces_internal_goal_to_source() -> None:
+    engine = UnarchiEngine()
+    engine.cycle(
+        observation="An unfamiliar local mechanism produces inconsistent output.",
+        goal="understand the mechanism",
+        expected_success=0.2,
+        risk=0.1,
+    )
+
+    narrative = engine.build_metacognitive_narrative("goal")
+
+    assert "internal_goal:0" in narrative.evidence_refs
+    assert "goal_source:1" in narrative.evidence_refs
+    assert narrative.causal_chain_depth >= 2
+    assert narrative.unsupported_claims == 0
+
+
+def test_metacognitive_narrative_survives_restart_identically() -> None:
+    engine = UnarchiEngine()
+    engine.learn(
+        observation="A calibration experiment was run.",
+        goal="improve self prediction",
+        action="run calibration",
+        outcome="the calibration succeeded",
+        success=True,
+        reward=0.5,
+        predicted_success=0.4,
+    )
+    prediction = engine.predict_action(
+        action="repeat calibration",
+        expected_success=0.4,
+        expected_information_gain=0.3,
+        risk=0.1,
+    )
+    engine.record_prediction_outcome(
+        prediction.id,
+        actual_success=True,
+        actual_information_gain=0.3,
+    )
+
+    before = engine.build_metacognitive_narrative("prediction")
+    restored = UnarchiEngine.from_export(engine.export_state())
+    after = restored.build_metacognitive_narrative("prediction")
+
+    assert after == before
+
+
+def test_unknown_metacognitive_focus_does_not_invent_history() -> None:
+    engine = UnarchiEngine()
+
+    narrative = engine.build_metacognitive_narrative("imaginary_unknown_topic")
+
+    assert narrative.evidence_refs == ("state:current",)
+    assert narrative.unsupported_claims == 0
+    assert narrative.fidelity_score == 1.0
