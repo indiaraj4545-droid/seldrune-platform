@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 
-UNARCHI_VERSION = "unarchi-v0.7"
+UNARCHI_VERSION = "unarchi-v0.8"
 _STOPWORDS = {
     "a",
     "an",
@@ -204,6 +204,37 @@ class ArbitrationRecord:
         return asdict(self)
 
 
+@dataclass
+class CausalHypothesis:
+    id: int
+    statement: str
+    confidence: float
+    predictions: tuple[tuple[str, str], ...]
+    supporting_evidence: int = 0
+    contradicting_evidence: int = 0
+    status: str = "active"
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class DiscriminatingExperiment:
+    id: int
+    test: str
+    expected_by_hypothesis: tuple[tuple[int, str], ...]
+    discrimination_score: float
+    risk: float
+    status: str = "planned"
+    observed_evidence: str | None = None
+    confidence_updates: tuple[tuple[int, float], ...] = ()
+    reversible_only: bool = True
+    paid_actions_allowed: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 @dataclass(frozen=True)
 class MetacognitiveNarrative:
     focus: str
@@ -257,9 +288,10 @@ class UnarchiEngine:
     """
     CPU-only experimental cognitive kernel.
 
-    v0.7 includes causal internal dynamics, bounded endogenous goals, a
+    v0.8 includes causal internal dynamics, bounded endogenous goals, a
     calibrated predictive self-model, prospective memory, evidence-grounded
-    metacognition, and explicit conflict/value arbitration with self-correction.
+    metacognition, explicit value arbitration, and competing causal hypotheses
+    that update confidence only from discriminating observed evidence.
     """
 
     state: UnarchiState = field(default_factory=UnarchiState)
@@ -275,6 +307,12 @@ class UnarchiEngine:
     value_weights: dict[str, float] = field(default_factory=_default_value_weights)
     arbitration_history: list[ArbitrationRecord] = field(default_factory=list)
     next_arbitration_id: int = 1
+    causal_hypotheses: list[CausalHypothesis] = field(default_factory=list)
+    discriminating_experiments: list[DiscriminatingExperiment] = field(
+        default_factory=list
+    )
+    next_hypothesis_id: int = 1
+    next_experiment_id: int = 1
     success_prediction_bias: float = 0.0
     uncertainty_prediction_bias: float = 0.0
     stress_prediction_bias: float = 0.0
@@ -1303,6 +1341,199 @@ class UnarchiEngine:
         record.status = "learned"
         return record
 
+    def add_causal_hypothesis(
+        self,
+        *,
+        statement: str,
+        predictions: dict[str, str],
+        confidence: float = 0.5,
+    ) -> CausalHypothesis:
+        statement = statement.strip()
+        if not statement:
+            raise ValueError("hypothesis statement is required")
+        clean_predictions = tuple(
+            (str(test).strip()[:240], str(evidence).strip()[:300])
+            for test, evidence in predictions.items()
+            if str(test).strip() and str(evidence).strip()
+        )
+        if not clean_predictions:
+            raise ValueError("at least one test prediction is required")
+
+        hypothesis = CausalHypothesis(
+            id=self.next_hypothesis_id,
+            statement=statement[:400],
+            confidence=round(_clamp(confidence, 0.01, 0.99), 6),
+            predictions=clean_predictions,
+        )
+        self.next_hypothesis_id += 1
+        self.causal_hypotheses.append(hypothesis)
+        if len(self.causal_hypotheses) > self.max_memory:
+            self.causal_hypotheses = self.causal_hypotheses[-self.max_memory:]
+        self._normalize_hypothesis_confidence()
+        return hypothesis
+
+    def _normalize_hypothesis_confidence(self) -> None:
+        active = [item for item in self.causal_hypotheses if item.status == "active"]
+        if not active:
+            return
+        total = sum(max(item.confidence, 0.001) for item in active)
+        for item in active:
+            item.confidence = round(max(item.confidence, 0.001) / total, 6)
+
+    def select_discriminating_experiment(
+        self,
+        candidate_tests: list[dict[str, Any]],
+    ) -> DiscriminatingExperiment:
+        """
+        Pick the smallest reversible zero-cost test that best separates hypotheses.
+        """
+        active = [item for item in self.causal_hypotheses if item.status == "active"]
+        if len(active) < 2:
+            raise ValueError("at least two active hypotheses are required")
+
+        ranked: list[
+            tuple[
+                float,
+                float,
+                int,
+                str,
+                tuple[tuple[int, str], ...],
+            ]
+        ] = []
+        for index, candidate in enumerate(candidate_tests):
+            test = str(candidate.get("test") or "").strip()
+            if not test:
+                continue
+            reversible = bool(candidate.get("reversible", True))
+            external_cost = max(
+                0.0,
+                float(candidate.get("external_cost_usd", 0.0)),
+            )
+            risk = _clamp(float(candidate.get("risk", 0.0)))
+            if not reversible or external_cost > 0.0 or risk > 0.50:
+                continue
+
+            expectations: list[tuple[int, str]] = []
+            for hypothesis in active:
+                prediction_map = dict(hypothesis.predictions)
+                expected = prediction_map.get(test)
+                if expected:
+                    expectations.append((hypothesis.id, expected))
+
+            if len(expectations) < 2:
+                continue
+            distinct = len({expected.casefold() for _, expected in expectations})
+            if distinct < 2:
+                continue
+
+            coverage = len(expectations) / len(active)
+            diversity = distinct / len(expectations)
+            discrimination = _clamp((coverage * 0.55) + (diversity * 0.45))
+            ranked.append(
+                (
+                    discrimination,
+                    -risk,
+                    -index,
+                    test[:240],
+                    tuple(expectations),
+                )
+            )
+
+        if not ranked:
+            raise ValueError("no reversible zero-cost discriminating test available")
+
+        discrimination, neg_risk, _, test, expectations = max(
+            ranked,
+            key=lambda item: (item[0], item[1], item[2]),
+        )
+        experiment = DiscriminatingExperiment(
+            id=self.next_experiment_id,
+            test=test,
+            expected_by_hypothesis=expectations,
+            discrimination_score=round(discrimination, 6),
+            risk=round(-neg_risk, 6),
+        )
+        self.next_experiment_id += 1
+        self.discriminating_experiments.append(experiment)
+        if len(self.discriminating_experiments) > self.max_memory:
+            self.discriminating_experiments = self.discriminating_experiments[
+                -self.max_memory:
+            ]
+        return experiment
+
+    def observe_discriminating_experiment(
+        self,
+        experiment_id: int,
+        *,
+        observed_evidence: str,
+    ) -> DiscriminatingExperiment:
+        """
+        Update hypothesis confidence strictly from the experiment observation.
+        """
+        experiment = next(
+            (
+                item
+                for item in self.discriminating_experiments
+                if item.id == experiment_id
+            ),
+            None,
+        )
+        if experiment is None:
+            raise ValueError("unknown discriminating experiment")
+        if experiment.status != "planned":
+            raise ValueError("experiment has already been observed")
+
+        observed_evidence = observed_evidence.strip()
+        if not observed_evidence:
+            raise ValueError("observed evidence is required")
+
+        expectations = dict(experiment.expected_by_hypothesis)
+        updates: list[tuple[int, float]] = []
+        for hypothesis in self.causal_hypotheses:
+            if hypothesis.status != "active" or hypothesis.id not in expectations:
+                continue
+            expected = expectations[hypothesis.id]
+            match = _similarity(expected, observed_evidence)
+            old = hypothesis.confidence
+            if match >= 0.60:
+                hypothesis.confidence = _clamp(old * (1.0 + (0.60 * match)))
+                hypothesis.supporting_evidence += 1
+            elif match <= 0.20:
+                hypothesis.confidence = _clamp(old * 0.45, 0.001, 1.0)
+                hypothesis.contradicting_evidence += 1
+            else:
+                hypothesis.confidence = _clamp(
+                    old * (0.80 + (0.35 * match)),
+                    0.001,
+                    1.0,
+                )
+            updates.append(
+                (hypothesis.id, round(hypothesis.confidence - old, 6))
+            )
+
+        self._normalize_hypothesis_confidence()
+        normalized_updates = []
+        for hypothesis_id, _ in updates:
+            hypothesis = next(
+                item
+                for item in self.causal_hypotheses
+                if item.id == hypothesis_id
+            )
+            normalized_updates.append(
+                (hypothesis_id, round(hypothesis.confidence, 6))
+            )
+
+        experiment.status = "observed"
+        experiment.observed_evidence = observed_evidence[:500]
+        experiment.confidence_updates = tuple(normalized_updates)
+        return experiment
+
+    def leading_causal_hypothesis(self) -> CausalHypothesis | None:
+        active = [item for item in self.causal_hypotheses if item.status == "active"]
+        if not active:
+            return None
+        return max(active, key=lambda item: (item.confidence, -item.id))
+
     def build_metacognitive_narrative(
         self,
         focus: str = "current_state",
@@ -1465,6 +1696,42 @@ class UnarchiEngine:
                 )
             else:
                 summary = "No prospective intention is stored."
+
+        elif focus in {"world_model", "hypothesis", "causal"}:
+            if self.causal_hypotheses:
+                leading = self.leading_causal_hypothesis()
+                for index, item in enumerate(self.causal_hypotheses[-3:]):
+                    actual_index = len(self.causal_hypotheses) - min(
+                        3,
+                        len(self.causal_hypotheses),
+                    ) + index
+                    add(
+                        f"hypothesis:{actual_index}",
+                        (
+                            f"statement='{item.statement[:180]}'; "
+                            f"confidence={item.confidence:.3f}; "
+                            f"support={item.supporting_evidence}; "
+                            f"contradictions={item.contradicting_evidence}"
+                        ),
+                    )
+                if self.discriminating_experiments:
+                    item = self.discriminating_experiments[-1]
+                    add(
+                        f"experiment:{len(self.discriminating_experiments) - 1}",
+                        (
+                            f"test='{item.test[:180]}'; status={item.status}; "
+                            f"observed={item.observed_evidence!r}"
+                        ),
+                    )
+                summary = (
+                    "The world model keeps competing causal explanations and "
+                    "changes confidence only from recorded discriminating evidence. "
+                    f"Current leader={leading.statement!r}."
+                    if leading is not None
+                    else "No active causal hypothesis is currently leading."
+                )
+            else:
+                summary = "No causal hypotheses are stored."
 
         elif focus in {"arbitration", "values", "conflict"}:
             if self.arbitration_history:
@@ -1731,6 +1998,14 @@ class UnarchiEngine:
                 item.to_dict() for item in self.arbitration_history
             ],
             "next_arbitration_id": self.next_arbitration_id,
+            "causal_hypotheses": [
+                item.to_dict() for item in self.causal_hypotheses
+            ],
+            "discriminating_experiments": [
+                item.to_dict() for item in self.discriminating_experiments
+            ],
+            "next_hypothesis_id": self.next_hypothesis_id,
+            "next_experiment_id": self.next_experiment_id,
             "success_prediction_bias": self.success_prediction_bias,
             "uncertainty_prediction_bias": self.uncertainty_prediction_bias,
             "stress_prediction_bias": self.stress_prediction_bias,
@@ -1755,6 +2030,8 @@ class UnarchiEngine:
         calibration_payload = payload.get("calibration_history", [])
         intentions_payload = payload.get("prospective_intentions", [])
         arbitration_payload = payload.get("arbitration_history", [])
+        hypotheses_payload = payload.get("causal_hypotheses", [])
+        experiments_payload = payload.get("discriminating_experiments", [])
         value_weights_payload = payload.get("value_weights", _default_value_weights())
         if not isinstance(state_payload, dict):
             raise ValueError("invalid UNARCHI state")
@@ -1774,6 +2051,10 @@ class UnarchiEngine:
             raise ValueError("invalid UNARCHI arbitration history")
         if not isinstance(value_weights_payload, dict):
             raise ValueError("invalid UNARCHI value weights")
+        if not isinstance(hypotheses_payload, list):
+            raise ValueError("invalid UNARCHI causal hypotheses")
+        if not isinstance(experiments_payload, list):
+            raise ValueError("invalid UNARCHI discriminating experiments")
 
         memory: list[Experience] = []
         for item in memory_payload:
@@ -1832,6 +2113,33 @@ class UnarchiEngine:
             )
             arbitration_history.append(ArbitrationRecord(**restored_item))
 
+        causal_hypotheses: list[CausalHypothesis] = []
+        for item in hypotheses_payload:
+            if not isinstance(item, dict):
+                raise ValueError("invalid UNARCHI causal hypothesis")
+            restored_item = dict(item)
+            restored_item["predictions"] = tuple(
+                tuple(pair) for pair in restored_item.get("predictions", ())
+            )
+            causal_hypotheses.append(CausalHypothesis(**restored_item))
+
+        discriminating_experiments: list[DiscriminatingExperiment] = []
+        for item in experiments_payload:
+            if not isinstance(item, dict):
+                raise ValueError("invalid UNARCHI discriminating experiment")
+            restored_item = dict(item)
+            restored_item["expected_by_hypothesis"] = tuple(
+                tuple(pair)
+                for pair in restored_item.get("expected_by_hypothesis", ())
+            )
+            restored_item["confidence_updates"] = tuple(
+                tuple(pair)
+                for pair in restored_item.get("confidence_updates", ())
+            )
+            discriminating_experiments.append(
+                DiscriminatingExperiment(**restored_item)
+            )
+
         max_memory = max(16, min(int(payload.get("max_memory") or 256), 4096))
         max_active = max(
             1,
@@ -1871,6 +2179,20 @@ class UnarchiEngine:
             next_arbitration_id=max(
                 int(payload.get("next_arbitration_id") or 1),
                 max((item.id for item in arbitration_history), default=0) + 1,
+            ),
+            causal_hypotheses=causal_hypotheses[-max_memory:],
+            discriminating_experiments=discriminating_experiments[-max_memory:],
+            next_hypothesis_id=max(
+                int(payload.get("next_hypothesis_id") or 1),
+                max((item.id for item in causal_hypotheses), default=0) + 1,
+            ),
+            next_experiment_id=max(
+                int(payload.get("next_experiment_id") or 1),
+                max(
+                    (item.id for item in discriminating_experiments),
+                    default=0,
+                )
+                + 1,
             ),
             success_prediction_bias=float(
                 payload.get("success_prediction_bias") or 0.0
@@ -1912,5 +2234,9 @@ class UnarchiEngine:
             "metacognitive_narrative_available": True,
             "value_weights": dict(self.value_weights),
             "arbitration_count": len(self.arbitration_history),
+            "causal_hypothesis_count": len(self.causal_hypotheses),
+            "discriminating_experiment_count": len(
+                self.discriminating_experiments
+            ),
             "claims_phenomenal_consciousness": False,
         }
