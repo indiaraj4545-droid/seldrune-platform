@@ -1,5 +1,6 @@
 import base64
 import binascii
+import hashlib
 from contextlib import suppress
 from time import perf_counter
 from typing import Any
@@ -15,6 +16,19 @@ from backend.app.core.modeling import (
     ModelUsage,
 )
 from backend.app.services.ai_cost_governor import estimate_model_cost
+
+
+PROMPT_CACHE_KEY_MAX_LENGTH = 64
+
+
+def normalize_prompt_cache_key(value: str) -> str:
+    cleaned = value.strip()
+    if len(cleaned) <= PROMPT_CACHE_KEY_MAX_LENGTH:
+        return cleaned
+    digest = hashlib.sha256(cleaned.encode("utf-8")).hexdigest()[:16]
+    prefix_length = PROMPT_CACHE_KEY_MAX_LENGTH - len(digest) - 1
+    prefix = cleaned[:prefix_length].rstrip(":-_")
+    return f"{prefix}:{digest}"
 
 
 class ModelGateway:
@@ -163,7 +177,9 @@ class ModelGateway:
                 self.settings.ai_prompt_cache_enabled
                 and request.prompt_cache_key
             ):
-                response_args["prompt_cache_key"] = request.prompt_cache_key[:512]
+                response_args["prompt_cache_key"] = normalize_prompt_cache_key(
+                    request.prompt_cache_key
+                )
                 if request.model.startswith("gpt-5.6"):
                     response_args["prompt_cache_options"] = {"ttl": "30m"}
 
