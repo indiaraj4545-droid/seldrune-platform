@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 
-UNARCHI_VERSION = "unarchi-v0.23"
+UNARCHI_VERSION = "unarchi-v0.24"
 _STOPWORDS = {
     "a",
     "an",
@@ -616,6 +616,12 @@ class ContextCausalValidityMap:
     confidence: float
     evidence_refs: tuple[str, ...]
     status: str = "active"
+    parent_map_id: int | None = None
+    revision_number: int = 1
+    source_calibration_ids: tuple[int, ...] = ()
+    calibrated_supported_signatures: tuple[str, ...] = ()
+    revoked_inferred_signatures: tuple[str, ...] = ()
+    revision_reasons: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -770,7 +776,7 @@ class UnarchiEngine:
     """
     CPU-only experimental cognitive kernel.
 
-    v0.23 includes causal internal dynamics, bounded endogenous goals, a
+    v0.24 includes causal internal dynamics, bounded endogenous goals, a
     calibrated predictive self-model, prospective memory, evidence-grounded
     metacognition, explicit value arbitration, competing causal hypotheses,
     controlled self-intervention trials, a bounded recurrent global workspace,
@@ -781,8 +787,8 @@ class UnarchiEngine:
     reversible context-causality stability checks, bounded causal-invariance
     tests across distinct controlled environments, active low-risk boundary
     probe planning, compact boundary-aware causal validity maps,
-    validity-gated causal-context decision use, and evidence-backed gate
-    outcome calibration that can revoke nearby support.
+    validity-gated causal-context decision use, evidence-backed gate outcome
+    calibration, and immutable calibration-aware validity-map revisions.
     """
 
     state: UnarchiState = field(default_factory=UnarchiState)
@@ -4853,6 +4859,148 @@ class UnarchiEngine:
         )
         return record
 
+    def revise_context_causal_validity_map(
+        self,
+        parent_map_id: int,
+        *,
+        calibration_ids: tuple[int, ...] | list[int] | None = None,
+    ) -> ContextCausalValidityMap:
+        """
+        Freeze calibration evidence into a new immutable validity-map revision.
+
+        Exact tested evidence is copied unchanged. Only inferred nearby support
+        can expand or contract from calibration evidence.
+        """
+        parent = next(
+            (
+                item
+                for item in self.context_causal_validity_maps
+                if item.id == parent_map_id
+            ),
+            None,
+        )
+        if parent is None:
+            raise ValueError("unknown parent causal validity map")
+
+        available = [
+            item
+            for item in self.context_validity_region_calibrations
+            if item.validity_map_id == parent.id
+        ]
+        if calibration_ids is None:
+            selected_ids = {item.id for item in available}
+        else:
+            selected_ids = {int(item_id) for item_id in calibration_ids}
+        selected = [item for item in available if item.id in selected_ids]
+        if selected_ids and len(selected) != len(selected_ids):
+            raise ValueError("unknown calibration for parent validity map")
+        if not selected:
+            raise ValueError("map revision requires calibration evidence")
+
+        latest_by_signature: dict[
+            str,
+            ContextValidityRegionCalibration,
+        ] = {}
+        for item in selected:
+            previous = latest_by_signature.get(item.environment_signature)
+            if previous is None or item.id > previous.id:
+                latest_by_signature[item.environment_signature] = item
+
+        supported = set(parent.calibrated_supported_signatures)
+        revoked = set(parent.revoked_inferred_signatures)
+        reasons: list[str] = []
+        evidence_refs = list(parent.evidence_refs)
+
+        for signature, calibration in sorted(latest_by_signature.items()):
+            if signature in parent.tested_valid_signatures:
+                reasons.append(
+                    f"preserve tested-valid {signature}; "
+                    f"calibration={calibration.id}"
+                )
+            elif signature in parent.tested_invalid_signatures:
+                reasons.append(
+                    f"preserve tested-invalid {signature}; "
+                    f"calibration={calibration.id}"
+                )
+            elif calibration.status == "nearby_support_calibrated":
+                supported.add(signature)
+                revoked.discard(signature)
+                reasons.append(
+                    f"expand inferred support {signature}; "
+                    f"calibration={calibration.id}; "
+                    f"advantage={calibration.gated_advantage_vs_alternative:.3f}"
+                )
+            elif calibration.status == "nearby_support_revoked":
+                revoked.add(signature)
+                supported.discard(signature)
+                reasons.append(
+                    f"contract inferred support {signature}; "
+                    f"calibration={calibration.id}; "
+                    f"advantage={calibration.gated_advantage_vs_alternative:.3f}"
+                )
+            else:
+                reasons.append(
+                    f"no inferred-region change {signature}; "
+                    f"calibration={calibration.id}; status={calibration.status}"
+                )
+            evidence_refs.append(
+                f"context_validity_region_calibration:{calibration.id}"
+            )
+            evidence_refs.extend(calibration.evidence_refs[-4:])
+
+        mean_delta = sum(
+            item.confidence_delta
+            for item in latest_by_signature.values()
+        ) / max(1, len(latest_by_signature))
+        confidence = _clamp(parent.confidence + mean_delta)
+
+        record = ContextCausalValidityMap(
+            id=self.next_context_causal_validity_map_id,
+            hypothesis_id=parent.hypothesis_id,
+            source_invariance_assessment_ids=(
+                parent.source_invariance_assessment_ids
+            ),
+            source_boundary_plan_ids=parent.source_boundary_plan_ids,
+            signature_assessment_ids=parent.signature_assessment_ids,
+            tested_valid_signatures=parent.tested_valid_signatures,
+            tested_invalid_signatures=parent.tested_invalid_signatures,
+            dimensions=parent.dimensions,
+            max_generalization_distance=parent.max_generalization_distance,
+            confidence=round(confidence, 6),
+            evidence_refs=tuple(dict.fromkeys(evidence_refs)),
+            parent_map_id=parent.id,
+            revision_number=parent.revision_number + 1,
+            source_calibration_ids=tuple(
+                sorted(item.id for item in latest_by_signature.values())
+            ),
+            calibrated_supported_signatures=tuple(sorted(supported)),
+            revoked_inferred_signatures=tuple(sorted(revoked)),
+            revision_reasons=tuple(reasons),
+        )
+        self.next_context_causal_validity_map_id += 1
+        self.context_causal_validity_maps.append(record)
+        if len(self.context_causal_validity_maps) > self.max_memory:
+            self.context_causal_validity_maps = (
+                self.context_causal_validity_maps[-self.max_memory:]
+            )
+
+        self.stage_global_workspace_item(
+            source="intervention",
+            content=(
+                f"context validity map revision={record.id}; "
+                f"parent={parent.id}; revision={record.revision_number}; "
+                f"supported={len(record.calibrated_supported_signatures)}; "
+                f"revoked={len(record.revoked_inferred_signatures)}"
+            ),
+            salience=max(0.55, record.confidence),
+            evidence_refs=(
+                f"context_causal_validity_map:{record.id}",
+                f"context_causal_validity_map:{parent.id}",
+                *record.evidence_refs[-4:],
+            ),
+        )
+        return record
+
     def classify_context_causal_validity(
         self,
         validity_map_id: int,
@@ -4955,16 +5103,24 @@ class UnarchiEngine:
                 if invalid_pairs
                 else None
             )
-            supportable = (
-                valid_distance is not None
-                and valid_distance <= validity_map.max_generalization_distance
-                and (
-                    invalid_distance is None
-                    or valid_distance < invalid_distance
+            if signature in validity_map.revoked_inferred_signatures:
+                supportable = False
+                status = "unknown"
+            elif signature in validity_map.calibrated_supported_signatures:
+                supportable = True
+                status = "supported_nearby"
+            else:
+                supportable = (
+                    valid_distance is not None
+                    and valid_distance
+                    <= validity_map.max_generalization_distance
+                    and (
+                        invalid_distance is None
+                        or valid_distance < invalid_distance
+                    )
                 )
-            )
-            status = "supported_nearby" if supportable else "unknown"
-            if supportable:
+                status = "supported_nearby" if supportable else "unknown"
+            if supportable and valid_pairs:
                 nearest_signature = min(
                     (
                         item
@@ -5006,15 +5162,19 @@ class UnarchiEngine:
         elif status == "unknown":
             base_confidence = 0.0
 
-        calibration = next(
-            (
-                item
-                for item in reversed(self.context_validity_region_calibrations)
-                if item.validity_map_id == validity_map.id
-                and item.environment_signature == signature
-            ),
-            None,
-        )
+        calibration = None
+        if validity_map.parent_map_id is None:
+            calibration = next(
+                (
+                    item
+                    for item in reversed(
+                        self.context_validity_region_calibrations
+                    )
+                    if item.validity_map_id == validity_map.id
+                    and item.environment_signature == signature
+                ),
+                None,
+            )
         if calibration is not None:
             refs.append(
                 f"context_validity_region_calibration:{calibration.id}"
@@ -5032,6 +5192,28 @@ class UnarchiEngine:
                 base_confidence = _clamp(
                     base_confidence + calibration.confidence_delta
                 )
+        elif validity_map.parent_map_id is not None:
+            calibration_ids = set(validity_map.source_calibration_ids)
+            calibration = next(
+                (
+                    item
+                    for item in reversed(
+                        self.context_validity_region_calibrations
+                    )
+                    if item.id in calibration_ids
+                    and item.environment_signature == signature
+                ),
+                None,
+            )
+            if calibration is not None:
+                refs.append(
+                    f"context_validity_region_calibration:{calibration.id}"
+                )
+                if status == "supported_nearby":
+                    base_confidence = _clamp(
+                        base_confidence
+                        + max(0.0, calibration.confidence_delta)
+                    )
 
         return ContextValidityClassification(
             map_id=validity_map.id,
@@ -6175,6 +6357,47 @@ class UnarchiEngine:
             details.append(detail)
 
         if focus in {
+            "context_validity_revision",
+            "validity_map_revision",
+            "map_revision",
+        }:
+            revisions = [
+                item
+                for item in self.context_causal_validity_maps
+                if item.parent_map_id is not None
+            ]
+            if revisions:
+                item = revisions[-1]
+                add(
+                    f"context_causal_validity_map:{item.id}",
+                    (
+                        f"parent={item.parent_map_id}; "
+                        f"revision={item.revision_number}; "
+                        f"calibrated_supported="
+                        f"{len(item.calibrated_supported_signatures)}; "
+                        f"revoked={len(item.revoked_inferred_signatures)}; "
+                        f"confidence={item.confidence}"
+                    ),
+                )
+                if item.parent_map_id is not None:
+                    add(
+                        f"context_causal_validity_map:{item.parent_map_id}",
+                        "immutable parent validity map",
+                    )
+                for reason in item.revision_reasons[-6:]:
+                    add(
+                        f"context_validity_revision_reason:{item.id}",
+                        reason,
+                    )
+                summary = (
+                    "The latest validity map is an immutable child revision "
+                    "that preserves exact tested evidence and freezes only "
+                    "calibration-backed inferred-region changes."
+                )
+            else:
+                summary = "No calibration-aware validity-map revision exists."
+
+        elif focus in {
             "context_validity_calibration",
             "validity_gate_calibration",
             "gate_outcome_calibration",
@@ -7781,6 +8004,18 @@ class UnarchiEngine:
             restored_item["evidence_refs"] = tuple(
                 restored_item.get("evidence_refs", ())
             )
+            restored_item["source_calibration_ids"] = tuple(
+                restored_item.get("source_calibration_ids", ())
+            )
+            restored_item["calibrated_supported_signatures"] = tuple(
+                restored_item.get("calibrated_supported_signatures", ())
+            )
+            restored_item["revoked_inferred_signatures"] = tuple(
+                restored_item.get("revoked_inferred_signatures", ())
+            )
+            restored_item["revision_reasons"] = tuple(
+                restored_item.get("revision_reasons", ())
+            )
             context_causal_validity_maps.append(
                 ContextCausalValidityMap(**restored_item)
             )
@@ -8230,6 +8465,13 @@ class UnarchiEngine:
             ),
             "context_causal_validity_map_count": len(
                 self.context_causal_validity_maps
+            ),
+            "context_causal_validity_map_revision_count": len(
+                [
+                    item
+                    for item in self.context_causal_validity_maps
+                    if item.parent_map_id is not None
+                ]
             ),
             "context_validity_decision_gate_count": len(
                 self.context_validity_decision_gates
