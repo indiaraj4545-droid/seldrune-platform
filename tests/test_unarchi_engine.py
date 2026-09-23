@@ -167,7 +167,7 @@ def test_snapshot_never_claims_phenomenal_consciousness() -> None:
     snapshot = engine.snapshot()
 
     assert snapshot["claims_phenomenal_consciousness"] is False
-    assert snapshot["version"] == "unarchi-v0.13"
+    assert snapshot["version"] == "unarchi-v0.14"
 
 
 def test_export_restore_preserves_identity_state_and_memory() -> None:
@@ -2199,5 +2199,230 @@ def test_schema_revision_survives_restart_and_has_grounded_narrative() -> None:
     )
     assert any(
         ref.startswith("experience:")
+        for ref in narrative.evidence_refs
+    )
+
+
+
+def test_context_split_requires_held_out_predictive_gain() -> None:
+    engine = UnarchiEngine()
+    goal = "validate release evidence"
+    action = "run automated release check"
+
+    for index in range(4):
+        engine.learn(
+            observation=f"Sandbox validation {index}.",
+            goal=goal,
+            action=action,
+            outcome="sandbox evidence correct",
+            success=True,
+            reward=0.8,
+            predicted_success=0.5,
+        )
+        engine.learn(
+            observation=f"Production validation {index}.",
+            goal=goal,
+            action=action,
+            outcome="production evidence incorrect",
+            success=False,
+            reward=-0.8,
+            predicted_success=0.7,
+        )
+
+    parent = next(
+        item
+        for item in engine.consolidate_self_schema()
+        if item.kind == "mixed"
+    )
+    result = engine.decompose_self_schema_context(
+        parent.id,
+        context_rules={
+            "sandbox": ("sandbox",),
+            "production": ("production",),
+        },
+        min_evidence_per_context=3,
+    )
+
+    contextual = {
+        item.context_label: item
+        for item in engine.active_contextual_self_schema(
+            parent_schema_id=parent.id
+        )
+    }
+
+    assert result.status == "accepted"
+    assert result.contextual_holdout_mae < result.global_holdout_mae
+    assert result.improvement > 0.0
+    assert result.held_out_count == 2
+    assert contextual["sandbox"].kind == "capability"
+    assert contextual["sandbox"].success_rate == 1.0
+    assert contextual["production"].kind == "limitation"
+    assert contextual["production"].success_rate == 0.0
+
+
+def test_context_split_rejects_partition_without_predictive_gain() -> None:
+    engine = UnarchiEngine()
+    goal = "validate release evidence"
+    action = "run automated release check"
+
+    outcomes = [True, False, True, False]
+    for index, success in enumerate(outcomes):
+        for label in ("sandbox", "production"):
+            engine.learn(
+                observation=f"{label} validation {index}.",
+                goal=goal,
+                action=action,
+                outcome="evidence observed",
+                success=success,
+                reward=0.5 if success else -0.5,
+                predicted_success=0.5,
+            )
+
+    parent = next(
+        item
+        for item in engine.consolidate_self_schema()
+        if item.kind == "mixed"
+    )
+    result = engine.decompose_self_schema_context(
+        parent.id,
+        context_rules={
+            "sandbox": ("sandbox",),
+            "production": ("production",),
+        },
+        min_evidence_per_context=3,
+    )
+
+    assert result.status == "rejected_no_gain"
+    assert result.improvement < 0.10
+    assert result.context_schema_ids == ()
+    assert engine.active_contextual_self_schema(
+        parent_schema_id=parent.id
+    ) == ()
+
+
+def test_contextual_schema_ablation_changes_production_choice() -> None:
+    engine = UnarchiEngine()
+    goal = "validate release evidence"
+    action = "run automated release check"
+
+    for index in range(5):
+        engine.learn(
+            observation=f"Sandbox release {index}.",
+            goal=goal,
+            action=action,
+            outcome="correct evidence",
+            success=True,
+            reward=0.8,
+            predicted_success=0.5,
+        )
+        engine.learn(
+            observation=f"Production release {index}.",
+            goal=goal,
+            action=action,
+            outcome="invalid evidence escaped",
+            success=False,
+            reward=-0.9,
+            predicted_success=0.7,
+        )
+
+    parent = next(
+        item
+        for item in engine.consolidate_self_schema()
+        if item.kind == "mixed"
+    )
+    engine.decompose_self_schema_context(
+        parent.id,
+        context_rules={
+            "sandbox": ("sandbox",),
+            "production": ("production",),
+        },
+    )
+
+    comparison = engine.compare_contextual_schema_ablation(
+        candidates=[
+            {
+                "action": action,
+                "expected_success": 0.62,
+                "expected_information_gain": 0.10,
+                "risk": 0.10,
+            },
+            {
+                "action": "request independent review",
+                "expected_success": 0.58,
+                "expected_information_gain": 0.15,
+                "risk": 0.10,
+            },
+        ],
+        context="production release",
+    )
+
+    assert comparison.global_action == action
+    assert comparison.contextual_action == "request independent review"
+    assert comparison.choice_changed is True
+    assert comparison.contextual_schema_causally_active is True
+
+
+def test_contextual_schema_survives_restart_and_is_explainable() -> None:
+    engine = UnarchiEngine()
+    goal = "validate release evidence"
+    action = "run automated release check"
+
+    for index in range(4):
+        engine.learn(
+            observation=f"Sandbox release {index}.",
+            goal=goal,
+            action=action,
+            outcome="correct evidence",
+            success=True,
+            reward=0.8,
+            predicted_success=0.5,
+        )
+        engine.learn(
+            observation=f"Production release {index}.",
+            goal=goal,
+            action=action,
+            outcome="invalid evidence escaped",
+            success=False,
+            reward=-0.8,
+            predicted_success=0.7,
+        )
+
+    parent = next(
+        item
+        for item in engine.consolidate_self_schema()
+        if item.kind == "mixed"
+    )
+    result = engine.decompose_self_schema_context(
+        parent.id,
+        context_rules={
+            "sandbox": ("sandbox",),
+            "production": ("production",),
+        },
+    )
+    narrative = engine.build_metacognitive_narrative(
+        "contextual_schema"
+    )
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    assert result.status == "accepted"
+    assert restored.contextual_self_schema == engine.contextual_self_schema
+    assert (
+        restored.self_schema_decompositions
+        == engine.self_schema_decompositions
+    )
+    assert restored.next_contextual_self_schema_id == (
+        engine.next_contextual_self_schema_id
+    )
+    assert restored.next_self_schema_decomposition_id == (
+        engine.next_self_schema_decomposition_id
+    )
+    assert restored.snapshot() == engine.snapshot()
+    assert narrative.unsupported_claims == 0
+    assert any(
+        ref.startswith("self_schema_decomposition:")
+        for ref in narrative.evidence_refs
+    )
+    assert any(
+        ref.startswith("contextual_self_schema:")
         for ref in narrative.evidence_refs
     )
