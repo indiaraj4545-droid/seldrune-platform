@@ -4,8 +4,8 @@ from backend.app.services.unarchi_benchmark import run_unarchi_ablation_benchmar
 def test_unarchi_ablation_benchmark_passes_all_scenarios() -> None:
     result = run_unarchi_ablation_benchmark()
 
-    assert result["scenario_count"] == 22
-    assert result["passed_scenarios"] == 22
+    assert result["scenario_count"] == 23
+    assert result["passed_scenarios"] == 23
     assert result["pass_rate"] == 1.0
     assert result["claims_phenomenal_consciousness"] is False
 
@@ -350,3 +350,25 @@ def test_unarchi_benchmark_covers_causal_validity_map_consolidation() -> None:
     assert validity["ambiguous_status"] == "unknown"
     assert validity["map_confidence"] > 0.0
     assert validity["restart_preserved"] is True
+
+
+
+def test_unarchi_benchmark_covers_validity_gated_decision_use() -> None:
+    result = run_unarchi_ablation_benchmark()
+    scenarios = {item["name"]: item for item in result["scenarios"]}
+
+    gate = scenarios["validity_gated_decision_use"]
+
+    assert gate["passed"] is True
+    assert gate["supported_status"] == "tested_valid"
+    assert gate["supported_causal_allowed"] is True
+    assert gate["supported_action"] == "request independent review"
+    assert gate["invalid_status"] == "tested_invalid"
+    assert gate["invalid_causal_allowed"] is False
+    assert gate["invalid_action"] == "run automated release check"
+    assert gate["nearby_status"] == "supported_nearby"
+    assert gate["nearby_action"] == "request independent review"
+    assert gate["unknown_status"] == "unknown"
+    assert gate["unknown_causal_allowed"] is False
+    assert gate["unknown_action"] == "run automated release check"
+    assert gate["restart_preserved"] is True
