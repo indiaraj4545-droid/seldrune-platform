@@ -167,7 +167,7 @@ def test_snapshot_never_claims_phenomenal_consciousness() -> None:
     snapshot = engine.snapshot()
 
     assert snapshot["claims_phenomenal_consciousness"] is False
-    assert snapshot["version"] == "unarchi-v0.28"
+    assert snapshot["version"] == "unarchi-v0.29"
 
 
 def test_export_restore_preserves_identity_state_and_memory() -> None:
@@ -4817,5 +4817,215 @@ def test_rollback_holdout_validation_persists_and_is_explainable() -> None:
     assert narrative.unsupported_claims == 0
     assert any(
         ref.startswith("context_validity_rollback_holdout_validation:")
+        for ref in narrative.evidence_refs
+    )
+
+
+
+def _build_reactivated_holdout_engine():
+    (
+        engine,
+        base_map,
+        revision_two,
+        _,
+        _,
+        watch,
+        signature,
+    ) = _build_resolution_recommendation_engine()
+    accepted = engine.resolve_context_validity_degradation_watch(
+        watch.id,
+        decision="accept",
+        reason="prepare reactivation drift tests",
+    )
+
+    for phase in ("recovery", "holdout"):
+        for index in range(3):
+            gate = engine.evaluate_active_context_validity_gated_decision(
+                base_map.hypothesis_id,
+                environment_signature=signature,
+                candidates=_validity_gate_candidates(),
+                context="production release",
+            )
+            engine.record_context_validity_gate_outcome(
+                gate.id,
+                actual_success_by_action={
+                    "run automated release check": False,
+                    "request independent review": True,
+                },
+                evidence_refs=(f"reactivation:{phase}:{index}",),
+            )
+        if phase == "recovery":
+            recovery = engine.validate_context_validity_rollback(accepted.id)
+
+    holdout = engine.validate_context_validity_rollback_holdout(recovery.id)
+    reactivation = engine.select_context_validity_map_revision(
+        base_map.hypothesis_id,
+        map_id=revision_two.id,
+        reason="confirmed holdout permits reactivation",
+        evidence_refs=(
+            f"context_validity_rollback_holdout_validation:{holdout.id}",
+        ),
+    )
+    return (
+        engine,
+        base_map,
+        revision_two,
+        signature,
+        recovery,
+        holdout,
+        reactivation,
+    )
+
+
+def test_reactivation_drift_watch_uses_only_post_reactivation_outcomes() -> None:
+    (
+        engine,
+        base_map,
+        _,
+        signature,
+        recovery,
+        holdout,
+        reactivation,
+    ) = _build_reactivated_holdout_engine()
+
+    initial = engine.watch_reactivated_context_validity_drift(
+        base_map.hypothesis_id
+    )
+    assert initial.status == "insufficient_post_reactivation_evidence"
+    assert initial.observed_outcome_ids == ()
+    assert initial.decision_gate_watermark_id == (
+        reactivation.decision_gate_watermark_id
+    )
+
+    for index in range(3):
+        gate = engine.evaluate_active_context_validity_gated_decision(
+            base_map.hypothesis_id,
+            environment_signature=signature,
+            candidates=_validity_gate_candidates(),
+            context="production release",
+        )
+        assert gate.id > reactivation.decision_gate_watermark_id
+        engine.record_context_validity_gate_outcome(
+            gate.id,
+            actual_success_by_action={
+                "run automated release check": False,
+                "request independent review": True,
+            },
+            evidence_refs=(f"reactivation:stable:{index}",),
+        )
+
+    stable = engine.watch_reactivated_context_validity_drift(
+        base_map.hypothesis_id
+    )
+
+    assert stable.status == "post_reactivation_stable"
+    assert stable.recommended_action == "continue_monitoring"
+    assert stable.mean_post_reactivation_advantage >= 0.05
+    assert not set(stable.observed_outcome_ids).intersection(
+        recovery.observed_outcome_ids
+    )
+    assert not set(stable.observed_outcome_ids).intersection(
+        holdout.holdout_outcome_ids
+    )
+
+
+def test_reactivation_drift_recommends_review_without_auto_rollback() -> None:
+    (
+        engine,
+        base_map,
+        revision_two,
+        signature,
+        recovery,
+        holdout,
+        _,
+    ) = _build_reactivated_holdout_engine()
+    selection_count = len(engine.context_validity_map_selection_history)
+
+    for index in range(3):
+        gate = engine.evaluate_active_context_validity_gated_decision(
+            base_map.hypothesis_id,
+            environment_signature=signature,
+            candidates=_validity_gate_candidates(),
+            context="production release",
+        )
+        engine.record_context_validity_gate_outcome(
+            gate.id,
+            actual_success_by_action={
+                "run automated release check": True,
+                "request independent review": False,
+            },
+            evidence_refs=(f"reactivation:negative:{index}",),
+        )
+
+    drift = engine.watch_reactivated_context_validity_drift(
+        base_map.hypothesis_id
+    )
+    active = engine.active_context_causal_validity_map(
+        base_map.hypothesis_id
+    )
+
+    assert drift.status == "renewed_degradation_detected"
+    assert drift.recommended_action == "review_for_rollback"
+    assert drift.mean_post_reactivation_advantage <= -0.05
+    assert drift.advantage_delta <= -0.05
+    assert not set(drift.observed_outcome_ids).intersection(
+        recovery.observed_outcome_ids
+    )
+    assert not set(drift.observed_outcome_ids).intersection(
+        holdout.holdout_outcome_ids
+    )
+    assert len(engine.context_validity_map_selection_history) == selection_count
+    assert active is not None
+    assert active.id == revision_two.id
+
+
+def test_reactivation_drift_watch_persists_and_is_explainable() -> None:
+    (
+        engine,
+        base_map,
+        _,
+        signature,
+        _,
+        _,
+        _,
+    ) = _build_reactivated_holdout_engine()
+
+    for index in range(3):
+        gate = engine.evaluate_active_context_validity_gated_decision(
+            base_map.hypothesis_id,
+            environment_signature=signature,
+            candidates=_validity_gate_candidates(),
+            context="production release",
+        )
+        engine.record_context_validity_gate_outcome(
+            gate.id,
+            actual_success_by_action={
+                "run automated release check": True,
+                "request independent review": False,
+            },
+            evidence_refs=(f"reactivation:persist:{index}",),
+        )
+
+    drift = engine.watch_reactivated_context_validity_drift(
+        base_map.hypothesis_id
+    )
+    narrative = engine.build_metacognitive_narrative(
+        "context_validity_reactivation_drift"
+    )
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    assert drift.status == "renewed_degradation_detected"
+    assert restored.context_validity_reactivation_drift_watches == (
+        engine.context_validity_reactivation_drift_watches
+    )
+    assert restored.next_context_validity_reactivation_drift_watch_id == (
+        engine.next_context_validity_reactivation_drift_watch_id
+    )
+    assert restored.snapshot() == engine.snapshot()
+    assert engine.snapshot()["post_reactivation_drift_watch_count"] == 1
+    assert engine.snapshot()["renewed_degradation_count"] == 1
+    assert narrative.unsupported_claims == 0
+    assert any(
+        ref.startswith("context_validity_reactivation_drift_watch:")
         for ref in narrative.evidence_refs
     )
