@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 
-UNARCHI_VERSION = "unarchi-v0.24"
+UNARCHI_VERSION = "unarchi-v0.25"
 _STOPWORDS = {
     "a",
     "an",
@@ -628,6 +628,21 @@ class ContextCausalValidityMap:
 
 
 @dataclass(frozen=True)
+class ContextValidityMapSelection:
+    id: int
+    hypothesis_id: int
+    previous_map_id: int | None
+    selected_map_id: int
+    action: str
+    reason: str
+    lineage: tuple[int, ...]
+    evidence_refs: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class ContextValidityClassification:
     map_id: int
     hypothesis_id: int
@@ -776,7 +791,7 @@ class UnarchiEngine:
     """
     CPU-only experimental cognitive kernel.
 
-    v0.24 includes causal internal dynamics, bounded endogenous goals, a
+    v0.25 includes causal internal dynamics, bounded endogenous goals, a
     calibrated predictive self-model, prospective memory, evidence-grounded
     metacognition, explicit value arbitration, competing causal hypotheses,
     controlled self-intervention trials, a bounded recurrent global workspace,
@@ -788,7 +803,8 @@ class UnarchiEngine:
     tests across distinct controlled environments, active low-risk boundary
     probe planning, compact boundary-aware causal validity maps,
     validity-gated causal-context decision use, evidence-backed gate outcome
-    calibration, and immutable calibration-aware validity-map revisions.
+    calibration, immutable calibration-aware validity-map revisions, and
+    lineage-checked active revision selection with auditable rollback.
     """
 
     state: UnarchiState = field(default_factory=UnarchiState)
@@ -877,6 +893,11 @@ class UnarchiEngine:
         ContextValidityRegionCalibration
     ] = field(default_factory=list)
     next_context_validity_region_calibration_id: int = 1
+    active_context_validity_map_ids: dict[int, int] = field(default_factory=dict)
+    context_validity_map_selection_history: list[
+        ContextValidityMapSelection
+    ] = field(default_factory=list)
+    next_context_validity_map_selection_id: int = 1
     success_prediction_bias: float = 0.0
     uncertainty_prediction_bias: float = 0.0
     stress_prediction_bias: float = 0.0
@@ -5001,6 +5022,290 @@ class UnarchiEngine:
         )
         return record
 
+    def _context_validity_map_lineage(
+        self,
+        map_id: int,
+    ) -> tuple[int, ...]:
+        maps = {item.id: item for item in self.context_causal_validity_maps}
+        target = maps.get(map_id)
+        if target is None:
+            raise ValueError("unknown context causal validity map")
+
+        hypothesis_id = target.hypothesis_id
+        seen: set[int] = set()
+        reverse_lineage: list[int] = []
+        current = target
+        while True:
+            if current.id in seen:
+                raise ValueError("cyclic context validity map lineage")
+            seen.add(current.id)
+            reverse_lineage.append(current.id)
+            if current.parent_map_id is None:
+                if current.revision_number != 1:
+                    raise ValueError(
+                        "base context validity map must be revision 1"
+                    )
+                break
+            parent = maps.get(current.parent_map_id)
+            if parent is None:
+                raise ValueError("context validity map parent is missing")
+            if parent.hypothesis_id != hypothesis_id:
+                raise ValueError(
+                    "context validity map lineage crosses hypotheses"
+                )
+            if current.revision_number != parent.revision_number + 1:
+                raise ValueError(
+                    "context validity map revision numbers are not contiguous"
+                )
+            current = parent
+
+        return tuple(reversed(reverse_lineage))
+
+    def active_context_causal_validity_map(
+        self,
+        hypothesis_id: int,
+    ) -> ContextCausalValidityMap | None:
+        map_id = self.active_context_validity_map_ids.get(hypothesis_id)
+        if map_id is None:
+            return None
+        self._context_validity_map_lineage(map_id)
+        item = next(
+            (
+                candidate
+                for candidate in self.context_causal_validity_maps
+                if candidate.id == map_id
+            ),
+            None,
+        )
+        if item is None or item.hypothesis_id != hypothesis_id:
+            raise ValueError("active context validity map pointer is invalid")
+        return item
+
+    def select_context_validity_map_revision(
+        self,
+        hypothesis_id: int,
+        *,
+        map_id: int | None = None,
+        reason: str = "select latest intact validity-map revision",
+        evidence_refs: tuple[str, ...] | list[str] = (),
+    ) -> ContextValidityMapSelection:
+        """
+        Activate one intact validity-map lineage without deleting other revisions.
+
+        When no map ID is supplied, the highest intact revision is selected
+        deterministically. If an active pointer already exists, ordinary
+        selection may only remain on it or advance along its descendant chain.
+        """
+        candidates = [
+            item
+            for item in self.context_causal_validity_maps
+            if item.hypothesis_id == hypothesis_id
+        ]
+        if not candidates:
+            raise ValueError("no validity maps exist for hypothesis")
+
+        valid_candidates: list[
+            tuple[int, int, ContextCausalValidityMap, tuple[int, ...]]
+        ] = []
+        for item in candidates:
+            try:
+                lineage = self._context_validity_map_lineage(item.id)
+            except ValueError:
+                continue
+            valid_candidates.append(
+                (item.revision_number, item.id, item, lineage)
+            )
+        if not valid_candidates:
+            raise ValueError("no intact validity-map lineage exists")
+
+        if map_id is None:
+            _, _, selected, lineage = max(
+                valid_candidates,
+                key=lambda row: (row[0], row[1]),
+            )
+        else:
+            match = next(
+                (
+                    row
+                    for row in valid_candidates
+                    if row[2].id == map_id
+                ),
+                None,
+            )
+            if match is None:
+                raise ValueError(
+                    "requested validity map has no intact lineage"
+                )
+            _, _, selected, lineage = match
+
+        previous_map_id = self.active_context_validity_map_ids.get(
+            hypothesis_id
+        )
+        if previous_map_id is not None and previous_map_id != selected.id:
+            if previous_map_id not in lineage:
+                raise ValueError(
+                    "selection must advance current lineage; use rollback "
+                    "for an ancestor"
+                )
+
+        clean_reason = reason.strip()[:500]
+        if not clean_reason:
+            raise ValueError("selection reason is required")
+        refs = tuple(
+            dict.fromkeys(
+                str(ref).strip()
+                for ref in evidence_refs
+                if str(ref).strip()
+            )
+        )
+        action = (
+            "activate"
+            if previous_map_id is None
+            else "retain"
+            if previous_map_id == selected.id
+            else "advance"
+        )
+        record = ContextValidityMapSelection(
+            id=self.next_context_validity_map_selection_id,
+            hypothesis_id=hypothesis_id,
+            previous_map_id=previous_map_id,
+            selected_map_id=selected.id,
+            action=action,
+            reason=clean_reason,
+            lineage=lineage,
+            evidence_refs=tuple(
+                dict.fromkeys(
+                    (
+                        f"context_causal_validity_map:{selected.id}",
+                        *refs,
+                    )
+                )
+            ),
+        )
+        self.next_context_validity_map_selection_id += 1
+        self.active_context_validity_map_ids[hypothesis_id] = selected.id
+        self.context_validity_map_selection_history.append(record)
+        if len(self.context_validity_map_selection_history) > self.max_memory:
+            self.context_validity_map_selection_history = (
+                self.context_validity_map_selection_history[-self.max_memory:]
+            )
+
+        self.stage_global_workspace_item(
+            source="intervention",
+            content=(
+                f"context validity selection={record.id}; "
+                f"hypothesis={hypothesis_id}; action={record.action}; "
+                f"active_map={record.selected_map_id}; "
+                f"lineage_depth={len(record.lineage)}"
+            ),
+            salience=max(0.55, selected.confidence),
+            evidence_refs=(
+                f"context_validity_map_selection:{record.id}",
+                *record.evidence_refs[-4:],
+            ),
+        )
+        return record
+
+    def rollback_context_validity_map(
+        self,
+        hypothesis_id: int,
+        *,
+        target_map_id: int,
+        reason: str,
+        evidence_refs: tuple[str, ...] | list[str] = (),
+    ) -> ContextValidityMapSelection:
+        """
+        Roll the active pointer back to an ancestor without deleting revisions.
+        """
+        current = self.active_context_causal_validity_map(hypothesis_id)
+        if current is None:
+            raise ValueError("no active validity map exists for hypothesis")
+        current_lineage = self._context_validity_map_lineage(current.id)
+        target_lineage = self._context_validity_map_lineage(target_map_id)
+        target = next(
+            item
+            for item in self.context_causal_validity_maps
+            if item.id == target_map_id
+        )
+        if target.hypothesis_id != hypothesis_id:
+            raise ValueError("rollback target belongs to another hypothesis")
+        if target.id == current.id:
+            raise ValueError("rollback target is already active")
+        if target.id not in current_lineage:
+            raise ValueError("rollback target is not an ancestor of active map")
+        if target_lineage != current_lineage[: len(target_lineage)]:
+            raise ValueError("rollback target lineage does not match active map")
+
+        clean_reason = reason.strip()[:500]
+        if not clean_reason:
+            raise ValueError("rollback reason is required")
+        refs = tuple(
+            dict.fromkeys(
+                str(ref).strip()
+                for ref in evidence_refs
+                if str(ref).strip()
+            )
+        )
+        record = ContextValidityMapSelection(
+            id=self.next_context_validity_map_selection_id,
+            hypothesis_id=hypothesis_id,
+            previous_map_id=current.id,
+            selected_map_id=target.id,
+            action="rollback",
+            reason=clean_reason,
+            lineage=target_lineage,
+            evidence_refs=tuple(
+                dict.fromkeys(
+                    (
+                        f"context_causal_validity_map:{current.id}",
+                        f"context_causal_validity_map:{target.id}",
+                        *refs,
+                    )
+                )
+            ),
+        )
+        self.next_context_validity_map_selection_id += 1
+        self.active_context_validity_map_ids[hypothesis_id] = target.id
+        self.context_validity_map_selection_history.append(record)
+        if len(self.context_validity_map_selection_history) > self.max_memory:
+            self.context_validity_map_selection_history = (
+                self.context_validity_map_selection_history[-self.max_memory:]
+            )
+
+        self.stage_global_workspace_item(
+            source="intervention",
+            content=(
+                f"context validity rollback={record.id}; "
+                f"hypothesis={hypothesis_id}; from={current.id}; "
+                f"to={target.id}; preserved_later_revisions=true"
+            ),
+            salience=max(0.60, target.confidence),
+            evidence_refs=(
+                f"context_validity_map_selection:{record.id}",
+                *record.evidence_refs[-4:],
+            ),
+        )
+        return record
+
+    def evaluate_active_context_validity_gated_decision(
+        self,
+        hypothesis_id: int,
+        *,
+        environment_signature: str,
+        candidates: list[dict[str, Any]],
+        context: str,
+    ) -> ContextValidityDecisionGate:
+        """Evaluate a decision through the currently active validity map."""
+        active = self.active_context_causal_validity_map(hypothesis_id)
+        if active is None:
+            raise ValueError("no active validity map exists for hypothesis")
+        return self.evaluate_context_validity_gated_decision(
+            active.id,
+            environment_signature=environment_signature,
+            candidates=candidates,
+            context=context,
+        )
+
     def classify_context_causal_validity(
         self,
         validity_map_id: int,
@@ -6357,6 +6662,36 @@ class UnarchiEngine:
             details.append(detail)
 
         if focus in {
+            "context_validity_selection",
+            "validity_map_selection",
+            "active_validity_map",
+            "rollback",
+        }:
+            if self.context_validity_map_selection_history:
+                item = self.context_validity_map_selection_history[-1]
+                add(
+                    f"context_validity_map_selection:{item.id}",
+                    (
+                        f"hypothesis={item.hypothesis_id}; "
+                        f"previous={item.previous_map_id}; "
+                        f"selected={item.selected_map_id}; "
+                        f"action={item.action}; "
+                        f"lineage={item.lineage}; "
+                        f"reason={item.reason!r}"
+                    ),
+                )
+                for ref in item.evidence_refs[-6:]:
+                    add(ref, "evidence retained for active-map selection")
+                summary = (
+                    "The active validity-map pointer changes only through "
+                    "lineage-checked activation, forward selection, or "
+                    "ancestor rollback; no revision or later evidence is "
+                    "deleted by rollback."
+                )
+            else:
+                summary = "No active validity-map selection has been recorded."
+
+        elif focus in {
             "context_validity_revision",
             "validity_map_revision",
             "map_revision",
@@ -7519,6 +7854,18 @@ class UnarchiEngine:
             "next_context_validity_region_calibration_id": (
                 self.next_context_validity_region_calibration_id
             ),
+            "active_context_validity_map_ids": [
+                [hypothesis_id, map_id]
+                for hypothesis_id, map_id
+                in sorted(self.active_context_validity_map_ids.items())
+            ],
+            "context_validity_map_selection_history": [
+                item.to_dict()
+                for item in self.context_validity_map_selection_history
+            ],
+            "next_context_validity_map_selection_id": (
+                self.next_context_validity_map_selection_id
+            ),
             "success_prediction_bias": self.success_prediction_bias,
             "uncertainty_prediction_bias": self.uncertainty_prediction_bias,
             "stress_prediction_bias": self.stress_prediction_bias,
@@ -7600,6 +7947,14 @@ class UnarchiEngine:
             "context_validity_region_calibrations",
             [],
         )
+        active_context_validity_map_ids_payload = payload.get(
+            "active_context_validity_map_ids",
+            [],
+        )
+        context_validity_map_selection_history_payload = payload.get(
+            "context_validity_map_selection_history",
+            [],
+        )
         value_weights_payload = payload.get("value_weights", _default_value_weights())
         if not isinstance(state_payload, dict):
             raise ValueError("invalid UNARCHI state")
@@ -7662,6 +8017,14 @@ class UnarchiEngine:
         if not isinstance(context_validity_region_calibrations_payload, list):
             raise ValueError(
                 "invalid UNARCHI context validity region calibrations"
+            )
+        if not isinstance(active_context_validity_map_ids_payload, list):
+            raise ValueError(
+                "invalid UNARCHI active context validity map pointers"
+            )
+        if not isinstance(context_validity_map_selection_history_payload, list):
+            raise ValueError(
+                "invalid UNARCHI context validity map selection history"
             )
 
         memory: list[Experience] = []
@@ -8076,6 +8439,38 @@ class UnarchiEngine:
                 ContextValidityRegionCalibration(**restored_item)
             )
 
+        active_context_validity_map_ids: dict[int, int] = {}
+        for item in active_context_validity_map_ids_payload:
+            if (
+                not isinstance(item, (list, tuple))
+                or len(item) != 2
+            ):
+                raise ValueError(
+                    "invalid UNARCHI active context validity map pointer"
+                )
+            hypothesis_id = int(item[0])
+            map_id = int(item[1])
+            active_context_validity_map_ids[hypothesis_id] = map_id
+
+        context_validity_map_selection_history: list[
+            ContextValidityMapSelection
+        ] = []
+        for item in context_validity_map_selection_history_payload:
+            if not isinstance(item, dict):
+                raise ValueError(
+                    "invalid UNARCHI context validity map selection"
+                )
+            restored_item = dict(item)
+            restored_item["lineage"] = tuple(
+                restored_item.get("lineage", ())
+            )
+            restored_item["evidence_refs"] = tuple(
+                restored_item.get("evidence_refs", ())
+            )
+            context_validity_map_selection_history.append(
+                ContextValidityMapSelection(**restored_item)
+            )
+
         max_memory = max(16, min(int(payload.get("max_memory") or 256), 4096))
         max_active = max(
             1,
@@ -8341,6 +8736,21 @@ class UnarchiEngine:
                 )
                 + 1,
             ),
+            active_context_validity_map_ids=active_context_validity_map_ids,
+            context_validity_map_selection_history=(
+                context_validity_map_selection_history[-max_memory:]
+            ),
+            next_context_validity_map_selection_id=max(
+                int(payload.get("next_context_validity_map_selection_id") or 1),
+                max(
+                    (
+                        item.id
+                        for item in context_validity_map_selection_history
+                    ),
+                    default=0,
+                )
+                + 1,
+            ),
             success_prediction_bias=float(
                 payload.get("success_prediction_bias") or 0.0
             ),
@@ -8494,6 +8904,19 @@ class UnarchiEngine:
                     item
                     for item in self.context_validity_region_calibrations
                     if item.status == "nearby_support_revoked"
+                ]
+            ),
+            "active_context_validity_map_count": len(
+                self.active_context_validity_map_ids
+            ),
+            "context_validity_map_selection_count": len(
+                self.context_validity_map_selection_history
+            ),
+            "context_validity_map_rollback_count": len(
+                [
+                    item
+                    for item in self.context_validity_map_selection_history
+                    if item.action == "rollback"
                 ]
             ),
             "observed_counterfactual_count": len(
