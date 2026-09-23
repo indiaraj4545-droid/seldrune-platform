@@ -333,3 +333,54 @@ arbitration after outcome evidence.
 
 The measurable target is consistent, revisable value arbitration rather than
 simple priority ordering.
+
+
+## v0.7 conflict, value arbitration and self-correction checkpoint
+
+UNARCHI v0.7 adds an explicit arbitration layer for competing goals.
+
+The current value set is intentionally small and inspectable:
+
+- safety;
+- truth/evidence;
+- user intent;
+- efficiency;
+- continuity.
+
+Candidate actions declare their expected impact on those values, predicted
+success, information gain, risk, reversibility and external cost. The
+arbitrator combines the soft value weights with predicted consequences, but
+hard constraints remain authoritative.
+
+The v0.7 kernel hard-blocks:
+
+- irreversible internal actions;
+- paid external actions;
+- excessively risky actions.
+
+This prevents a high utility score from overriding those boundaries.
+
+After an arbitration outcome is observed, the kernel can revise its soft value
+weights from the measured difference between expected and observed value
+impacts. The weights are renormalized and the safety weight retains a minimum
+floor. Each revision is stored as a correction delta and can be reconstructed
+through the metacognitive narrative.
+
+The benchmark now requires the complete sequence:
+
+goal conflict -> explicit arbitration -> hard constraint enforcement ->
+observed outcome -> value-weight correction -> evidence-grounded explanation.
+
+This is functional value arbitration and self-correction. It is not evidence
+of moral agency, subjective preference, or phenomenal consciousness.
+
+## Next checkpoint: v0.8 world model and causal hypothesis competition
+
+The next research step should represent multiple competing explanations of the
+same observation, predict what each explanation implies, choose the smallest
+reversible discriminating test, and update confidence only from observed
+evidence.
+
+The measurable target is causal model revision: incorrect hypotheses should
+lose confidence when their predictions fail, while alternatives gain support
+only when their own predicted evidence is observed.
