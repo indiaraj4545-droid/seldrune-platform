@@ -4,8 +4,8 @@ from backend.app.services.unarchi_benchmark import run_unarchi_ablation_benchmar
 def test_unarchi_ablation_benchmark_passes_all_scenarios() -> None:
     result = run_unarchi_ablation_benchmark()
 
-    assert result["scenario_count"] == 16
-    assert result["passed_scenarios"] == 16
+    assert result["scenario_count"] == 17
+    assert result["passed_scenarios"] == 17
     assert result["pass_rate"] == 1.0
     assert result["claims_phenomenal_consciousness"] is False
 
@@ -232,3 +232,28 @@ def test_unarchi_benchmark_covers_context_transfer_boundary_learning() -> None:
     assert transfer["choice_changed"] is True
     assert transfer["transfer_causally_active"] is True
     assert transfer["restart_preserved"] is True
+
+
+
+def test_unarchi_benchmark_covers_latent_context_hypothesis_discovery() -> None:
+    result = run_unarchi_ablation_benchmark()
+    scenarios = {item["name"]: item for item in result["scenarios"]}
+
+    discovery = scenarios["latent_context_hypothesis_discovery"]
+
+    assert discovery["passed"] is True
+    assert discovery["proposed_count"] <= 3
+    assert discovery["validated_count"] >= 1
+    assert {
+        discovery["selected_positive_term"],
+        discovery["selected_negative_term"],
+    } == {"sandbox", "production"}
+    assert discovery["selected_gain"] > 0.0
+    assert discovery["contextual_kinds"]["sandbox"] == "capability"
+    assert discovery["contextual_kinds"]["production"] == "limitation"
+    assert discovery["noisy_status"] == "no_validated_hypothesis"
+    assert discovery["noisy_proposed_count"] >= 1
+    assert set(discovery["noisy_validation_statuses"]) == {
+        "rejected_validation"
+    }
+    assert discovery["restart_preserved"] is True

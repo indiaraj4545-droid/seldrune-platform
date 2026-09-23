@@ -167,7 +167,7 @@ def test_snapshot_never_claims_phenomenal_consciousness() -> None:
     snapshot = engine.snapshot()
 
     assert snapshot["claims_phenomenal_consciousness"] is False
-    assert snapshot["version"] == "unarchi-v0.15"
+    assert snapshot["version"] == "unarchi-v0.16"
 
 
 def test_export_restore_preserves_identity_state_and_memory() -> None:
@@ -2630,5 +2630,184 @@ def test_context_transfer_persists_and_has_grounded_narrative() -> None:
     )
     assert any(
         ref.startswith("contextual_self_schema:")
+        for ref in narrative.evidence_refs
+    )
+
+
+
+def test_latent_context_discovery_selects_predictive_terms() -> None:
+    engine = UnarchiEngine()
+    goal = "validate release evidence"
+    action = "run automated release check"
+
+    for index in range(5):
+        engine.learn(
+            observation=f"Sandbox release validation {index}.",
+            goal=goal,
+            action=action,
+            outcome="correct evidence",
+            success=True,
+            reward=0.8,
+            predicted_success=0.5,
+        )
+        engine.learn(
+            observation=f"Production release validation {index}.",
+            goal=goal,
+            action=action,
+            outcome="invalid evidence escaped",
+            success=False,
+            reward=-0.8,
+            predicted_success=0.7,
+        )
+
+    parent = next(
+        item
+        for item in engine.consolidate_self_schema()
+        if item.kind == "mixed"
+    )
+    discovery = engine.discover_latent_context_hypotheses(
+        parent.id,
+        max_candidates=3,
+    )
+    selected = next(
+        item
+        for item in engine.latent_context_hypotheses
+        if item.id == discovery.selected_hypothesis_id
+    )
+
+    assert discovery.status == "selected"
+    assert discovery.proposed_count <= 3
+    assert discovery.validated_count >= 1
+    assert selected.validation_status == "selected"
+    assert {
+        selected.positive_term,
+        selected.negative_term,
+    } == {"sandbox", "production"}
+    assert selected.holdout_improvement > 0.0
+    assert selected.decomposition_id == discovery.selected_decomposition_id
+
+    contextual = {
+        item.context_label: item.kind
+        for item in engine.active_contextual_self_schema(
+            parent_schema_id=parent.id
+        )
+    }
+    assert contextual["sandbox"] == "capability"
+    assert contextual["production"] == "limitation"
+
+
+def test_latent_context_discovery_rejects_spurious_split() -> None:
+    engine = UnarchiEngine()
+    goal = "validate release evidence"
+    action = "run automated release check"
+
+    alpha_outcomes = [True, True, True, False]
+    beta_outcomes = [False, False, False, True]
+    for index, success in enumerate(alpha_outcomes):
+        engine.learn(
+            observation=f"Alpha release validation {index}.",
+            goal=goal,
+            action=action,
+            outcome="evidence observed",
+            success=success,
+            reward=0.6 if success else -0.6,
+            predicted_success=0.5,
+        )
+    for index, success in enumerate(beta_outcomes):
+        engine.learn(
+            observation=f"Beta release validation {index}.",
+            goal=goal,
+            action=action,
+            outcome="evidence observed",
+            success=success,
+            reward=0.6 if success else -0.6,
+            predicted_success=0.5,
+        )
+
+    parent = next(
+        item
+        for item in engine.consolidate_self_schema()
+        if item.kind == "mixed"
+    )
+    discovery = engine.discover_latent_context_hypotheses(
+        parent.id,
+        max_candidates=2,
+        min_rate_contrast=0.40,
+    )
+    hypotheses = [
+        item
+        for item in engine.latent_context_hypotheses
+        if item.id in discovery.hypothesis_ids
+    ]
+
+    assert discovery.status == "no_validated_hypothesis"
+    assert discovery.proposed_count >= 1
+    assert discovery.validated_count == 0
+    assert all(
+        item.validation_status == "rejected_validation"
+        for item in hypotheses
+    )
+    assert engine.active_contextual_self_schema(
+        parent_schema_id=parent.id
+    ) == ()
+
+
+def test_latent_context_discovery_persists_and_is_explainable() -> None:
+    engine = UnarchiEngine()
+    goal = "validate release evidence"
+    action = "run automated release check"
+
+    for index in range(4):
+        engine.learn(
+            observation=f"Sandbox release {index}.",
+            goal=goal,
+            action=action,
+            outcome="correct evidence",
+            success=True,
+            reward=0.8,
+            predicted_success=0.5,
+        )
+        engine.learn(
+            observation=f"Production release {index}.",
+            goal=goal,
+            action=action,
+            outcome="invalid evidence escaped",
+            success=False,
+            reward=-0.8,
+            predicted_success=0.7,
+        )
+
+    parent = next(
+        item
+        for item in engine.consolidate_self_schema()
+        if item.kind == "mixed"
+    )
+    discovery = engine.discover_latent_context_hypotheses(parent.id)
+    narrative = engine.build_metacognitive_narrative(
+        "latent_context"
+    )
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    assert discovery.status == "selected"
+    assert restored.latent_context_hypotheses == (
+        engine.latent_context_hypotheses
+    )
+    assert restored.latent_context_discoveries == (
+        engine.latent_context_discoveries
+    )
+    assert restored.next_latent_context_hypothesis_id == (
+        engine.next_latent_context_hypothesis_id
+    )
+    assert restored.next_latent_context_discovery_id == (
+        engine.next_latent_context_discovery_id
+    )
+    assert restored.snapshot() == engine.snapshot()
+    assert narrative.unsupported_claims == 0
+    assert any(
+        ref.startswith("latent_context_discovery:")
+        for ref in narrative.evidence_refs
+    )
+    assert any(
+        ref.startswith("latent_context_hypothesis:")
         for ref in narrative.evidence_refs
     )
