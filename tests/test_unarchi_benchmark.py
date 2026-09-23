@@ -4,8 +4,8 @@ from backend.app.services.unarchi_benchmark import run_unarchi_ablation_benchmar
 def test_unarchi_ablation_benchmark_passes_all_scenarios() -> None:
     result = run_unarchi_ablation_benchmark()
 
-    assert result["scenario_count"] == 18
-    assert result["passed_scenarios"] == 18
+    assert result["scenario_count"] == 19
+    assert result["passed_scenarios"] == 19
     assert result["pass_rate"] == 1.0
     assert result["claims_phenomenal_consciousness"] is False
 
@@ -275,4 +275,23 @@ def test_unarchi_benchmark_covers_context_causality_intervention() -> None:
     assert causal["direction_followed"] is True
     assert causal["causal_strength"] >= 0.35
     assert causal["final_hypothesis_status"] == "intervention_supported"
+    assert causal["restart_preserved"] is True
+
+
+
+def test_unarchi_benchmark_covers_replicated_reversible_context_causality() -> None:
+    result = run_unarchi_ablation_benchmark()
+    scenarios = {item["name"]: item for item in result["scenarios"]}
+
+    causal = scenarios["replicated_reversible_context_causality"]
+
+    assert causal["passed"] is True
+    assert causal["status"] == "replicated_reversible"
+    assert causal["independent_forward_batches"] == 2
+    assert causal["independent_reverse_batches"] == 1
+    assert causal["forward_replication_rate"] == 1.0
+    assert causal["reverse_replication_rate"] == 1.0
+    assert causal["reversal_direction_followed"] is True
+    assert causal["confidence"] >= 0.35
+    assert causal["final_hypothesis_status"] == "replicated_reversible"
     assert causal["restart_preserved"] is True
