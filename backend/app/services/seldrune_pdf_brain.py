@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from copy import deepcopy
 from dataclasses import dataclass
 import hashlib
 import json
@@ -9,6 +10,7 @@ import random
 import re
 from typing import Any
 
+from backend.app.services.pdf_local_ocr import locate_text_with_ocr
 from backend.app.services.pdf_editor import (
     PDFEditAssessment,
     PDFEditResult,
@@ -19,7 +21,7 @@ from backend.app.services.pdf_editor import (
     validate_pdf_edit_plan,
 )
 
-MODEL_VERSION = "seldrune-pdf-brain-v0.1"
+MODEL_VERSION = "seldrune-pdf-brain-v0.2"
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 _QUOTE = r'(?:"([^"]+)"|\'([^\']+)\'|“([^”]+)”|‘([^’]+)’)'
 _PAGE_RE = re.compile(r"\bpage\s+(\d+)\b", re.IGNORECASE)
@@ -134,6 +136,7 @@ class LocalPDFEdit:
     prediction: PDFBrainPrediction
     result: PDFEditResult
     assessment: PDFEditAssessment
+    ocr_used: bool = False
 
 
 def _tokens(text: str) -> list[str]:
@@ -406,12 +409,127 @@ _PARSERS = {
     "rotate_page": _rotate_operation,
 }
 
+_DETERMINISTIC_HINTS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "rotate_page",
+        re.compile(r"\b(?:rotate|turn)\b.*\bpage\s+\d+\b", re.IGNORECASE),
+    ),
+    (
+        "fill_form",
+        re.compile(
+            r"\b(?:fill|set|update|enter|put)\b.*\bfield\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "redact_text",
+        re.compile(
+            r"\b(?:redact|remove|hide|erase|mask|cover|black\s+out)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "add_text",
+        re.compile(
+            r"\b(?:add|insert|write|place|append)\b.*\bpage\s+\d+\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "replace_text",
+        re.compile(
+            r"\b(?:replace|change|update|correct|swap|make|edit)\b",
+            re.IGNORECASE,
+        ),
+    ),
+)
+
+
+def _deterministic_operation(
+    instruction: str,
+) -> tuple[str, dict[str, Any]] | None:
+    for intent, pattern in _DETERMINISTIC_HINTS:
+        if not pattern.search(instruction):
+            continue
+        parser = _PARSERS[intent]
+        operation = parser(instruction)
+        if operation is not None:
+            return intent, operation
+    return None
+
+
+def _plan_with_local_ocr(
+    pdf_bytes: bytes,
+    plan: dict[str, Any],
+    *,
+    password: str | None,
+) -> tuple[dict[str, Any] | None, bool]:
+    updated = deepcopy(plan)
+    operations = updated.get("operations")
+    if not isinstance(operations, list):
+        return None, False
+
+    ocr_used = False
+    for operation in operations:
+        if not isinstance(operation, dict):
+            return None, ocr_used
+        action = str(operation.get("action") or "")
+        if action not in {"replace_text", "redact_text"}:
+            continue
+        if operation.get("bbox") is not None:
+            continue
+
+        target = str(operation.get("target_text") or "").strip()
+        if not target:
+            return None, ocr_used
+        page = operation.get("page")
+        page_numbers = [page] if isinstance(page, int) else None
+        matches = locate_text_with_ocr(
+            pdf_bytes,
+            target,
+            password=password,
+            page_numbers=page_numbers,
+        )
+        if not matches:
+            return None, ocr_used
+
+        occurrence = operation.get("occurrence")
+        if isinstance(occurrence, int) and occurrence >= 1:
+            if occurrence > len(matches):
+                return None, ocr_used
+            chosen = matches[occurrence - 1]
+        elif len(matches) == 1:
+            chosen = matches[0]
+        else:
+            return None, ocr_used
+
+        operation["page"] = chosen.page
+        operation["bbox"] = chosen.bbox
+        ocr_used = True
+
+    return updated, ocr_used
+
 
 def predict_pdf_plan(
     instruction: str,
     *,
     minimum_confidence: float = 0.78,
 ) -> PDFBrainPrediction:
+    deterministic = _deterministic_operation(instruction)
+    if deterministic is not None:
+        intent, operation = deterministic
+        return PDFBrainPrediction(
+            model_version=MODEL_VERSION,
+            model_fingerprint=MODEL.fingerprint,
+            intent=intent,
+            confidence=1.0,
+            plan={
+                "summary": f"Local {MODEL_VERSION} deterministic {intent} plan",
+                "operations": [operation],
+            },
+            fallback_reason=None,
+        )
+
     intent, confidence = _predict_intent(instruction)
     if confidence < minimum_confidence:
         return PDFBrainPrediction(
@@ -454,6 +572,7 @@ def try_local_pdf_edit(
     *,
     password: str | None = None,
     minimum_confidence: float = 0.78,
+    allow_ocr: bool = True,
 ) -> LocalPDFEdit | None:
     prediction = predict_pdf_plan(
         instruction,
@@ -462,25 +581,45 @@ def try_local_pdf_edit(
     if not prediction.usable or prediction.plan is None:
         return None
 
-    inspection = inspect_pdf(pdf_bytes, password)
-    if (
-        prediction.intent in {"replace_text", "redact_text"}
-        and inspection.native_text_pages == 0
-    ):
-        return None
-
+    inspect_pdf(pdf_bytes, password)
+    plan = deepcopy(prediction.plan)
+    ocr_used = False
     validation = validate_pdf_edit_plan(
         pdf_bytes,
-        prediction.plan,
+        plan,
         password=password,
     )
+
+    if not validation.valid and allow_ocr:
+        ocr_plan, ocr_used = _plan_with_local_ocr(
+            pdf_bytes,
+            plan,
+            password=password,
+        )
+        if ocr_plan is not None:
+            plan = ocr_plan
+            validation = validate_pdf_edit_plan(
+                pdf_bytes,
+                plan,
+                password=password,
+            )
+
     if not validation.valid:
         return None
+
+    prediction = PDFBrainPrediction(
+        model_version=prediction.model_version,
+        model_fingerprint=prediction.model_fingerprint,
+        intent=prediction.intent,
+        confidence=prediction.confidence,
+        plan=plan,
+        fallback_reason=None,
+    )
 
     try:
         result = apply_pdf_edit_plan(
             pdf_bytes,
-            prediction.plan,
+            plan,
             password=password,
         )
     except PDFEditorError:
@@ -489,7 +628,7 @@ def try_local_pdf_edit(
     assessment = assess_pdf_edit_candidate(
         pdf_bytes,
         result.data,
-        prediction.plan,
+        plan,
         password=password,
         visual_fidelity_score=result.visual_fidelity_score,
     )
@@ -499,13 +638,16 @@ def try_local_pdf_edit(
         prediction=prediction,
         result=result,
         assessment=assessment,
+        ocr_used=ocr_used,
     )
 
 
 def training_summary() -> dict[str, Any]:
     return {
         "model_version": MODEL_VERSION,
-        "algorithm": "multinomial-naive-bayes + deterministic slot parser",
+        "algorithm": (
+            "deterministic parser + multinomial-naive-bayes + local OCR fallback"
+        ),
         "trained_examples": MODEL.documents,
         "vocabulary_size": len(MODEL.vocab),
         "intents": sorted(MODEL.classes),
