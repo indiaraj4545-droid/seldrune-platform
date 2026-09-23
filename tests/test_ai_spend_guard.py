@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -130,7 +130,7 @@ def test_cumulative_spend_guard_blocks_monthly_ceiling() -> None:
                 content="metered direct response",
                 estimated_cost_usd=1.9,
                 model_calls=1,
-                created_at=now.replace(day=now.day - 1),
+                created_at=now - timedelta(days=1),
             )
         )
         session.commit()
