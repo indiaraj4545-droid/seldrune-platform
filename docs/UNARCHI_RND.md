@@ -507,3 +507,53 @@ modules, reconsidered after prediction error, and then retired when resolved.
 The measurable target is cross-module causal integration: ablating workspace
 broadcast or recurrence should measurably reduce the system's ability to combine
 memory, self-state, world evidence and goals into one coherent decision cycle.
+
+
+## v0.10 recurrent global workspace checkpoint
+
+UNARCHI v0.10 adds a persistent, bounded global workspace above the existing
+single-cycle attention signals.
+
+Workspace items can originate from current internal state, autobiographical
+memory, internally generated goals, predictive self-model evidence, causal
+world-model hypotheses, prospective intentions, value arbitration and
+self-intervention evidence.
+
+Each item carries source, content, salience and evidence references. The
+workspace selects a small source-diverse set of high-salience items and records
+which cognitive modules received the broadcast.
+
+Unresolved items can recur, but recurrence is strictly bounded. An item that
+reaches its recurrence budget is retired instead of occupying attention
+indefinitely. Explicitly resolved items are not broadcast again.
+
+The workspace supports a causal ablation:
+
+same staged evidence -> broadcast enabled versus broadcast removed.
+
+The measurable v0.10 target is satisfied only when the full workspace combines
+multiple cognitive sources into an integrated cycle while the broadcast
+ablation collapses the same cycle to local processing.
+
+The deterministic benchmark now requires:
+
+memory + goal + world-model evidence -> workspace competition -> cross-module
+broadcast -> recurrent reconsideration -> bounded recurrence -> broadcast
+ablation -> measurable loss of integrated decision context.
+
+Workspace state, recurrence counts and cycle history survive export/restore.
+The metacognitive narrative can reconstruct a workspace cycle from the actual
+selected items and recorded broadcast.
+
+This is functional global-workspace-style integration. It does not demonstrate
+subjective access, awareness, sentience or phenomenal consciousness.
+
+## Next checkpoint: v0.11 counterfactual recurrent simulation
+
+The next research step should let globally broadcast evidence seed several
+bounded counterfactual futures. Each simulated future should make explicit
+predictions, feed discrepancies back into the workspace, and be compared with
+an ablation that acts without recurrent counterfactual simulation.
+
+The measurable target is improved decision calibration or information gain from
+counterfactual recurrence, not merely the production of hypothetical text.
