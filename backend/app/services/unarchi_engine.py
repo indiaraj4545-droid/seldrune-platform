@@ -593,7 +593,7 @@ class UnarchiEngine:
         }
 
     @classmethod
-    def from_export(cls, payload: dict[str, Any]) -> "UnarchiEngine":
+    def from_export(cls, payload: dict[str, Any]) -> UnarchiEngine:
         """Restore a previously exported UNARCHI engine without a model call."""
         if payload.get("version") != UNARCHI_VERSION:
             raise ValueError("unsupported UNARCHI state version")
