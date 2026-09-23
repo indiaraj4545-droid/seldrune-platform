@@ -4,8 +4,8 @@ from backend.app.services.unarchi_benchmark import run_unarchi_ablation_benchmar
 def test_unarchi_ablation_benchmark_passes_all_scenarios() -> None:
     result = run_unarchi_ablation_benchmark()
 
-    assert result["scenario_count"] == 20
-    assert result["passed_scenarios"] == 20
+    assert result["scenario_count"] == 21
+    assert result["passed_scenarios"] == 21
     assert result["pass_rate"] == 1.0
     assert result["claims_phenomenal_consciousness"] is False
 
@@ -313,3 +313,23 @@ def test_unarchi_benchmark_covers_cross_environment_causal_invariance() -> None:
     assert causal["boundary_signatures"] == ()
     assert causal["final_hypothesis_status"] == "environment_invariant"
     assert causal["restart_preserved"] is True
+
+
+
+def test_unarchi_benchmark_covers_active_context_boundary_discovery() -> None:
+    result = run_unarchi_ablation_benchmark()
+    scenarios = {item["name"]: item for item in result["scenarios"]}
+
+    boundary = scenarios["active_context_boundary_discovery"]
+
+    assert boundary["passed"] is True
+    assert boundary["bounded_status"] == "environment_bounded"
+    assert boundary["selected_signature"] == "code=v1;load=high;data=fixed"
+    assert boundary["selected_risk"] <= 0.25
+    assert boundary["information_gain"] > 0.0
+    assert boundary["priority"] > 0.0
+    assert boundary["changed_dimensions"] == ("load",)
+    assert boundary["outcome_status"] == "expanded_valid_region"
+    assert boundary["uncertainty_reduction"] > 0.0
+    assert boundary["no_external_execution"] is True
+    assert boundary["restart_preserved"] is True

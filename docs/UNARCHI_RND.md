@@ -1061,12 +1061,62 @@ means invariant only across the explicitly tested controlled signatures. It
 does not prove unrestricted real-world causation, subjective identity,
 sentience, phenomenal consciousness, or qualia.
 
-## Next checkpoint: v0.20 active boundary discovery
+## v0.20 active boundary discovery checkpoint
 
-The next research step should choose low-risk environment variations that are
-maximally informative about where an invariant relation stops holding, while
-remaining deterministic, reversible, and externally non-executing by default.
+UNARCHI v0.20 turns a learned causal environment boundary into a bounded,
+information-seeking test plan without performing the test itself.
 
-The measurable target is efficient boundary discovery: prioritize environment
-tests that reduce uncertainty about the causal validity region without
-requiring brute-force search, paid model calls, or unsafe autonomous action.
+Given an existing v0.19 causal-invariance assessment and caller-supplied
+candidate environment risks, the planner:
+
+- parses deterministic `key=value` controlled-environment signatures;
+- excludes environments that were already tested;
+- rejects candidates above a bounded risk ceiling;
+- rejects candidates that change too many environment dimensions at once;
+- measures distance from known stable and boundary environments;
+- favors candidates that are simultaneously local, boundary-adjacent, and
+  ambiguous between stable and boundary evidence;
+- discounts expected information gain by the supplied risk;
+- selects exactly one highest-priority probe while retaining all accepted
+  candidate signatures for auditability.
+
+A boundary-discovery plan explicitly records that it is reversible-only,
+disallows paid actions, and disallows external execution. Planning therefore
+cannot itself change infrastructure, call an external model, spend money, or
+run the proposed intervention.
+
+When a matching causal-stability assessment is later supplied, v0.20 resolves
+the plan as either:
+
+- `expanded_valid_region` when the selected environment reproduces
+  replicated-reversible causality; or
+- `confirmed_boundary` when the supplied stability evidence fails that gate.
+
+The resolved plan records the linked stability assessment and a bounded
+uncertainty-reduction score. It persists through export/restore and is
+reconstructable through the deterministic metacognitive narrative.
+
+The deterministic v0.20 benchmark requires:
+
+known stable environment + known failed boundary environment -> candidate
+environment set with risk estimates -> high-risk/multi-change candidates
+filtered -> one-dimension boundary-adjacent probe selected -> no external
+execution -> separately supplied replicated-reversible stability evidence ->
+expanded_valid_region -> positive uncertainty reduction -> export/restore ->
+identical boundary plan and evidence-grounded narrative.
+
+This remains bounded functional causal research. The planner estimates which
+controlled environment would be informative to test; it does not execute that
+test and does not establish unrestricted real-world causation, subjective
+identity, sentience, phenomenal consciousness, or qualia.
+
+## Next checkpoint: v0.21 causal validity-map consolidation
+
+The next research step should consolidate stable environments, confirmed
+boundaries, and resolved active probes into a compact causal validity map that
+can distinguish tested-valid, tested-invalid, and unknown environment regions.
+
+The measurable target is boundary-aware generalization: use the map to support
+only nearby evidence-backed environments, abstain in unknown regions, and
+shrink or expand the valid region as new replicated evidence arrives without
+brute-force enumeration.

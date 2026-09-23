@@ -167,7 +167,7 @@ def test_snapshot_never_claims_phenomenal_consciousness() -> None:
     snapshot = engine.snapshot()
 
     assert snapshot["claims_phenomenal_consciousness"] is False
-    assert snapshot["version"] == "unarchi-v0.19"
+    assert snapshot["version"] == "unarchi-v0.20"
 
 
 def test_export_restore_preserves_identity_state_and_memory() -> None:
@@ -3236,3 +3236,111 @@ def test_context_causal_invariance_records_environment_boundary() -> None:
     assert "code=v1;load=high;data=fixed" in assessment.boundary_signatures
     assert after.causal_status == "replicated_reversible"
     assert engine.snapshot()["environment_invariant_context_count"] == 0
+
+
+
+def test_active_boundary_discovery_selects_low_risk_informative_probe() -> None:
+    engine, hypothesis_id = _build_context_causality_test_engine()
+
+    normal = _build_environment_stability(
+        engine,
+        hypothesis_id,
+        signature="code=v1;load=normal;data=fixed",
+        prefix="boundary:normal",
+    )
+    extreme = _build_environment_stability(
+        engine,
+        hypothesis_id,
+        signature="code=v1;load=extreme;data=fixed",
+        prefix="boundary:extreme",
+        reverse_supported=False,
+    )
+    bounded = engine.assess_context_causal_invariance(
+        hypothesis_id,
+        stability_assessment_ids=(normal.id, extreme.id),
+    )
+
+    plan = engine.plan_context_boundary_discovery(
+        hypothesis_id,
+        invariance_assessment_id=bounded.id,
+        candidate_risks={
+            "code=v1;load=high;data=fixed": 0.08,
+            "code=v1;load=normal;data=shifted": 0.05,
+            "code=v2;load=extreme;data=shifted": 0.40,
+        },
+    )
+
+    assert bounded.status == "environment_bounded"
+    assert plan.status == "planned"
+    assert plan.selected_signature == "code=v1;load=high;data=fixed"
+    assert plan.selected_risk == 0.08
+    assert plan.selected_information_gain > 0.0
+    assert plan.selected_priority_score > 0.0
+    assert plan.changed_dimensions == ("load",)
+    assert plan.external_execution_allowed is False
+    assert plan.paid_actions_allowed is False
+    assert plan.reversible_only is True
+    assert "code=v2;load=extreme;data=shifted" not in plan.candidate_signatures
+
+
+def test_active_boundary_discovery_resolves_from_supplied_stability_evidence() -> None:
+    engine, hypothesis_id = _build_context_causality_test_engine()
+
+    normal = _build_environment_stability(
+        engine,
+        hypothesis_id,
+        signature="code=v1;load=normal;data=fixed",
+        prefix="resolve:normal",
+    )
+    extreme = _build_environment_stability(
+        engine,
+        hypothesis_id,
+        signature="code=v1;load=extreme;data=fixed",
+        prefix="resolve:extreme",
+        reverse_supported=False,
+    )
+    bounded = engine.assess_context_causal_invariance(
+        hypothesis_id,
+        stability_assessment_ids=(normal.id, extreme.id),
+    )
+    plan = engine.plan_context_boundary_discovery(
+        hypothesis_id,
+        invariance_assessment_id=bounded.id,
+        candidate_risks={
+            "code=v1;load=high;data=fixed": 0.08,
+            "code=v1;load=normal;data=shifted": 0.05,
+        },
+    )
+    selected = _build_environment_stability(
+        engine,
+        hypothesis_id,
+        signature=plan.selected_signature,
+        prefix="resolve:selected",
+    )
+
+    resolved = engine.observe_context_boundary_discovery(
+        plan.id,
+        stability_assessment_id=selected.id,
+    )
+    narrative = engine.build_metacognitive_narrative(
+        "context_boundary_discovery"
+    )
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    assert resolved.status == "resolved"
+    assert resolved.outcome_status == "expanded_valid_region"
+    assert resolved.outcome_stability_assessment_id == selected.id
+    assert resolved.uncertainty_reduction is not None
+    assert resolved.uncertainty_reduction > 0.0
+    assert restored.context_boundary_discovery_plans == (
+        engine.context_boundary_discovery_plans
+    )
+    assert restored.next_context_boundary_discovery_plan_id == (
+        engine.next_context_boundary_discovery_plan_id
+    )
+    assert restored.snapshot() == engine.snapshot()
+    assert narrative.unsupported_claims == 0
+    assert any(
+        ref.startswith("context_boundary_discovery_plan:")
+        for ref in narrative.evidence_refs
+    )
