@@ -7295,6 +7295,63 @@ class UnarchiEngine:
             details.append(detail)
 
         if focus in {
+            "context_validity_resolution",
+            "rollback_resolution",
+            "rollback_validation",
+            "recommendation_resolution",
+        }:
+            if self.context_validity_recommendation_resolutions:
+                resolution = self.context_validity_recommendation_resolutions[-1]
+                add(
+                    f"context_validity_recommendation_resolution:{resolution.id}",
+                    (
+                        f"watch={resolution.watch_id}; "
+                        f"decision={resolution.decision}; "
+                        f"recommended_map={resolution.recommended_map_id}; "
+                        f"rollback_selection={resolution.rollback_selection_id}; "
+                        f"reason={resolution.reason!r}"
+                    ),
+                )
+                validation = next(
+                    (
+                        item
+                        for item in reversed(
+                            self.context_validity_rollback_validations
+                        )
+                        if item.resolution_id == resolution.id
+                    ),
+                    None,
+                )
+                if validation is not None:
+                    add(
+                        f"context_validity_rollback_validation:{validation.id}",
+                        (
+                            f"rollback_map={validation.rollback_map_id}; "
+                            f"blocked_descendant="
+                            f"{validation.blocked_descendant_map_id}; "
+                            f"outcomes={len(validation.observed_outcome_ids)}; "
+                            f"mean_advantage="
+                            f"{validation.mean_rollback_advantage}; "
+                            f"improvement={validation.improvement_delta}; "
+                            f"status={validation.status}; "
+                            f"reactivation_allowed="
+                            f"{validation.reactivation_allowed}"
+                        ),
+                    )
+                    for ref in validation.evidence_refs[-8:]:
+                        add(ref, "post-rollback evidence used for validation")
+                else:
+                    for ref in resolution.evidence_refs[-6:]:
+                        add(ref, "evidence retained for recommendation resolution")
+                summary = (
+                    "Rollback recommendations require explicit resolution; "
+                    "accepted rollbacks block descendant re-advance until "
+                    "new post-rollback observed outcomes validate improvement."
+                )
+            else:
+                summary = "No rollback recommendation resolution has been recorded."
+
+        elif focus in {
             "context_validity_degradation",
             "active_revision_degradation",
             "degradation_watch",
@@ -8536,6 +8593,20 @@ class UnarchiEngine:
             "next_context_validity_degradation_watch_id": (
                 self.next_context_validity_degradation_watch_id
             ),
+            "context_validity_recommendation_resolutions": [
+                item.to_dict()
+                for item in self.context_validity_recommendation_resolutions
+            ],
+            "next_context_validity_recommendation_resolution_id": (
+                self.next_context_validity_recommendation_resolution_id
+            ),
+            "context_validity_rollback_validations": [
+                item.to_dict()
+                for item in self.context_validity_rollback_validations
+            ],
+            "next_context_validity_rollback_validation_id": (
+                self.next_context_validity_rollback_validation_id
+            ),
             "success_prediction_bias": self.success_prediction_bias,
             "uncertainty_prediction_bias": self.uncertainty_prediction_bias,
             "stress_prediction_bias": self.stress_prediction_bias,
@@ -8629,6 +8700,14 @@ class UnarchiEngine:
             "context_validity_degradation_watches",
             [],
         )
+        context_validity_recommendation_resolutions_payload = payload.get(
+            "context_validity_recommendation_resolutions",
+            [],
+        )
+        context_validity_rollback_validations_payload = payload.get(
+            "context_validity_rollback_validations",
+            [],
+        )
         value_weights_payload = payload.get("value_weights", _default_value_weights())
         if not isinstance(state_payload, dict):
             raise ValueError("invalid UNARCHI state")
@@ -8703,6 +8782,17 @@ class UnarchiEngine:
         if not isinstance(context_validity_degradation_watches_payload, list):
             raise ValueError(
                 "invalid UNARCHI context validity degradation watches"
+            )
+        if not isinstance(
+            context_validity_recommendation_resolutions_payload,
+            list,
+        ):
+            raise ValueError(
+                "invalid UNARCHI context validity recommendation resolutions"
+            )
+        if not isinstance(context_validity_rollback_validations_payload, list):
+            raise ValueError(
+                "invalid UNARCHI context validity rollback validations"
             )
 
         memory: list[Experience] = []
@@ -9174,6 +9264,44 @@ class UnarchiEngine:
                 ContextValidityDegradationWatch(**restored_item)
             )
 
+        context_validity_recommendation_resolutions: list[
+            ContextValidityRecommendationResolution
+        ] = []
+        for item in context_validity_recommendation_resolutions_payload:
+            if not isinstance(item, dict):
+                raise ValueError(
+                    "invalid UNARCHI context validity recommendation resolution"
+                )
+            restored_item = dict(item)
+            restored_item["evidence_refs"] = tuple(
+                restored_item.get("evidence_refs", ())
+            )
+            context_validity_recommendation_resolutions.append(
+                ContextValidityRecommendationResolution(**restored_item)
+            )
+
+        context_validity_rollback_validations: list[
+            ContextValidityRollbackValidation
+        ] = []
+        for item in context_validity_rollback_validations_payload:
+            if not isinstance(item, dict):
+                raise ValueError(
+                    "invalid UNARCHI context validity rollback validation"
+                )
+            restored_item = dict(item)
+            restored_item["observed_outcome_ids"] = tuple(
+                restored_item.get("observed_outcome_ids", ())
+            )
+            restored_item["degraded_signatures"] = tuple(
+                restored_item.get("degraded_signatures", ())
+            )
+            restored_item["evidence_refs"] = tuple(
+                restored_item.get("evidence_refs", ())
+            )
+            context_validity_rollback_validations.append(
+                ContextValidityRollbackValidation(**restored_item)
+            )
+
         max_memory = max(16, min(int(payload.get("max_memory") or 256), 4096))
         max_active = max(
             1,
@@ -9473,6 +9601,44 @@ class UnarchiEngine:
                 )
                 + 1,
             ),
+            context_validity_recommendation_resolutions=(
+                context_validity_recommendation_resolutions[-max_memory:]
+            ),
+            next_context_validity_recommendation_resolution_id=max(
+                int(
+                    payload.get(
+                        "next_context_validity_recommendation_resolution_id"
+                    )
+                    or 1
+                ),
+                max(
+                    (
+                        item.id
+                        for item in context_validity_recommendation_resolutions
+                    ),
+                    default=0,
+                )
+                + 1,
+            ),
+            context_validity_rollback_validations=(
+                context_validity_rollback_validations[-max_memory:]
+            ),
+            next_context_validity_rollback_validation_id=max(
+                int(
+                    payload.get(
+                        "next_context_validity_rollback_validation_id"
+                    )
+                    or 1
+                ),
+                max(
+                    (
+                        item.id
+                        for item in context_validity_rollback_validations
+                    ),
+                    default=0,
+                )
+                + 1,
+            ),
             success_prediction_bias=float(
                 payload.get("success_prediction_bias") or 0.0
             ),
@@ -9649,6 +9815,26 @@ class UnarchiEngine:
                     item
                     for item in self.context_validity_degradation_watches
                     if item.status == "rollback_recommended"
+                ]
+            ),
+            "rollback_recommendation_resolution_count": len(
+                self.context_validity_recommendation_resolutions
+            ),
+            "accepted_rollback_recommendation_count": len(
+                [
+                    item
+                    for item in self.context_validity_recommendation_resolutions
+                    if item.decision == "accept"
+                ]
+            ),
+            "rollback_validation_count": len(
+                self.context_validity_rollback_validations
+            ),
+            "rollback_reactivation_allowed_count": len(
+                [
+                    item
+                    for item in self.context_validity_rollback_validations
+                    if item.reactivation_allowed
                 ]
             ),
             "observed_counterfactual_count": len(
