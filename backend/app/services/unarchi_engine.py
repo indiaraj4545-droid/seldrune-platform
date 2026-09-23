@@ -4124,6 +4124,12 @@ class UnarchiEngine:
             if not enough_environments
             else "environment_bounded"
         )
+        if enough_environments and (
+            not direction_consistent or strength_spread > spread_limit
+        ):
+            boundary_signatures.extend(
+                signature for signature, _, _ in distinct_rows
+            )
 
         coverage = min(1.0, distinct_count / min_environments)
         stability_rate = stable_count / max(1, distinct_count)
