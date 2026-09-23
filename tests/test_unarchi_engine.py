@@ -167,7 +167,7 @@ def test_snapshot_never_claims_phenomenal_consciousness() -> None:
     snapshot = engine.snapshot()
 
     assert snapshot["claims_phenomenal_consciousness"] is False
-    assert snapshot["version"] == "unarchi-v0.9"
+    assert snapshot["version"] == "unarchi-v0.10"
 
 
 def test_export_restore_preserves_identity_state_and_memory() -> None:
@@ -1475,3 +1475,152 @@ def test_export_restore_preserves_intervention_aware_self_world_model() -> None:
     assert restored.intervention_trials == engine.intervention_trials
     assert restored.next_intervention_id == engine.next_intervention_id
     assert restored.snapshot() == engine.snapshot()
+
+
+def test_global_workspace_broadcast_integrates_multiple_sources() -> None:
+    engine = UnarchiEngine()
+    engine.stage_global_workspace_item(
+        source="memory",
+        content="A prior validation failure increased caution.",
+        salience=0.8,
+        evidence_refs=("experience:0",),
+    )
+    engine.stage_global_workspace_item(
+        source="goal",
+        content="Resolve the validation uncertainty.",
+        salience=0.9,
+        evidence_refs=("internal_goal:0",),
+    )
+    engine.stage_global_workspace_item(
+        source="world_model",
+        content="The leading hypothesis predicts a schema mismatch.",
+        salience=0.85,
+        evidence_refs=("hypothesis:0",),
+    )
+
+    cycle = engine.run_global_workspace_cycle(
+        max_items=3,
+        seed_from_engine=False,
+    )
+
+    assert cycle.decision_mode == "integrated"
+    assert set(cycle.integrated_sources) == {"memory", "goal", "world_model"}
+    assert len(cycle.broadcast_targets) == 8
+    assert cycle.coherence_score >= 0.75
+
+
+def test_global_workspace_recurrence_is_bounded_and_retires_item() -> None:
+    engine = UnarchiEngine(workspace_recurrence_limit=3)
+    item = engine.stage_global_workspace_item(
+        source="goal",
+        content="An unresolved causal question remains active.",
+        salience=0.9,
+        evidence_refs=("internal_goal:0",),
+    )
+
+    first = engine.run_global_workspace_cycle(seed_from_engine=False)
+    second = engine.run_global_workspace_cycle(seed_from_engine=False)
+    third = engine.run_global_workspace_cycle(seed_from_engine=False)
+
+    assert first.recurrence_depth == 1
+    assert second.recurrence_depth == 2
+    assert third.recurrence_depth == 3
+    assert item.recurrence_count == 3
+    assert item.status == "retired"
+
+
+def test_resolved_workspace_item_does_not_rebroadcast() -> None:
+    engine = UnarchiEngine()
+    item = engine.stage_global_workspace_item(
+        source="memory",
+        content="A discrepancy needs resolution.",
+        salience=0.9,
+        evidence_refs=("experience:0",),
+    )
+    first = engine.run_global_workspace_cycle(seed_from_engine=False)
+    assert item.id in first.selected_item_ids
+
+    engine.resolve_global_workspace_item(
+        item.id,
+        evidence="A local comparison resolved the discrepancy.",
+    )
+    second = engine.run_global_workspace_cycle(seed_from_engine=False)
+
+    assert item.id not in second.selected_item_ids
+    assert item.status == "resolved"
+
+
+def test_global_workspace_broadcast_ablation_changes_decision_context() -> None:
+    engine = UnarchiEngine()
+    for source, content in (
+        ("memory", "Past failure evidence."),
+        ("goal", "Current unresolved goal."),
+        ("world_model", "Current causal hypothesis."),
+    ):
+        engine.stage_global_workspace_item(
+            source=source,
+            content=content,
+            salience=0.8,
+            evidence_refs=(f"{source}:0",),
+        )
+
+    comparison = engine.compare_global_workspace_ablation(
+        max_items=3,
+        seed_from_engine=False,
+    )
+
+    assert comparison.full.decision_mode == "integrated"
+    assert comparison.ablated.decision_mode == "local"
+    assert comparison.target_delta == 8
+    assert comparison.mode_changed is True
+    assert comparison.workspace_causally_active is True
+
+
+def test_global_workspace_narrative_is_evidence_grounded() -> None:
+    engine = UnarchiEngine()
+    engine.stage_global_workspace_item(
+        source="self_model",
+        content="Self prediction indicates elevated uncertainty.",
+        salience=0.8,
+        evidence_refs=("prediction:0",),
+    )
+    engine.stage_global_workspace_item(
+        source="world_model",
+        content="World hypothesis predicts an external mismatch.",
+        salience=0.8,
+        evidence_refs=("hypothesis:0",),
+    )
+    engine.run_global_workspace_cycle(
+        max_items=2,
+        seed_from_engine=False,
+    )
+
+    narrative = engine.build_metacognitive_narrative("workspace")
+
+    assert "workspace_cycle:0" in narrative.evidence_refs
+    assert "workspace_item:1" in narrative.evidence_refs
+    assert "workspace_item:2" in narrative.evidence_refs
+    assert narrative.unsupported_claims == 0
+
+
+def test_export_restore_preserves_recurrent_global_workspace() -> None:
+    engine = UnarchiEngine()
+    item = engine.stage_global_workspace_item(
+        source="goal",
+        content="Persistent unresolved goal.",
+        salience=0.9,
+        evidence_refs=("internal_goal:0",),
+    )
+    engine.run_global_workspace_cycle(seed_from_engine=False)
+
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    assert restored.global_workspace_items == engine.global_workspace_items
+    assert restored.global_workspace_cycles == engine.global_workspace_cycles
+    assert restored.next_workspace_item_id == engine.next_workspace_item_id
+    assert restored.next_workspace_cycle_id == engine.next_workspace_cycle_id
+    assert restored.snapshot() == engine.snapshot()
+    assert (
+        restored.global_workspace_items[0].recurrence_count
+        == item.recurrence_count
+    )
