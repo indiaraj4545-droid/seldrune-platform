@@ -4,8 +4,8 @@ from backend.app.services.unarchi_benchmark import run_unarchi_ablation_benchmar
 def test_unarchi_ablation_benchmark_passes_all_scenarios() -> None:
     result = run_unarchi_ablation_benchmark()
 
-    assert result["scenario_count"] == 12
-    assert result["passed_scenarios"] == 12
+    assert result["scenario_count"] == 13
+    assert result["passed_scenarios"] == 13
     assert result["pass_rate"] == 1.0
     assert result["claims_phenomenal_consciousness"] is False
 
@@ -150,3 +150,22 @@ def test_unarchi_benchmark_covers_counterfactual_recurrent_gain() -> None:
     )
     assert counterfactual["feedback_reentered"] is True
     assert counterfactual["prediction_discrepancy"] is not None
+
+
+
+def test_unarchi_benchmark_covers_autobiographical_self_schema_transfer() -> None:
+    result = run_unarchi_ablation_benchmark()
+    scenarios = {item["name"]: item for item in result["scenarios"]}
+
+    schema = scenarios["autobiographical_self_schema_transfer"]
+
+    assert schema["passed"] is True
+    assert schema["with_schema_action"] == "run validated local diagnostic"
+    assert schema["without_schema_action"] == "use untested shortcut"
+    assert "capability" in schema["schema_kinds"]
+    assert "limitation" in schema["schema_kinds"]
+    assert schema["validated_success_bias"] > 0.0
+    assert schema["validated_risk_bias"] < 0.0
+    assert schema["schema_refs"]
+    assert schema["restart_preserved"] is True
+    assert schema["narrative_fidelity_score"] == 1.0
