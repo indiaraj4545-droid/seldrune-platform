@@ -120,7 +120,7 @@ def test_cumulative_spend_guard_sums_agent_and_direct_gpt_costs() -> None:
 def test_cumulative_spend_guard_blocks_monthly_ceiling() -> None:
     session, engine = _session()
     organization_id = uuid4()
-    now = datetime.now(UTC)
+    now = datetime(2026, 9, 23, 12, 0, tzinfo=UTC)
     try:
         session.add(
             SeldruneGPTMessage(
