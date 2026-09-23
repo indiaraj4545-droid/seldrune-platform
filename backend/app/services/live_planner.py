@@ -361,6 +361,7 @@ def build_live_plan(
     gateway: ModelGateway | None = None,
     adaptive_guidance: dict[str, Any] | None = None,
     available_tools: list[dict[str, Any]] | None = None,
+    allow_model: bool = True,
 ) -> PlanResult:
     expected_count = _explicit_step_count(objective)
     guidance_metadata = _guidance_summary(adaptive_guidance)
@@ -373,6 +374,26 @@ def build_live_plan(
         provider = ModelProvider(settings.model_provider)
     except ValueError:
         provider = ModelProvider.MOCK
+    if not allow_model:
+        steps, adaptations = _apply_adaptive_overlay(
+            _fallback_plan(objective, expected_count),
+            objective=objective,
+            expected_count=expected_count,
+            guidance=adaptive_guidance,
+        )
+        guidance_metadata["adaptations"] = adaptations
+        return PlanResult(
+            steps,
+            "deterministic-v3-adaptive",
+            {
+                "mode": "fallback",
+                "reason": "AI cumulative spend ceiling reached; used free deterministic planner",
+                "adaptive_planning": guidance_metadata,
+                "available_tool_count": len(available_tool_slugs),
+                "tool_steps": sum(bool(step.tool_slug) for step in steps),
+                "cost_guard_fallback": True,
+            },
+        )
     if provider is ModelProvider.MOCK:
         steps, adaptations = _apply_adaptive_overlay(
             _fallback_plan(objective, expected_count),
@@ -450,6 +471,9 @@ def build_live_plan(
                     "input_tokens": result.usage.input_tokens,
                     "output_tokens": result.usage.output_tokens,
                     "total_tokens": result.usage.total_tokens,
+                    "cached_input_tokens": result.usage.cached_input_tokens,
+                    "estimated_cost_usd": result.usage.estimated_cost_usd,
+                    "cost_tier": route.tier,
                 },
                 "adaptive_planning": guidance_metadata,
             },

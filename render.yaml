@@ -28,6 +28,12 @@ services:
         value: true
       - key: SELDRUNE_AI_REQUEST_MAX_USD
         value: 0.15
+      - key: SELDRUNE_AI_DAILY_MAX_USD
+        value: 2.0
+      - key: SELDRUNE_AI_MONTHLY_MAX_USD
+        value: 30.0
+      - key: SELDRUNE_AI_SPEND_WARNING_RATIO
+        value: 0.8
       - key: SELDRUNE_AI_PDF_REQUEST_MAX_USD
         value: 0.10
       - key: SELDRUNE_AI_PDF_MAX_TOTAL_USD
@@ -91,6 +97,12 @@ services:
         value: true
       - key: SELDRUNE_AI_REQUEST_MAX_USD
         value: 0.15
+      - key: SELDRUNE_AI_DAILY_MAX_USD
+        value: 2.0
+      - key: SELDRUNE_AI_MONTHLY_MAX_USD
+        value: 30.0
+      - key: SELDRUNE_AI_SPEND_WARNING_RATIO
+        value: 0.8
       - key: SELDRUNE_AI_PDF_REQUEST_MAX_USD
         value: 0.10
       - key: SELDRUNE_AI_PDF_MAX_TOTAL_USD

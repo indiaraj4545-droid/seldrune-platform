@@ -16,6 +16,10 @@ from backend.app.models.agent import Agent
 from backend.app.models.model_invocation import ModelInvocation
 from backend.app.models.task import Task, TaskEvent
 from backend.app.services.ai_cost_governor import choose_cost_route
+from backend.app.services.ai_spend_guard import (
+    AISpendBudgetExceeded,
+    enforce_ai_spend_budget,
+)
 from backend.app.services.audit import record_audit
 from backend.app.services.knowledge import build_agent_context, remember_task_result
 from backend.app.services.model_gateway import ModelGateway
@@ -147,6 +151,15 @@ def execute_agent_task(
         agent.runtime_config.get("max_output_tokens", settings.model_max_output_tokens)
     )
     max_output_tokens = min(configured_max_output, route.max_output_tokens)
+    try:
+        enforce_ai_spend_budget(
+            session,
+            organization_id=task.organization_id,
+            settings=settings,
+            projected_usd=route.request_budget_usd,
+        )
+    except AISpendBudgetExceeded as exc:
+        raise AgentRuntimeError(str(exc)) from exc
     knowledge_context, context_refs = build_agent_context(
         session,
         task=task,

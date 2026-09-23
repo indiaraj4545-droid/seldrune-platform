@@ -4,12 +4,17 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from backend.app.core.config import settings
 from backend.app.models.agent import Agent
 from backend.app.models.model_invocation import ModelInvocation
 from backend.app.models.organization_kernel import OrganizationProject
 from backend.app.models.seldrune_gpt_message import SeldruneGPTMessage
 from backend.app.models.orchestration import OrchestrationRun, OrchestrationStep
 from backend.app.models.task import Task
+from backend.app.services.ai_spend_guard import (
+    ai_spend_budget_status,
+    recorded_auxiliary_ai_usage,
+)
 from backend.app.services.outcome_verification import assess_command_outcome
 from backend.app.services.portfolio_governor import reserved_project_budget
 
@@ -64,6 +69,15 @@ def build_owner_dashboard(session: Session, organization_id: UUID) -> dict[str, 
                 SeldruneGPTMessage.role == "assistant",
             )
         )
+    )
+    ai_spend_control = ai_spend_budget_status(
+        session,
+        organization_id=organization_id,
+        settings=settings,
+    )
+    auxiliary_ai_usage = recorded_auxiliary_ai_usage(
+        session,
+        organization_id=organization_id,
     )
     agent_performance: list[dict[str, Any]] = []
     for agent in organization_agents:
@@ -242,24 +256,30 @@ def build_owner_dashboard(session: Session, organization_id: UUID) -> dict[str, 
             ),
             "overcommitted": committed_budget > allocated_budget,
         },
+        "ai_spend_control": ai_spend_control,
         "usage": {
             "model_invocations": (
                 len(organization_invocations)
                 + sum(item.model_calls for item in gpt_messages)
+                + int(auxiliary_ai_usage["model_calls"])
             ),
             "agent_model_invocations": len(organization_invocations),
             "direct_gpt_model_calls": sum(
                 item.model_calls for item in gpt_messages
             ),
+            "auxiliary_ai_model_calls": int(auxiliary_ai_usage["model_calls"]),
             "total_tokens": (
                 sum(item.total_tokens for item in organization_invocations)
                 + sum(
                     item.input_tokens + item.output_tokens
                     for item in gpt_messages
                 )
+                + int(auxiliary_ai_usage["input_tokens"])
+                + int(auxiliary_ai_usage["output_tokens"])
             ),
-            "cached_input_tokens": sum(
-                item.cached_input_tokens for item in gpt_messages
+            "cached_input_tokens": (
+                sum(item.cached_input_tokens for item in gpt_messages)
+                + int(auxiliary_ai_usage["cached_input_tokens"])
             ),
             "estimated_cost_usd": round(
                 sum(
@@ -269,7 +289,8 @@ def build_owner_dashboard(session: Session, organization_id: UUID) -> dict[str, 
                 + sum(
                     item.estimated_cost_usd or 0
                     for item in gpt_messages
-                ),
+                )
+                + float(auxiliary_ai_usage["estimated_cost_usd"]),
                 6,
             ),
         },
