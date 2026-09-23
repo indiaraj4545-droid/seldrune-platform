@@ -240,3 +240,53 @@ prediction when that condition occurs.
 The measurable target is continuity across time: future behavior should depend
 on earlier internally generated intentions and predictions even across process
 restart, while remaining bounded by explicit resource and action constraints.
+
+
+## v0.5 temporal self and prospective memory checkpoint
+
+UNARCHI v0.5 links past self-state, present observation and predicted future
+self-state through bounded prospective intentions.
+
+The kernel can now store an intention of the form:
+
+when condition X becomes observable -> surface intention Y.
+
+Each prospective intention records:
+
+- the experience count and continuity signal at creation;
+- the future condition to recognize;
+- the intended reversible action;
+- the reason the intention was created;
+- an optional link to an earlier self-prediction;
+- expected future uncertainty, stress, agency and coherence;
+- a bounded experience delay and expiry horizon;
+- the observed trigger condition;
+- a temporal alignment score comparing predicted and observed self-state.
+
+Prospective intentions survive export/restore, so a process restart does not
+erase future-directed continuity.
+
+The kernel does not execute a recalled intention automatically. A matching
+condition changes the intention from pending to ready. Explicit resolution is
+still required, and paid or irreversible prospective actions are rejected by
+the v0.5 research kernel.
+
+The v0.5 benchmark requires this chain to survive a restart:
+
+past self-prediction -> future intention -> restart -> matching observation ->
+intention recall -> temporal self-state comparison.
+
+This establishes measurable functional continuity across time. It does not
+establish subjective continuity or phenomenal consciousness.
+
+## Next checkpoint: v0.6 metacognitive narrative
+
+The next research step should let UNARCHI construct a compact, evidence-linked
+account of how its beliefs, predictions, goals and internal state changed over
+time. The narrative must be generated from stored state transitions rather than
+invented after the fact.
+
+The measurable target is retrospective fidelity: when asked why its current
+state or intention exists, the reconstructed explanation should point to the
+actual earlier observations, prediction errors, internal goals and prospective
+memories that causally produced it.
