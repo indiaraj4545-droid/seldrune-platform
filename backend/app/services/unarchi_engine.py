@@ -1369,7 +1369,6 @@ class UnarchiEngine:
         self.causal_hypotheses.append(hypothesis)
         if len(self.causal_hypotheses) > self.max_memory:
             self.causal_hypotheses = self.causal_hypotheses[-self.max_memory:]
-        self._normalize_hypothesis_confidence()
         return hypothesis
 
     def _normalize_hypothesis_confidence(self) -> None:
