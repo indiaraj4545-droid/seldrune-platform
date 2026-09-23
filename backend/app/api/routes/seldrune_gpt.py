@@ -47,6 +47,10 @@ from backend.app.services.pdf_editor import (
     render_pdf_pages_for_model,
     validate_pdf_edit_plan,
 )
+from backend.app.services.seldrune_pdf_brain import (
+    training_summary as pdf_brain_training_summary,
+    try_local_pdf_edit,
+)
 from backend.app.services.tool_bootstrap import (
     configured_external_tool_status,
     ensure_configured_external_tools,
@@ -648,8 +652,6 @@ def edit_seldrune_gpt_pdf(
     current_user: CurrentUserDep,
     session: SessionDep,
 ) -> SeldruneGPTPDFEditResponse:
-    if settings.model_provider != "openai":
-        raise HTTPException(status_code=503, detail="OpenAI model provider is not enabled")
     if payload.pdf.media_type.lower().strip() != "application/pdf":
         raise HTTPException(status_code=422, detail="PDF editor accepts one PDF file")
 
@@ -666,6 +668,131 @@ def edit_seldrune_gpt_pdf(
 
     try:
         inspection = inspect_pdf(pdf_bytes, payload.password)
+    except PDFEditorError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    local_edit = None
+    if settings.pdf_brain_enabled:
+        local_edit = try_local_pdf_edit(
+            pdf_bytes,
+            payload.instruction,
+            password=payload.password,
+            minimum_confidence=settings.pdf_brain_min_confidence,
+        )
+
+    if local_edit is not None:
+        edit_result = local_edit.result
+        selected_assessment = local_edit.assessment
+        plan = local_edit.prediction.plan or {}
+        stem = payload.pdf.name.rsplit(".", 1)[0]
+        safe_stem = re.sub(r"[^A-Za-z0-9._-]+", "-", stem).strip("-._") or "document"
+        output_name = f"{safe_stem}-edited.pdf"
+        summary = str(plan.get("summary") or "PDF edit completed locally.")
+        visual_summary = (
+            f"{edit_result.visual_fidelity_score}% visual fidelity"
+            if edit_result.visual_fidelity_score is not None
+            else "visual fidelity not machine-scored for this PDF type"
+        )
+        local_model = local_edit.prediction.model_version
+        local_response_id = f"local:{local_edit.prediction.model_fingerprint}"
+
+        record_audit(
+            session,
+            organization_id=organization_id,
+            actor_user_id=current_user.id,
+            action="seldrune_gpt.pdf_edited",
+            resource_type="document",
+            resource_id=output_name,
+            details={
+                "source_filename": payload.pdf.name,
+                "output_filename": output_name,
+                "document_type": edit_result.inspection.document_type,
+                "page_count": edit_result.inspection.page_count,
+                "applied_edits": edit_result.applied_edits,
+                "verified_operations": edit_result.verified_operations,
+                "verification_score": edit_result.verification_score,
+                "visual_fidelity_score": edit_result.visual_fidelity_score,
+                "layout_integrity_score": selected_assessment.layout_integrity_score,
+                "reconstruction_attempts": 1,
+                "repair_passes": 0,
+                "warnings": edit_result.warnings[:20],
+                "model": local_model,
+                "models_used": [local_model],
+                "model_calls": 0,
+                "estimated_ai_cost_usd": 0.0,
+                "planner": "seldrune_owned_local",
+                "local_intent": local_edit.prediction.intent,
+                "local_confidence": round(local_edit.prediction.confidence, 6),
+                "model_fingerprint": local_edit.prediction.model_fingerprint,
+            },
+        )
+        session.add(
+            SeldruneGPTMessage(
+                organization_id=organization_id,
+                user_id=current_user.id,
+                role="user",
+                content=f"{payload.instruction}\n[Local PDF edit: {payload.pdf.name}]",
+            )
+        )
+        session.add(
+            SeldruneGPTMessage(
+                organization_id=organization_id,
+                user_id=current_user.id,
+                role="assistant",
+                content=(
+                    f"{summary} Created {output_name} locally with "
+                    f"{edit_result.applied_edits} applied edits and "
+                    f"{edit_result.verification_score}% content verification, "
+                    f"{visual_summary}, and "
+                    f"{selected_assessment.layout_integrity_score}% layout integrity. "
+                    "No external AI model call was required."
+                ),
+                model=local_model,
+                response_id=local_response_id,
+                input_tokens=0,
+                output_tokens=0,
+                cached_input_tokens=0,
+                estimated_cost_usd=0.0,
+                cost_tier="local-owned",
+                model_calls=0,
+            )
+        )
+        session.commit()
+        return SeldruneGPTPDFEditResponse(
+            filename=output_name,
+            data_base64=base64.b64encode(edit_result.data).decode("ascii"),
+            summary=summary,
+            applied_edits=edit_result.applied_edits,
+            warnings=edit_result.warnings,
+            model=local_model,
+            response_id=local_response_id,
+            document_type=edit_result.inspection.document_type,
+            page_count=edit_result.inspection.page_count,
+            native_text_pages=edit_result.inspection.native_text_pages,
+            image_only_pages=edit_result.inspection.image_only_pages,
+            form_fields=edit_result.inspection.form_fields,
+            verified_operations=edit_result.verified_operations,
+            verification_score=edit_result.verification_score,
+            visual_fidelity_score=edit_result.visual_fidelity_score,
+            layout_integrity_score=selected_assessment.layout_integrity_score,
+            reconstruction_attempts=1,
+            repair_passes=0,
+            estimated_ai_cost_usd=0.0,
+            model_calls=0,
+            models_used=[local_model],
+            verification_notes=edit_result.verification_notes,
+        )
+
+    if settings.model_provider != "openai":
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Seldrune PDF Brain could not safely resolve this edit locally and "
+                "OpenAI fallback is not enabled."
+            ),
+        )
+
+    try:
         model_pdf_bytes = prepare_pdf_for_model(pdf_bytes, payload.password)
         initial_page_renders = (
             render_pdf_pages_for_model(
@@ -1205,6 +1332,13 @@ def seldrune_gpt_capabilities(
         configuration_hints=configuration_hints,
         cost_policy={
             "monthly_hard_limit_usd": settings.ai_monthly_max_usd,
+            "pdf_brain": {
+                **pdf_brain_training_summary(),
+                "enabled": settings.pdf_brain_enabled,
+                "minimum_confidence": settings.pdf_brain_min_confidence,
+                "routing": "local-first with OpenAI fallback",
+                "local_ai_cost_usd": 0.0,
+            },
             "daily_limit_usd": settings.ai_daily_max_usd,
             "budget_mode": spend_status["budget_mode"],
             "monthly_remaining_usd": spend_status["monthly_remaining_usd"],
