@@ -167,7 +167,7 @@ def test_snapshot_never_claims_phenomenal_consciousness() -> None:
     snapshot = engine.snapshot()
 
     assert snapshot["claims_phenomenal_consciousness"] is False
-    assert snapshot["version"] == "unarchi-v0.18"
+    assert snapshot["version"] == "unarchi-v0.19"
 
 
 def test_export_restore_preserves_identity_state_and_memory() -> None:
@@ -3094,3 +3094,145 @@ def test_context_causal_stability_rejects_reused_replication_evidence() -> None:
     assert assessment.independent_forward_batches == 1
     assert hypothesis.causal_status == "intervention_supported"
     assert engine.snapshot()["replicated_reversible_context_count"] == 0
+
+
+
+def _build_environment_stability(
+    engine: UnarchiEngine,
+    hypothesis_id: int,
+    *,
+    signature: str,
+    prefix: str,
+    reverse_supported: bool = True,
+):
+    forward_ids: list[int] = []
+    for batch in ("a", "b"):
+        trial = engine.propose_context_causality_intervention(
+            hypothesis_id,
+            from_context="production",
+            to_context="sandbox",
+            controlled_signature=signature,
+            min_samples=4,
+        )
+        trial = engine.observe_context_causality_intervention(
+            trial.id,
+            observed_target_success_rate=1.0,
+            observed_signature=signature,
+            sample_count=4,
+            evidence_refs=(f"{prefix}:forward:{batch}",),
+        )
+        forward_ids.append(trial.id)
+
+    reverse = engine.propose_context_causality_intervention(
+        hypothesis_id,
+        from_context="sandbox",
+        to_context="production",
+        controlled_signature=signature,
+        min_samples=4,
+    )
+    reverse = engine.observe_context_causality_intervention(
+        reverse.id,
+        observed_target_success_rate=0.0 if reverse_supported else 1.0,
+        observed_signature=signature,
+        sample_count=4,
+        evidence_refs=(f"{prefix}:reverse:a",),
+    )
+    return engine.assess_context_causal_stability(
+        hypothesis_id,
+        forward_trial_ids=forward_ids,
+        reverse_trial_ids=(reverse.id,),
+    )
+
+
+def test_context_causal_invariance_across_distinct_environments() -> None:
+    engine, hypothesis_id = _build_context_causality_test_engine()
+
+    normal = _build_environment_stability(
+        engine,
+        hypothesis_id,
+        signature="code=v1;load=normal;data=fixed",
+        prefix="env:normal",
+    )
+    high_load = _build_environment_stability(
+        engine,
+        hypothesis_id,
+        signature="code=v1;load=high;data=fixed",
+        prefix="env:high",
+    )
+
+    assessment = engine.assess_context_causal_invariance(
+        hypothesis_id,
+        stability_assessment_ids=(normal.id, high_load.id),
+    )
+    hypothesis = next(
+        item
+        for item in engine.latent_context_hypotheses
+        if item.id == hypothesis_id
+    )
+    narrative = engine.build_metacognitive_narrative(
+        "context_causal_invariance"
+    )
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    assert assessment.status == "environment_invariant"
+    assert assessment.distinct_environment_count == 2
+    assert assessment.stable_environment_count == 2
+    assert assessment.effect_direction_consistent is True
+    assert assessment.minimum_causal_strength >= 0.35
+    assert assessment.boundary_signatures == ()
+    assert hypothesis.causal_status == "environment_invariant"
+    assert restored.context_causal_invariance_assessments == (
+        engine.context_causal_invariance_assessments
+    )
+    assert restored.latent_context_hypotheses == (
+        engine.latent_context_hypotheses
+    )
+    assert restored.snapshot() == engine.snapshot()
+    assert narrative.unsupported_claims == 0
+    assert any(
+        ref.startswith("context_causal_invariance_assessment:")
+        for ref in narrative.evidence_refs
+    )
+
+
+def test_context_causal_invariance_records_environment_boundary() -> None:
+    engine, hypothesis_id = _build_context_causality_test_engine()
+
+    normal = _build_environment_stability(
+        engine,
+        hypothesis_id,
+        signature="code=v1;load=normal;data=fixed",
+        prefix="env:normal",
+    )
+    high_load = _build_environment_stability(
+        engine,
+        hypothesis_id,
+        signature="code=v1;load=high;data=fixed",
+        prefix="env:high",
+        reverse_supported=False,
+    )
+
+    before = next(
+        item
+        for item in engine.latent_context_hypotheses
+        if item.id == hypothesis_id
+    )
+    assessment = engine.assess_context_causal_invariance(
+        hypothesis_id,
+        stability_assessment_ids=(normal.id, high_load.id),
+    )
+    after = next(
+        item
+        for item in engine.latent_context_hypotheses
+        if item.id == hypothesis_id
+    )
+
+    assert normal.status == "replicated_reversible"
+    assert high_load.status != "replicated_reversible"
+    assert before.causal_status == "replicated_reversible"
+    assert assessment.status == "environment_bounded"
+    assert assessment.distinct_environment_count == 2
+    assert assessment.stable_environment_count == 1
+    assert "code=v1;load=high;data=fixed" in assessment.boundary_signatures
+    assert after.causal_status == "replicated_reversible"
+    assert engine.snapshot()["environment_invariant_context_count"] == 0
