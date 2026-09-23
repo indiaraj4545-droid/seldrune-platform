@@ -167,7 +167,7 @@ def test_snapshot_never_claims_phenomenal_consciousness() -> None:
     snapshot = engine.snapshot()
 
     assert snapshot["claims_phenomenal_consciousness"] is False
-    assert snapshot["version"] == "unarchi-v0.22"
+    assert snapshot["version"] == "unarchi-v0.23"
 
 
 def test_export_restore_preserves_identity_state_and_memory() -> None:
@@ -3611,5 +3611,192 @@ def test_context_validity_gate_persists_and_is_explainable() -> None:
     assert narrative.unsupported_claims == 0
     assert any(
         ref.startswith("context_validity_decision_gate:")
+        for ref in narrative.evidence_refs
+    )
+
+
+
+def _build_validity_calibration_engine():
+    engine, hypothesis_id = _build_context_causality_test_engine()
+    normal = _build_environment_stability(
+        engine,
+        hypothesis_id,
+        signature="code=v1;load=normal;data=fixed",
+        prefix="calibrate:normal",
+    )
+    extreme = _build_environment_stability(
+        engine,
+        hypothesis_id,
+        signature="code=v1;load=extreme;data=fixed",
+        prefix="calibrate:extreme",
+        reverse_supported=False,
+    )
+    engine.assess_context_causal_invariance(
+        hypothesis_id,
+        stability_assessment_ids=(normal.id, extreme.id),
+    )
+    validity_map = engine.consolidate_context_causal_validity_map(
+        hypothesis_id,
+        max_generalization_distance=1,
+    )
+    return engine, validity_map
+
+
+def test_gate_outcome_requires_matched_action_evidence() -> None:
+    engine, validity_map = _build_validity_calibration_engine()
+    gate = engine.evaluate_context_validity_gated_decision(
+        validity_map.id,
+        environment_signature="code=v1;load=normal;data=shifted",
+        candidates=_validity_gate_candidates(),
+        context="production release",
+    )
+
+    try:
+        engine.record_context_validity_gate_outcome(
+            gate.id,
+            actual_success_by_action={
+                gate.gated_action: True,
+            },
+            evidence_refs=("outcome:partial",),
+        )
+    except ValueError as exc:
+        assert "every policy-selected action" in str(exc)
+    else:
+        raise AssertionError("partial counterfactual evidence must be rejected")
+
+
+def test_gate_calibration_can_strengthen_and_revoke_nearby_support() -> None:
+    engine, validity_map = _build_validity_calibration_engine()
+    candidates = _validity_gate_candidates()
+    good_signature = "code=v1;load=normal;data=shifted"
+    bad_signature = "code=v2;load=normal;data=fixed"
+
+    good_before = engine.classify_context_causal_validity(
+        validity_map.id,
+        environment_signature=good_signature,
+    )
+    bad_before = engine.classify_context_causal_validity(
+        validity_map.id,
+        environment_signature=bad_signature,
+    )
+
+    for index in range(3):
+        gate = engine.evaluate_context_validity_gated_decision(
+            validity_map.id,
+            environment_signature=good_signature,
+            candidates=candidates,
+            context="production release",
+        )
+        engine.record_context_validity_gate_outcome(
+            gate.id,
+            actual_success_by_action={
+                "run automated release check": False,
+                "request independent review": True,
+            },
+            evidence_refs=(f"outcome:good:{index}",),
+        )
+
+    good_calibration = engine.calibrate_context_validity_region(
+        validity_map.id,
+        environment_signature=good_signature,
+    )
+    good_after = engine.classify_context_causal_validity(
+        validity_map.id,
+        environment_signature=good_signature,
+    )
+
+    for index in range(3):
+        gate = engine.evaluate_context_validity_gated_decision(
+            validity_map.id,
+            environment_signature=bad_signature,
+            candidates=candidates,
+            context="production release",
+        )
+        engine.record_context_validity_gate_outcome(
+            gate.id,
+            actual_success_by_action={
+                "run automated release check": True,
+                "request independent review": False,
+            },
+            evidence_refs=(f"outcome:bad:{index}",),
+        )
+
+    bad_calibration = engine.calibrate_context_validity_region(
+        validity_map.id,
+        environment_signature=bad_signature,
+    )
+    bad_after = engine.classify_context_causal_validity(
+        validity_map.id,
+        environment_signature=bad_signature,
+    )
+    post_revoke = engine.evaluate_context_validity_gated_decision(
+        validity_map.id,
+        environment_signature=bad_signature,
+        candidates=candidates,
+        context="production release",
+    )
+
+    assert good_before.status == "supported_nearby"
+    assert good_calibration.status == "nearby_support_calibrated"
+    assert good_calibration.gated_advantage_vs_alternative >= 0.05
+    assert good_after.status == "supported_nearby"
+    assert good_after.confidence > good_before.confidence
+
+    assert bad_before.status == "supported_nearby"
+    assert bad_calibration.status == "nearby_support_revoked"
+    assert bad_calibration.gated_advantage_vs_alternative <= -0.05
+    assert bad_after.status == "unknown"
+    assert bad_after.confidence == 0.0
+    assert post_revoke.classification_status == "unknown"
+    assert post_revoke.causal_context_allowed is False
+    assert post_revoke.gated_action == post_revoke.causal_ablated_action
+
+
+def test_gate_calibration_persists_and_is_explainable() -> None:
+    engine, validity_map = _build_validity_calibration_engine()
+    signature = "code=v1;load=normal;data=shifted"
+
+    for index in range(3):
+        gate = engine.evaluate_context_validity_gated_decision(
+            validity_map.id,
+            environment_signature=signature,
+            candidates=_validity_gate_candidates(),
+            context="production release",
+        )
+        engine.record_context_validity_gate_outcome(
+            gate.id,
+            actual_success_by_action={
+                "run automated release check": False,
+                "request independent review": True,
+            },
+            evidence_refs=(f"outcome:persist:{index}",),
+        )
+
+    calibration = engine.calibrate_context_validity_region(
+        validity_map.id,
+        environment_signature=signature,
+    )
+    narrative = engine.build_metacognitive_narrative(
+        "context_validity_calibration"
+    )
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    assert calibration.status == "nearby_support_calibrated"
+    assert restored.context_validity_gate_outcomes == (
+        engine.context_validity_gate_outcomes
+    )
+    assert restored.context_validity_region_calibrations == (
+        engine.context_validity_region_calibrations
+    )
+    assert restored.next_context_validity_gate_outcome_id == (
+        engine.next_context_validity_gate_outcome_id
+    )
+    assert restored.next_context_validity_region_calibration_id == (
+        engine.next_context_validity_region_calibration_id
+    )
+    assert restored.snapshot() == engine.snapshot()
+    assert narrative.unsupported_claims == 0
+    assert any(
+        ref.startswith("context_validity_region_calibration:")
         for ref in narrative.evidence_refs
     )
