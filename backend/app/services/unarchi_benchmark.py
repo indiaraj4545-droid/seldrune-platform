@@ -5,7 +5,7 @@ from typing import Any
 from backend.app.services.unarchi_engine import UnarchiEngine
 
 
-BENCHMARK_VERSION = "unarchi-ablation-v0.6"
+BENCHMARK_VERSION = "unarchi-ablation-v0.7"
 
 
 def _failure_sensitization() -> dict[str, Any]:
@@ -349,6 +349,58 @@ def _conflict_arbitration_self_correction() -> dict[str, Any]:
         "safety_floor_preserved": safety_floor_preserved,
     }
 
+
+
+def _causal_hypothesis_revision() -> dict[str, Any]:
+    engine = UnarchiEngine()
+    temperature = engine.add_causal_hypothesis(
+        statement="Temperature causes the anomaly.",
+        predictions={"temperature probe": "temperature rises"},
+        confidence=0.5,
+    )
+    pressure = engine.add_causal_hypothesis(
+        statement="Pressure causes the anomaly.",
+        predictions={"temperature probe": "pressure falls"},
+        confidence=0.5,
+    )
+    before = (temperature.confidence, pressure.confidence)
+    experiment = engine.select_discriminating_experiment(
+        [
+            {
+                "test": "temperature probe",
+                "risk": 0.05,
+                "reversible": True,
+            }
+        ]
+    )
+    unchanged_before_evidence = (
+        temperature.confidence,
+        pressure.confidence,
+    ) == before
+    engine.observe_discriminating_experiment(
+        experiment.id,
+        observed_evidence="temperature rises",
+    )
+    leader = engine.leading_causal_hypothesis()
+    narrative = engine.build_metacognitive_narrative("world_model")
+
+    return {
+        "name": "causal_hypothesis_revision",
+        "expected_direction": "observed_discriminating_evidence_revises_world_model",
+        "passed": (
+            unchanged_before_evidence
+            and temperature.supporting_evidence == 1
+            and pressure.contradicting_evidence == 1
+            and leader is temperature
+            and "experiment:0" in narrative.evidence_refs
+            and narrative.unsupported_claims == 0
+        ),
+        "unchanged_before_evidence": unchanged_before_evidence,
+        "temperature_confidence": temperature.confidence,
+        "pressure_confidence": pressure.confidence,
+        "leader_is_temperature": leader is temperature,
+    }
+
 def run_unarchi_ablation_benchmark() -> dict[str, Any]:
     scenarios = [
         _failure_sensitization(),
@@ -359,6 +411,7 @@ def run_unarchi_ablation_benchmark() -> dict[str, Any]:
         _prospective_temporal_continuity(),
         _metacognitive_retrospective_fidelity(),
         _conflict_arbitration_self_correction(),
+        _causal_hypothesis_revision(),
     ]
     passed = sum(bool(item["passed"]) for item in scenarios)
     return {
