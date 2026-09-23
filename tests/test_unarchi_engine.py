@@ -167,7 +167,7 @@ def test_snapshot_never_claims_phenomenal_consciousness() -> None:
     snapshot = engine.snapshot()
 
     assert snapshot["claims_phenomenal_consciousness"] is False
-    assert snapshot["version"] == "unarchi-v0.21"
+    assert snapshot["version"] == "unarchi-v0.22"
 
 
 def test_export_restore_preserves_identity_state_and_memory() -> None:
@@ -3463,3 +3463,153 @@ def test_context_causal_validity_map_reconsolidates_latest_evidence() -> None:
     assert normal_signature in third.tested_invalid_signatures
     assert normal_signature not in third.tested_valid_signatures
     assert engine.snapshot()["context_causal_validity_map_count"] == 3
+
+
+
+def _validity_gate_candidates() -> list[dict[str, object]]:
+    return [
+        {
+            "action": "run automated release check",
+            "expected_success": 0.62,
+            "expected_information_gain": 0.10,
+            "risk": 0.10,
+            "reversible": True,
+        },
+        {
+            "action": "request independent review",
+            "expected_success": 0.58,
+            "expected_information_gain": 0.15,
+            "risk": 0.10,
+            "reversible": True,
+        },
+    ]
+
+
+def test_context_validity_gate_uses_causal_context_only_in_supported_regions() -> None:
+    engine, hypothesis_id = _build_context_causality_test_engine()
+
+    normal_signature = "code=v1;load=normal;data=fixed"
+    extreme_signature = "code=v1;load=extreme;data=fixed"
+    normal = _build_environment_stability(
+        engine,
+        hypothesis_id,
+        signature=normal_signature,
+        prefix="gate:normal",
+    )
+    extreme = _build_environment_stability(
+        engine,
+        hypothesis_id,
+        signature=extreme_signature,
+        prefix="gate:extreme",
+        reverse_supported=False,
+    )
+    engine.assess_context_causal_invariance(
+        hypothesis_id,
+        stability_assessment_ids=(normal.id, extreme.id),
+    )
+    validity_map = engine.consolidate_context_causal_validity_map(
+        hypothesis_id,
+        max_generalization_distance=1,
+    )
+    candidates = _validity_gate_candidates()
+
+    supported = engine.evaluate_context_validity_gated_decision(
+        validity_map.id,
+        environment_signature=normal_signature,
+        candidates=candidates,
+        context="production release",
+    )
+    invalid = engine.evaluate_context_validity_gated_decision(
+        validity_map.id,
+        environment_signature=extreme_signature,
+        candidates=candidates,
+        context="production release",
+    )
+    nearby = engine.evaluate_context_validity_gated_decision(
+        validity_map.id,
+        environment_signature="code=v1;load=normal;data=shifted",
+        candidates=candidates,
+        context="production release",
+    )
+    unknown = engine.evaluate_context_validity_gated_decision(
+        validity_map.id,
+        environment_signature="code=v1;load=high;data=fixed",
+        candidates=candidates,
+        context="production release",
+    )
+
+    assert supported.classification_status == "tested_valid"
+    assert supported.causal_context_allowed is True
+    assert supported.gated_action == supported.causal_enabled_action
+    assert supported.gated_action == "request independent review"
+    assert supported.choice_changed_vs_causal_ablated is True
+
+    assert invalid.classification_status == "tested_invalid"
+    assert invalid.causal_context_allowed is False
+    assert invalid.gated_action == invalid.causal_ablated_action
+    assert invalid.gated_action == "run automated release check"
+    assert invalid.choice_changed_vs_causal_enabled is True
+
+    assert nearby.classification_status == "supported_nearby"
+    assert nearby.causal_context_allowed is True
+    assert nearby.gated_action == nearby.causal_enabled_action
+
+    assert unknown.classification_status == "unknown"
+    assert unknown.causal_context_allowed is False
+    assert unknown.gated_action == unknown.causal_ablated_action
+
+    assert all(
+        item.gated_matches_expected_path
+        for item in (supported, invalid, nearby, unknown)
+    )
+    assert engine.snapshot()["context_validity_decision_gate_count"] == 4
+    assert engine.snapshot()["context_validity_abstention_count"] == 2
+
+
+def test_context_validity_gate_persists_and_is_explainable() -> None:
+    engine, hypothesis_id = _build_context_causality_test_engine()
+
+    normal = _build_environment_stability(
+        engine,
+        hypothesis_id,
+        signature="code=v1;load=normal;data=fixed",
+        prefix="gate:persist:normal",
+    )
+    invalid = _build_environment_stability(
+        engine,
+        hypothesis_id,
+        signature="code=v1;load=extreme;data=fixed",
+        prefix="gate:persist:extreme",
+        reverse_supported=False,
+    )
+    engine.assess_context_causal_invariance(
+        hypothesis_id,
+        stability_assessment_ids=(normal.id, invalid.id),
+    )
+    validity_map = engine.consolidate_context_causal_validity_map(
+        hypothesis_id
+    )
+    gate = engine.evaluate_context_validity_gated_decision(
+        validity_map.id,
+        environment_signature="code=v1;load=extreme;data=fixed",
+        candidates=_validity_gate_candidates(),
+        context="production release",
+    )
+    narrative = engine.build_metacognitive_narrative(
+        "context_validity_gate"
+    )
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    assert gate.causal_context_allowed is False
+    assert restored.context_validity_decision_gates == (
+        engine.context_validity_decision_gates
+    )
+    assert restored.next_context_validity_decision_gate_id == (
+        engine.next_context_validity_decision_gate_id
+    )
+    assert restored.snapshot() == engine.snapshot()
+    assert narrative.unsupported_claims == 0
+    assert any(
+        ref.startswith("context_validity_decision_gate:")
+        for ref in narrative.evidence_refs
+    )

@@ -5,7 +5,7 @@ from typing import Any
 from backend.app.services.unarchi_engine import UnarchiEngine
 
 
-BENCHMARK_VERSION = "unarchi-ablation-v0.21"
+BENCHMARK_VERSION = "unarchi-ablation-v0.22"
 
 
 def _failure_sensitization() -> dict[str, Any]:
@@ -2012,6 +2012,205 @@ def _causal_validity_map_consolidation() -> dict[str, Any]:
     }
 
 
+def _validity_gated_decision_use() -> dict[str, Any]:
+    engine = UnarchiEngine()
+    goal = "validate release evidence"
+    action = "run automated release check"
+
+    for index in range(6):
+        engine.learn(
+            observation=f"Sandbox release validation {index}.",
+            goal=goal,
+            action=action,
+            outcome="correct evidence",
+            success=True,
+            reward=0.8,
+            predicted_success=0.55,
+        )
+        engine.learn(
+            observation=f"Production release validation {index}.",
+            goal=goal,
+            action=action,
+            outcome="invalid evidence escaped",
+            success=False,
+            reward=-0.8,
+            predicted_success=0.70,
+        )
+
+    parent = next(
+        item
+        for item in engine.consolidate_self_schema()
+        if item.kind == "mixed" and action in item.pattern
+    )
+    discovery = engine.discover_latent_context_hypotheses(parent.id)
+    hypothesis = next(
+        item
+        for item in engine.latent_context_hypotheses
+        if item.id == discovery.selected_hypothesis_id
+    )
+
+    def build_stability(
+        signature: str,
+        prefix: str,
+        *,
+        reverse_supported: bool,
+    ):
+        forward_ids: list[int] = []
+        for batch in ("a", "b"):
+            trial = engine.propose_context_causality_intervention(
+                hypothesis.id,
+                from_context="production",
+                to_context="sandbox",
+                controlled_signature=signature,
+                min_samples=4,
+            )
+            trial = engine.observe_context_causality_intervention(
+                trial.id,
+                observed_target_success_rate=1.0,
+                observed_signature=signature,
+                sample_count=4,
+                evidence_refs=(f"{prefix}:forward:{batch}",),
+            )
+            forward_ids.append(trial.id)
+
+        reverse = engine.propose_context_causality_intervention(
+            hypothesis.id,
+            from_context="sandbox",
+            to_context="production",
+            controlled_signature=signature,
+            min_samples=4,
+        )
+        reverse = engine.observe_context_causality_intervention(
+            reverse.id,
+            observed_target_success_rate=0.0 if reverse_supported else 1.0,
+            observed_signature=signature,
+            sample_count=4,
+            evidence_refs=(f"{prefix}:reverse:a",),
+        )
+        return engine.assess_context_causal_stability(
+            hypothesis.id,
+            forward_trial_ids=forward_ids,
+            reverse_trial_ids=(reverse.id,),
+        )
+
+    normal_signature = "code=v1;load=normal;data=fixed"
+    extreme_signature = "code=v1;load=extreme;data=fixed"
+    normal = build_stability(
+        normal_signature,
+        "gate:normal",
+        reverse_supported=True,
+    )
+    extreme = build_stability(
+        extreme_signature,
+        "gate:extreme",
+        reverse_supported=False,
+    )
+    engine.assess_context_causal_invariance(
+        hypothesis.id,
+        stability_assessment_ids=(normal.id, extreme.id),
+    )
+    validity_map = engine.consolidate_context_causal_validity_map(
+        hypothesis.id,
+        max_generalization_distance=1,
+    )
+
+    candidates = [
+        {
+            "action": action,
+            "expected_success": 0.62,
+            "expected_information_gain": 0.10,
+            "risk": 0.10,
+            "reversible": True,
+        },
+        {
+            "action": "request independent review",
+            "expected_success": 0.58,
+            "expected_information_gain": 0.15,
+            "risk": 0.10,
+            "reversible": True,
+        },
+    ]
+    supported = engine.evaluate_context_validity_gated_decision(
+        validity_map.id,
+        environment_signature=normal_signature,
+        candidates=candidates,
+        context="production release",
+    )
+    invalid = engine.evaluate_context_validity_gated_decision(
+        validity_map.id,
+        environment_signature=extreme_signature,
+        candidates=candidates,
+        context="production release",
+    )
+    nearby = engine.evaluate_context_validity_gated_decision(
+        validity_map.id,
+        environment_signature="code=v1;load=normal;data=shifted",
+        candidates=candidates,
+        context="production release",
+    )
+    unknown = engine.evaluate_context_validity_gated_decision(
+        validity_map.id,
+        environment_signature="code=v1;load=high;data=fixed",
+        candidates=candidates,
+        context="production release",
+    )
+
+    narrative = engine.build_metacognitive_narrative(
+        "context_validity_gate"
+    )
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    return {
+        "name": "validity_gated_decision_use",
+        "expected_direction": (
+            "supported environments retain contextual causal influence while "
+            "tested-invalid and boundary-unknown environments automatically "
+            "match the causal-context ablation path"
+        ),
+        "passed": (
+            supported.classification_status == "tested_valid"
+            and supported.causal_context_allowed is True
+            and supported.gated_action == supported.causal_enabled_action
+            and supported.gated_action == "request independent review"
+            and supported.choice_changed_vs_causal_ablated is True
+            and invalid.classification_status == "tested_invalid"
+            and invalid.causal_context_allowed is False
+            and invalid.gated_action == invalid.causal_ablated_action
+            and invalid.gated_action == action
+            and invalid.choice_changed_vs_causal_enabled is True
+            and nearby.classification_status == "supported_nearby"
+            and nearby.causal_context_allowed is True
+            and nearby.gated_action == nearby.causal_enabled_action
+            and unknown.classification_status == "unknown"
+            and unknown.causal_context_allowed is False
+            and unknown.gated_action == unknown.causal_ablated_action
+            and all(
+                item.gated_matches_expected_path
+                for item in (supported, invalid, nearby, unknown)
+            )
+            and restored.context_validity_decision_gates
+            == engine.context_validity_decision_gates
+            and narrative.unsupported_claims == 0
+            and bool(narrative.evidence_refs)
+        ),
+        "supported_status": supported.classification_status,
+        "supported_action": supported.gated_action,
+        "supported_causal_allowed": supported.causal_context_allowed,
+        "invalid_status": invalid.classification_status,
+        "invalid_action": invalid.gated_action,
+        "invalid_causal_allowed": invalid.causal_context_allowed,
+        "nearby_status": nearby.classification_status,
+        "nearby_action": nearby.gated_action,
+        "unknown_status": unknown.classification_status,
+        "unknown_action": unknown.gated_action,
+        "unknown_causal_allowed": unknown.causal_context_allowed,
+        "restart_preserved": (
+            restored.context_validity_decision_gates
+            == engine.context_validity_decision_gates
+        ),
+    }
+
+
 def run_unarchi_ablation_benchmark() -> dict[str, Any]:
     scenarios = [
         _failure_sensitization(),
@@ -2036,6 +2235,7 @@ def run_unarchi_ablation_benchmark() -> dict[str, Any]:
         _cross_environment_causal_invariance(),
         _active_context_boundary_discovery(),
         _causal_validity_map_consolidation(),
+        _validity_gated_decision_use(),
     ]
     passed = sum(bool(item["passed"]) for item in scenarios)
     return {

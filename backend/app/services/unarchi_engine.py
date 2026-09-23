@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 
-UNARCHI_VERSION = "unarchi-v0.21"
+UNARCHI_VERSION = "unarchi-v0.22"
 _STOPWORDS = {
     "a",
     "an",
@@ -637,6 +637,31 @@ class ContextValidityClassification:
 
 
 @dataclass(frozen=True)
+class ContextValidityDecisionGate:
+    id: int
+    validity_map_id: int
+    hypothesis_id: int
+    environment_signature: str
+    classification_status: str
+    classification_confidence: float
+    causal_context_allowed: bool
+    gated_action: str
+    gated_predicted_success: float
+    causal_enabled_action: str
+    causal_enabled_predicted_success: float
+    causal_ablated_action: str
+    causal_ablated_predicted_success: float
+    gated_matches_expected_path: bool
+    choice_changed_vs_causal_enabled: bool
+    choice_changed_vs_causal_ablated: bool
+    predicted_success_delta_vs_ablated: float
+    evidence_refs: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class LatentContextDiscovery:
     id: int
     parent_schema_id: int
@@ -705,7 +730,7 @@ class UnarchiEngine:
     """
     CPU-only experimental cognitive kernel.
 
-    v0.21 includes causal internal dynamics, bounded endogenous goals, a
+    v0.22 includes causal internal dynamics, bounded endogenous goals, a
     calibrated predictive self-model, prospective memory, evidence-grounded
     metacognition, explicit value arbitration, competing causal hypotheses,
     controlled self-intervention trials, a bounded recurrent global workspace,
@@ -715,7 +740,8 @@ class UnarchiEngine:
     discovery, intervention-supported context causality evidence, replicated
     reversible context-causality stability checks, bounded causal-invariance
     tests across distinct controlled environments, active low-risk boundary
-    probe planning, and compact boundary-aware causal validity maps.
+    probe planning, compact boundary-aware causal validity maps, and
+    validity-gated causal-context decision use.
     """
 
     state: UnarchiState = field(default_factory=UnarchiState)
@@ -792,6 +818,10 @@ class UnarchiEngine:
         ContextCausalValidityMap
     ] = field(default_factory=list)
     next_context_causal_validity_map_id: int = 1
+    context_validity_decision_gates: list[
+        ContextValidityDecisionGate
+    ] = field(default_factory=list)
+    next_context_validity_decision_gate_id: int = 1
     success_prediction_bias: float = 0.0
     uncertainty_prediction_bias: float = 0.0
     stress_prediction_bias: float = 0.0
@@ -4938,6 +4968,133 @@ class UnarchiEngine:
             evidence_refs=tuple(refs),
         )
 
+    def evaluate_context_validity_gated_decision(
+        self,
+        validity_map_id: int,
+        *,
+        environment_signature: str,
+        candidates: list[dict[str, Any]],
+        context: str,
+    ) -> ContextValidityDecisionGate:
+        """
+        Gate contextual causal influence with the current validity map.
+
+        Supported environments keep the contextual-schema/transfer path.
+        Tested-invalid and unknown environments fall back to the global
+        autobiographical self-schema rather than transferring causal context.
+        """
+        if not candidates:
+            raise ValueError("at least one candidate action is required")
+
+        classification = self.classify_context_causal_validity(
+            validity_map_id,
+            environment_signature=environment_signature,
+        )
+        causal_allowed = classification.status in {
+            "tested_valid",
+            "supported_nearby",
+        }
+
+        causal_enabled_engine = deepcopy(self)
+        causal_enabled = causal_enabled_engine.choose_predicted_action(
+            candidates,
+            context=context,
+            use_self_schema=True,
+            use_contextual_schema=True,
+            use_context_transfer=True,
+        )
+        causal_ablated_engine = deepcopy(self)
+        causal_ablated = causal_ablated_engine.choose_predicted_action(
+            candidates,
+            context=context,
+            use_self_schema=True,
+            use_contextual_schema=False,
+            use_context_transfer=False,
+        )
+        gated_engine = deepcopy(self)
+        gated = gated_engine.choose_predicted_action(
+            candidates,
+            context=context,
+            use_self_schema=True,
+            use_contextual_schema=causal_allowed,
+            use_context_transfer=causal_allowed,
+        )
+
+        expected = causal_enabled if causal_allowed else causal_ablated
+        matches_expected = (
+            gated.action == expected.action
+            and gated.predicted_success == expected.predicted_success
+            and gated.utility == expected.utility
+        )
+        delta_vs_ablated = (
+            gated.predicted_success
+            - causal_ablated.predicted_success
+        )
+        record = ContextValidityDecisionGate(
+            id=self.next_context_validity_decision_gate_id,
+            validity_map_id=validity_map_id,
+            hypothesis_id=classification.hypothesis_id,
+            environment_signature=classification.environment_signature,
+            classification_status=classification.status,
+            classification_confidence=classification.confidence,
+            causal_context_allowed=causal_allowed,
+            gated_action=gated.action,
+            gated_predicted_success=gated.predicted_success,
+            causal_enabled_action=causal_enabled.action,
+            causal_enabled_predicted_success=(
+                causal_enabled.predicted_success
+            ),
+            causal_ablated_action=causal_ablated.action,
+            causal_ablated_predicted_success=(
+                causal_ablated.predicted_success
+            ),
+            gated_matches_expected_path=matches_expected,
+            choice_changed_vs_causal_enabled=(
+                gated.action != causal_enabled.action
+            ),
+            choice_changed_vs_causal_ablated=(
+                gated.action != causal_ablated.action
+            ),
+            predicted_success_delta_vs_ablated=round(
+                delta_vs_ablated,
+                6,
+            ),
+            evidence_refs=tuple(
+                dict.fromkeys(
+                    classification.evidence_refs
+                    + (
+                        f"context_causal_validity_map:{validity_map_id}",
+                    )
+                )
+            ),
+        )
+        self.next_context_validity_decision_gate_id += 1
+        self.context_validity_decision_gates.append(record)
+        if len(self.context_validity_decision_gates) > self.max_memory:
+            self.context_validity_decision_gates = (
+                self.context_validity_decision_gates[-self.max_memory:]
+            )
+
+        self.stage_global_workspace_item(
+            source="intervention",
+            content=(
+                f"context validity decision gate={record.id}; "
+                f"environment={record.environment_signature}; "
+                f"classification={record.classification_status}; "
+                f"causal_allowed={record.causal_context_allowed}; "
+                f"action={record.gated_action}"
+            ),
+            salience=max(
+                0.50,
+                record.classification_confidence,
+            ),
+            evidence_refs=(
+                f"context_validity_decision_gate:{record.id}",
+                *record.evidence_refs[-4:],
+            ),
+        )
+        return record
+
     def discover_latent_context_hypotheses(
         self,
         schema_id: int,
@@ -5667,6 +5824,35 @@ class UnarchiEngine:
             details.append(detail)
 
         if focus in {
+            "context_validity_gate",
+            "validity_gated_decision",
+            "decision_gate",
+        }:
+            if self.context_validity_decision_gates:
+                item = self.context_validity_decision_gates[-1]
+                add(
+                    f"context_validity_decision_gate:{item.id}",
+                    (
+                        f"environment={item.environment_signature}; "
+                        f"classification={item.classification_status}; "
+                        f"confidence={item.classification_confidence}; "
+                        f"causal_allowed={item.causal_context_allowed}; "
+                        f"gated_action={item.gated_action}; "
+                        f"causal_enabled={item.causal_enabled_action}; "
+                        f"causal_ablated={item.causal_ablated_action}"
+                    ),
+                )
+                for ref in item.evidence_refs[-6:]:
+                    add(ref, "validity evidence used to gate causal context")
+                summary = (
+                    "The latest validity-gated decision used contextual causal "
+                    "evidence only when the environment map supported it and "
+                    "otherwise fell back to the causal-context ablation path."
+                )
+            else:
+                summary = "No validity-gated decision has been recorded."
+
+        elif focus in {
             "context_validity_map",
             "causal_validity_map",
             "validity_map",
@@ -6708,6 +6894,13 @@ class UnarchiEngine:
             "next_context_causal_validity_map_id": (
                 self.next_context_causal_validity_map_id
             ),
+            "context_validity_decision_gates": [
+                item.to_dict()
+                for item in self.context_validity_decision_gates
+            ],
+            "next_context_validity_decision_gate_id": (
+                self.next_context_validity_decision_gate_id
+            ),
             "success_prediction_bias": self.success_prediction_bias,
             "uncertainty_prediction_bias": self.uncertainty_prediction_bias,
             "stress_prediction_bias": self.stress_prediction_bias,
@@ -6777,6 +6970,10 @@ class UnarchiEngine:
             "context_causal_validity_maps",
             [],
         )
+        context_validity_decision_gates_payload = payload.get(
+            "context_validity_decision_gates",
+            [],
+        )
         value_weights_payload = payload.get("value_weights", _default_value_weights())
         if not isinstance(state_payload, dict):
             raise ValueError("invalid UNARCHI state")
@@ -6832,6 +7029,8 @@ class UnarchiEngine:
             raise ValueError("invalid UNARCHI context boundary discovery plans")
         if not isinstance(context_causal_validity_maps_payload, list):
             raise ValueError("invalid UNARCHI context causal validity maps")
+        if not isinstance(context_validity_decision_gates_payload, list):
+            raise ValueError("invalid UNARCHI context validity decision gates")
 
         memory: list[Experience] = []
         for item in memory_payload:
@@ -7177,6 +7376,22 @@ class UnarchiEngine:
                 ContextCausalValidityMap(**restored_item)
             )
 
+        context_validity_decision_gates: list[
+            ContextValidityDecisionGate
+        ] = []
+        for item in context_validity_decision_gates_payload:
+            if not isinstance(item, dict):
+                raise ValueError(
+                    "invalid UNARCHI context validity decision gate"
+                )
+            restored_item = dict(item)
+            restored_item["evidence_refs"] = tuple(
+                restored_item.get("evidence_refs", ())
+            )
+            context_validity_decision_gates.append(
+                ContextValidityDecisionGate(**restored_item)
+            )
+
         max_memory = max(16, min(int(payload.get("max_memory") or 256), 4096))
         max_active = max(
             1,
@@ -7393,6 +7608,25 @@ class UnarchiEngine:
                 )
                 + 1,
             ),
+            context_validity_decision_gates=(
+                context_validity_decision_gates[-max_memory:]
+            ),
+            next_context_validity_decision_gate_id=max(
+                int(
+                    payload.get(
+                        "next_context_validity_decision_gate_id"
+                    )
+                    or 1
+                ),
+                max(
+                    (
+                        item.id
+                        for item in context_validity_decision_gates
+                    ),
+                    default=0,
+                )
+                + 1,
+            ),
             success_prediction_bias=float(
                 payload.get("success_prediction_bias") or 0.0
             ),
@@ -7517,6 +7751,16 @@ class UnarchiEngine:
             ),
             "context_causal_validity_map_count": len(
                 self.context_causal_validity_maps
+            ),
+            "context_validity_decision_gate_count": len(
+                self.context_validity_decision_gates
+            ),
+            "context_validity_abstention_count": len(
+                [
+                    item
+                    for item in self.context_validity_decision_gates
+                    if not item.causal_context_allowed
+                ]
             ),
             "observed_counterfactual_count": len(
                 [

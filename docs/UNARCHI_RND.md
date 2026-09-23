@@ -1159,13 +1159,52 @@ This remains bounded functional causal research. A validity-map classification
 does not establish unrestricted real-world causation, subjective identity,
 sentience, phenomenal consciousness, or qualia.
 
-## Next checkpoint: v0.22 validity-gated decision use
+## v0.22 validity-gated decision-use checkpoint
 
-The next research step should connect the causal validity map to downstream
-prediction and planning so causal context evidence is used only in
-`tested_valid` or sufficiently supported nearby environments.
+UNARCHI v0.22 connects the causal validity map to downstream action prediction
+without allowing unsupported causal context to leak into a decision.
 
-The measurable target is decision gating: preserve the causal contribution in
-supported regions, automatically abstain from causal transfer in
-`tested_invalid` and `unknown` regions, and measure the behavioral difference
-with an explicit ablation.
+For one validity map and controlled-environment signature, the decision gate
+first classifies the environment using v0.21. It then evaluates the same
+candidate actions through three deterministic paths:
+
+- causal-context enabled: contextual self-schema and validated context transfer
+  are available;
+- causal-context ablated: only the broader autobiographical self-schema is
+  available;
+- validity gated: the contextual causal path is enabled only for
+  `tested_valid` and `supported_nearby` environments.
+
+For `tested_invalid` and `unknown` environments, the validity-gated path must
+match the causal-context ablation. For supported environments it must match the
+causal-enabled path.
+
+Each gate record stores the environment classification, classification
+confidence, whether causal context was allowed, all three selected actions,
+their predicted-success values, behavioral deltas, exact evidence references,
+and whether the gated result matched the expected path.
+
+The gate does not execute the selected action. It only changes which
+evidence-backed predictive pathway is allowed to influence the decision.
+
+The deterministic v0.22 benchmark requires:
+
+tested-valid environment -> contextual causal evidence allowed -> gated choice
+matches causal-enabled choice -> tested-invalid environment -> contextual causal
+evidence blocked -> gated choice matches causal ablation -> supported-nearby
+environment preserves causal influence -> boundary-unknown environment abstains
+-> export/restore -> identical gate records and evidence-grounded narrative.
+
+This remains bounded functional causal research. Decision gating does not prove
+subjective identity, sentience, phenomenal consciousness, qualia, or
+unrestricted real-world causation.
+
+## Next checkpoint: v0.23 validity-gate outcome calibration
+
+The next research step should compare validity-gated predictions with later
+observed outcomes and measure whether the gate improved decision calibration
+relative to always-enabled and always-ablated causal-context policies.
+
+The measurable target is policy calibration: strengthen trust in a validity
+region only when gated predictions remain better calibrated on new evidence,
+and reduce or revoke nearby support when the gate repeatedly underperforms.
