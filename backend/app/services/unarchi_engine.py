@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 
-UNARCHI_VERSION = "unarchi-v0.20"
+UNARCHI_VERSION = "unarchi-v0.21"
 _STOPWORDS = {
     "a",
     "an",
@@ -603,6 +603,40 @@ class ContextBoundaryDiscoveryPlan:
 
 
 @dataclass(frozen=True)
+class ContextCausalValidityMap:
+    id: int
+    hypothesis_id: int
+    source_invariance_assessment_ids: tuple[int, ...]
+    source_boundary_plan_ids: tuple[int, ...]
+    signature_assessment_ids: tuple[tuple[str, int], ...]
+    tested_valid_signatures: tuple[str, ...]
+    tested_invalid_signatures: tuple[str, ...]
+    dimensions: tuple[str, ...]
+    max_generalization_distance: int
+    confidence: float
+    evidence_refs: tuple[str, ...]
+    status: str = "active"
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class ContextValidityClassification:
+    map_id: int
+    hypothesis_id: int
+    environment_signature: str
+    status: str
+    nearest_valid_distance: int | None
+    nearest_invalid_distance: int | None
+    confidence: float
+    evidence_refs: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class LatentContextDiscovery:
     id: int
     parent_schema_id: int
@@ -671,7 +705,7 @@ class UnarchiEngine:
     """
     CPU-only experimental cognitive kernel.
 
-    v0.20 includes causal internal dynamics, bounded endogenous goals, a
+    v0.21 includes causal internal dynamics, bounded endogenous goals, a
     calibrated predictive self-model, prospective memory, evidence-grounded
     metacognition, explicit value arbitration, competing causal hypotheses,
     controlled self-intervention trials, a bounded recurrent global workspace,
@@ -680,8 +714,8 @@ class UnarchiEngine:
     context decomposition, transfer boundaries, conservative latent context
     discovery, intervention-supported context causality evidence, replicated
     reversible context-causality stability checks, bounded causal-invariance
-    tests across distinct controlled environments, and active low-risk boundary
-    probe planning with externally supplied outcome evidence.
+    tests across distinct controlled environments, active low-risk boundary
+    probe planning, and compact boundary-aware causal validity maps.
     """
 
     state: UnarchiState = field(default_factory=UnarchiState)
@@ -754,6 +788,10 @@ class UnarchiEngine:
         ContextBoundaryDiscoveryPlan
     ] = field(default_factory=list)
     next_context_boundary_discovery_plan_id: int = 1
+    context_causal_validity_maps: list[
+        ContextCausalValidityMap
+    ] = field(default_factory=list)
+    next_context_causal_validity_map_id: int = 1
     success_prediction_bias: float = 0.0
     uncertainty_prediction_bias: float = 0.0
     stress_prediction_bias: float = 0.0
@@ -4555,6 +4593,351 @@ class UnarchiEngine:
         )
         return plan
 
+    def consolidate_context_causal_validity_map(
+        self,
+        hypothesis_id: int,
+        *,
+        max_generalization_distance: int = 1,
+    ) -> ContextCausalValidityMap:
+        """
+        Consolidate the latest tested causal evidence into a compact validity map.
+
+        Exact tested environments remain authoritative. The map stores no
+        brute-force enumeration of unknown environments; those are classified
+        lazily by distance to the current tested-valid and tested-invalid sets.
+        """
+        hypothesis = next(
+            (
+                item
+                for item in self.latent_context_hypotheses
+                if item.id == hypothesis_id
+            ),
+            None,
+        )
+        if hypothesis is None:
+            raise ValueError("unknown latent context hypothesis")
+
+        trial_map = {item.id: item for item in self.context_causality_trials}
+
+        def signature_for(
+            assessment: ContextCausalStabilityAssessment,
+        ) -> str:
+            trial_ids = assessment.forward_trial_ids + assessment.reverse_trial_ids
+            trials = [trial_map.get(item_id) for item_id in trial_ids]
+            if not trials or any(item is None for item in trials):
+                raise ValueError("stability assessment references unknown trial")
+            signatures = {
+                item.controlled_signature
+                for item in trials
+                if item is not None
+            }
+            if len(signatures) != 1:
+                raise ValueError(
+                    "one stability assessment must use one environment signature"
+                )
+            return next(iter(signatures))
+
+        latest_by_signature: dict[
+            str,
+            ContextCausalStabilityAssessment,
+        ] = {}
+        for assessment in self.context_causal_stability_assessments:
+            if assessment.hypothesis_id != hypothesis_id:
+                continue
+            signature = signature_for(assessment)
+            previous = latest_by_signature.get(signature)
+            if previous is None or assessment.id > previous.id:
+                latest_by_signature[signature] = assessment
+
+        if not latest_by_signature:
+            raise ValueError("causal validity map requires tested environments")
+
+        def parse_signature(signature: str) -> dict[str, str]:
+            parsed: dict[str, str] = {}
+            for raw_part in signature.split(";"):
+                part = raw_part.strip()
+                if not part or "=" not in part:
+                    raise ValueError(
+                        "environment signature must use key=value parts"
+                    )
+                key, value = part.split("=", 1)
+                key = key.strip().casefold()
+                value = value.strip().casefold()
+                if not key or not value or key in parsed:
+                    raise ValueError("invalid environment signature")
+                parsed[key] = value
+            return parsed
+
+        valid = tuple(
+            sorted(
+                signature
+                for signature, assessment in latest_by_signature.items()
+                if assessment.status == "replicated_reversible"
+            )
+        )
+        invalid = tuple(
+            sorted(
+                signature
+                for signature, assessment in latest_by_signature.items()
+                if assessment.status != "replicated_reversible"
+            )
+        )
+        dimensions = tuple(
+            sorted(
+                {
+                    key
+                    for signature in latest_by_signature
+                    for key in parse_signature(signature)
+                }
+            )
+        )
+        signature_assessment_ids = tuple(
+            sorted(
+                (signature, assessment.id)
+                for signature, assessment in latest_by_signature.items()
+            )
+        )
+
+        invariance_ids = tuple(
+            item.id
+            for item in self.context_causal_invariance_assessments
+            if item.hypothesis_id == hypothesis_id
+        )
+        boundary_plan_ids = tuple(
+            item.id
+            for item in self.context_boundary_discovery_plans
+            if item.hypothesis_id == hypothesis_id and item.status == "resolved"
+        )
+
+        evidence_refs: list[str] = []
+        confidences: list[float] = []
+        for _, assessment in sorted(latest_by_signature.items()):
+            evidence_refs.append(
+                f"context_causal_stability_assessment:{assessment.id}"
+            )
+            evidence_refs.extend(assessment.evidence_refs[-4:])
+            if assessment.status == "replicated_reversible":
+                confidences.append(assessment.confidence)
+            else:
+                confidences.append(max(0.5, 1.0 - assessment.confidence))
+
+        for item in self.context_causal_invariance_assessments:
+            if item.id in invariance_ids:
+                evidence_refs.append(
+                    f"context_causal_invariance_assessment:{item.id}"
+                )
+        for item in self.context_boundary_discovery_plans:
+            if item.id in boundary_plan_ids:
+                evidence_refs.append(
+                    f"context_boundary_discovery_plan:{item.id}"
+                )
+
+        distance_limit = max(
+            0,
+            min(int(max_generalization_distance), 2),
+        )
+        confidence = sum(confidences) / max(1, len(confidences))
+        record = ContextCausalValidityMap(
+            id=self.next_context_causal_validity_map_id,
+            hypothesis_id=hypothesis_id,
+            source_invariance_assessment_ids=invariance_ids,
+            source_boundary_plan_ids=boundary_plan_ids,
+            signature_assessment_ids=signature_assessment_ids,
+            tested_valid_signatures=valid,
+            tested_invalid_signatures=invalid,
+            dimensions=dimensions,
+            max_generalization_distance=distance_limit,
+            confidence=round(_clamp(confidence), 6),
+            evidence_refs=tuple(dict.fromkeys(evidence_refs)),
+        )
+        self.next_context_causal_validity_map_id += 1
+        self.context_causal_validity_maps.append(record)
+        if len(self.context_causal_validity_maps) > self.max_memory:
+            self.context_causal_validity_maps = (
+                self.context_causal_validity_maps[-self.max_memory:]
+            )
+
+        self.stage_global_workspace_item(
+            source="intervention",
+            content=(
+                f"context causal validity map={record.id}; "
+                f"hypothesis={hypothesis_id}; "
+                f"valid={len(record.tested_valid_signatures)}; "
+                f"invalid={len(record.tested_invalid_signatures)}; "
+                f"distance={record.max_generalization_distance}"
+            ),
+            salience=max(0.55, record.confidence),
+            evidence_refs=(
+                f"context_causal_validity_map:{record.id}",
+                *record.evidence_refs[-4:],
+            ),
+        )
+        return record
+
+    def classify_context_causal_validity(
+        self,
+        validity_map_id: int,
+        *,
+        environment_signature: str,
+    ) -> ContextValidityClassification:
+        """
+        Classify one environment without enumerating the environment space.
+
+        Exact tested evidence wins. Untested environments are supported only
+        when they are within the configured distance of valid evidence and are
+        strictly closer to valid evidence than to any tested-invalid boundary.
+        """
+        validity_map = next(
+            (
+                item
+                for item in self.context_causal_validity_maps
+                if item.id == validity_map_id
+            ),
+            None,
+        )
+        if validity_map is None:
+            raise ValueError("unknown context causal validity map")
+
+        signature = environment_signature.strip()
+        if not signature:
+            raise ValueError("environment signature is required")
+
+        def parse_signature(value: str) -> dict[str, str]:
+            parsed: dict[str, str] = {}
+            for raw_part in value.split(";"):
+                part = raw_part.strip()
+                if not part or "=" not in part:
+                    raise ValueError(
+                        "environment signature must use key=value parts"
+                    )
+                key, item_value = part.split("=", 1)
+                key = key.strip().casefold()
+                item_value = item_value.strip().casefold()
+                if not key or not item_value or key in parsed:
+                    raise ValueError("invalid environment signature")
+                parsed[key] = item_value
+            return parsed
+
+        def distance(left: dict[str, str], right: dict[str, str]) -> int:
+            keys = set(left) | set(right)
+            return sum(left.get(key) != right.get(key) for key in keys)
+
+        parsed = parse_signature(signature)
+        parsed_valid = {
+            item: parse_signature(item)
+            for item in validity_map.tested_valid_signatures
+        }
+        parsed_invalid = {
+            item: parse_signature(item)
+            for item in validity_map.tested_invalid_signatures
+        }
+        assessment_ids = dict(validity_map.signature_assessment_ids)
+
+        if signature in parsed_valid:
+            status = "tested_valid"
+            valid_distance: int | None = 0
+            invalid_distance = (
+                min(
+                    distance(parsed, item)
+                    for item in parsed_invalid.values()
+                )
+                if parsed_invalid
+                else None
+            )
+            nearest_signature = signature
+        elif signature in parsed_invalid:
+            status = "tested_invalid"
+            valid_distance = (
+                min(
+                    distance(parsed, item)
+                    for item in parsed_valid.values()
+                )
+                if parsed_valid
+                else None
+            )
+            invalid_distance = 0
+            nearest_signature = signature
+        else:
+            valid_pairs = [
+                (distance(parsed, item), candidate)
+                for candidate, item in parsed_valid.items()
+            ]
+            invalid_pairs = [
+                (distance(parsed, item), candidate)
+                for candidate, item in parsed_invalid.items()
+            ]
+            valid_distance = (
+                min(item[0] for item in valid_pairs)
+                if valid_pairs
+                else None
+            )
+            invalid_distance = (
+                min(item[0] for item in invalid_pairs)
+                if invalid_pairs
+                else None
+            )
+            supportable = (
+                valid_distance is not None
+                and valid_distance <= validity_map.max_generalization_distance
+                and (
+                    invalid_distance is None
+                    or valid_distance < invalid_distance
+                )
+            )
+            status = "supported_nearby" if supportable else "unknown"
+            if supportable:
+                nearest_signature = min(
+                    (
+                        item
+                        for item in valid_pairs
+                        if item[0] == valid_distance
+                    ),
+                    key=lambda item: item[1],
+                )[1]
+            else:
+                nearest_signature = ""
+
+        refs = [f"context_causal_validity_map:{validity_map.id}"]
+        base_confidence = validity_map.confidence
+        if nearest_signature:
+            assessment_id = assessment_ids.get(nearest_signature)
+            if assessment_id is not None:
+                refs.append(
+                    f"context_causal_stability_assessment:{assessment_id}"
+                )
+                assessment = next(
+                    (
+                        item
+                        for item in self.context_causal_stability_assessments
+                        if item.id == assessment_id
+                    ),
+                    None,
+                )
+                if assessment is not None:
+                    if status == "tested_invalid":
+                        base_confidence = max(
+                            0.5,
+                            1.0 - assessment.confidence,
+                        )
+                    else:
+                        base_confidence = assessment.confidence
+
+        if status == "supported_nearby" and valid_distance is not None:
+            base_confidence *= 1.0 / (1.0 + valid_distance)
+        elif status == "unknown":
+            base_confidence = 0.0
+
+        return ContextValidityClassification(
+            map_id=validity_map.id,
+            hypothesis_id=validity_map.hypothesis_id,
+            environment_signature=signature,
+            status=status,
+            nearest_valid_distance=valid_distance,
+            nearest_invalid_distance=invalid_distance,
+            confidence=round(_clamp(base_confidence), 6),
+            evidence_refs=tuple(refs),
+        )
+
     def discover_latent_context_hypotheses(
         self,
         schema_id: int,
@@ -5284,6 +5667,35 @@ class UnarchiEngine:
             details.append(detail)
 
         if focus in {
+            "context_validity_map",
+            "causal_validity_map",
+            "validity_map",
+        }:
+            if self.context_causal_validity_maps:
+                item = self.context_causal_validity_maps[-1]
+                add(
+                    f"context_causal_validity_map:{item.id}",
+                    (
+                        f"hypothesis={item.hypothesis_id}; "
+                        f"valid={len(item.tested_valid_signatures)}; "
+                        f"invalid={len(item.tested_invalid_signatures)}; "
+                        f"dimensions={','.join(item.dimensions)}; "
+                        f"distance={item.max_generalization_distance}; "
+                        f"confidence={item.confidence}"
+                    ),
+                )
+                for ref in item.evidence_refs[-6:]:
+                    add(ref, "evidence consolidated into the causal validity map")
+                summary = (
+                    "The latest causal validity map keeps exact tested-valid and "
+                    "tested-invalid environments authoritative, supports only "
+                    "nearby regions that remain farther from known boundaries, "
+                    "and abstains elsewhere."
+                )
+            else:
+                summary = "No causal validity map has been consolidated."
+
+        elif focus in {
             "context_boundary_discovery",
             "boundary_discovery",
             "active_boundary",
@@ -6290,6 +6702,12 @@ class UnarchiEngine:
             "next_context_boundary_discovery_plan_id": (
                 self.next_context_boundary_discovery_plan_id
             ),
+            "context_causal_validity_maps": [
+                item.to_dict() for item in self.context_causal_validity_maps
+            ],
+            "next_context_causal_validity_map_id": (
+                self.next_context_causal_validity_map_id
+            ),
             "success_prediction_bias": self.success_prediction_bias,
             "uncertainty_prediction_bias": self.uncertainty_prediction_bias,
             "stress_prediction_bias": self.stress_prediction_bias,
@@ -6355,6 +6773,10 @@ class UnarchiEngine:
             "context_boundary_discovery_plans",
             [],
         )
+        context_causal_validity_maps_payload = payload.get(
+            "context_causal_validity_maps",
+            [],
+        )
         value_weights_payload = payload.get("value_weights", _default_value_weights())
         if not isinstance(state_payload, dict):
             raise ValueError("invalid UNARCHI state")
@@ -6408,6 +6830,8 @@ class UnarchiEngine:
             raise ValueError("invalid UNARCHI context causal invariance assessments")
         if not isinstance(context_boundary_discovery_plans_payload, list):
             raise ValueError("invalid UNARCHI context boundary discovery plans")
+        if not isinstance(context_causal_validity_maps_payload, list):
+            raise ValueError("invalid UNARCHI context causal validity maps")
 
         memory: list[Experience] = []
         for item in memory_payload:
@@ -6719,6 +7143,40 @@ class UnarchiEngine:
                 ContextBoundaryDiscoveryPlan(**restored_item)
             )
 
+        context_causal_validity_maps: list[ContextCausalValidityMap] = []
+        for item in context_causal_validity_maps_payload:
+            if not isinstance(item, dict):
+                raise ValueError("invalid UNARCHI context causal validity map")
+            restored_item = dict(item)
+            restored_item["source_invariance_assessment_ids"] = tuple(
+                restored_item.get("source_invariance_assessment_ids", ())
+            )
+            restored_item["source_boundary_plan_ids"] = tuple(
+                restored_item.get("source_boundary_plan_ids", ())
+            )
+            restored_item["signature_assessment_ids"] = tuple(
+                tuple(pair)
+                for pair in restored_item.get(
+                    "signature_assessment_ids",
+                    (),
+                )
+            )
+            restored_item["tested_valid_signatures"] = tuple(
+                restored_item.get("tested_valid_signatures", ())
+            )
+            restored_item["tested_invalid_signatures"] = tuple(
+                restored_item.get("tested_invalid_signatures", ())
+            )
+            restored_item["dimensions"] = tuple(
+                restored_item.get("dimensions", ())
+            )
+            restored_item["evidence_refs"] = tuple(
+                restored_item.get("evidence_refs", ())
+            )
+            context_causal_validity_maps.append(
+                ContextCausalValidityMap(**restored_item)
+            )
+
         max_memory = max(16, min(int(payload.get("max_memory") or 256), 4096))
         max_active = max(
             1,
@@ -6924,6 +7382,17 @@ class UnarchiEngine:
                 )
                 + 1,
             ),
+            context_causal_validity_maps=(
+                context_causal_validity_maps[-max_memory:]
+            ),
+            next_context_causal_validity_map_id=max(
+                int(payload.get("next_context_causal_validity_map_id") or 1),
+                max(
+                    (item.id for item in context_causal_validity_maps),
+                    default=0,
+                )
+                + 1,
+            ),
             success_prediction_bias=float(
                 payload.get("success_prediction_bias") or 0.0
             ),
@@ -7045,6 +7514,9 @@ class UnarchiEngine:
                     for item in self.context_boundary_discovery_plans
                     if item.status == "resolved"
                 ]
+            ),
+            "context_causal_validity_map_count": len(
+                self.context_causal_validity_maps
             ),
             "observed_counterfactual_count": len(
                 [
