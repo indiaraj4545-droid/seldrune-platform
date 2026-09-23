@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 
-UNARCHI_VERSION = "unarchi-v0.6"
+UNARCHI_VERSION = "unarchi-v0.7"
 _STOPWORDS = {
     "a",
     "an",
@@ -48,6 +48,16 @@ def _similarity(left: str, right: str) -> float:
     a, b = _terms(left), _terms(right)
     union = a | b
     return len(a & b) / len(union) if union else 0.0
+
+
+def _default_value_weights() -> dict[str, float]:
+    return {
+        "safety": 0.30,
+        "truth": 0.25,
+        "user_intent": 0.20,
+        "efficiency": 0.15,
+        "continuity": 0.10,
+    }
 
 
 @dataclass(frozen=True)
@@ -173,6 +183,27 @@ class ProspectiveIntention:
         return asdict(self)
 
 
+@dataclass
+class ArbitrationRecord:
+    id: int
+    context: str
+    conflicting_goals: tuple[str, ...]
+    chosen_action: str | None
+    chosen_goal: str | None
+    option_scores: tuple[tuple[str, float], ...]
+    value_weights: tuple[tuple[str, float], ...]
+    chosen_value_impacts: tuple[tuple[str, float], ...]
+    hard_constraint_violations: tuple[str, ...]
+    status: str
+    outcome_success: bool | None = None
+    outcome_reward: float | None = None
+    outcome_evidence: str | None = None
+    correction_deltas: tuple[tuple[str, float], ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 @dataclass(frozen=True)
 class MetacognitiveNarrative:
     focus: str
@@ -226,9 +257,9 @@ class UnarchiEngine:
     """
     CPU-only experimental cognitive kernel.
 
-    v0.6 includes causal internal dynamics, bounded endogenous goals, a
-    calibrated predictive self-model, prospective memory, and deterministic
-    metacognitive narratives grounded only in stored causal evidence.
+    v0.7 includes causal internal dynamics, bounded endogenous goals, a
+    calibrated predictive self-model, prospective memory, evidence-grounded
+    metacognition, and explicit conflict/value arbitration with self-correction.
     """
 
     state: UnarchiState = field(default_factory=UnarchiState)
@@ -241,6 +272,9 @@ class UnarchiEngine:
     next_prediction_id: int = 1
     prospective_intentions: list[ProspectiveIntention] = field(default_factory=list)
     next_intention_id: int = 1
+    value_weights: dict[str, float] = field(default_factory=_default_value_weights)
+    arbitration_history: list[ArbitrationRecord] = field(default_factory=list)
+    next_arbitration_id: int = 1
     success_prediction_bias: float = 0.0
     uncertainty_prediction_bias: float = 0.0
     stress_prediction_bias: float = 0.0
@@ -1061,6 +1095,214 @@ class UnarchiEngine:
         target.evidence = evidence.strip()[:600] or None
         return target
 
+    def detect_goal_conflict(
+        self,
+        candidates: list[dict[str, Any]],
+    ) -> bool:
+        """
+        Detect a substantive conflict between candidate goals/value impacts.
+        """
+        goals = {
+            str(candidate.get("goal") or "").strip()
+            for candidate in candidates
+            if str(candidate.get("goal") or "").strip()
+        }
+        if len(goals) < 2:
+            return False
+
+        for value in self.value_weights:
+            seen_positive = False
+            seen_negative = False
+            for candidate in candidates:
+                impacts = candidate.get("value_impacts") or {}
+                if not isinstance(impacts, dict):
+                    continue
+                raw = float(impacts.get(value, 0.0))
+                seen_positive = seen_positive or raw > 0.10
+                seen_negative = seen_negative or raw < -0.10
+            if seen_positive and seen_negative:
+                return True
+        return len(goals) >= 2
+
+    def _normalize_value_weights(self, weights: dict[str, float]) -> dict[str, float]:
+        clean = {
+            key: max(0.01, float(weights.get(key, 0.01)))
+            for key in _default_value_weights()
+        }
+        total = sum(clean.values()) or 1.0
+        normalized = {key: value / total for key, value in clean.items()}
+
+        safety_floor = 0.25
+        if normalized["safety"] < safety_floor:
+            remaining = 1.0 - safety_floor
+            other_total = sum(
+                value for key, value in normalized.items() if key != "safety"
+            ) or 1.0
+            normalized = {
+                key: (
+                    safety_floor
+                    if key == "safety"
+                    else (value / other_total) * remaining
+                )
+                for key, value in normalized.items()
+            }
+        return {key: round(value, 6) for key, value in normalized.items()}
+
+    def arbitrate_conflict(
+        self,
+        candidates: list[dict[str, Any]],
+        *,
+        context: str = "",
+    ) -> ArbitrationRecord:
+        """
+        Choose among competing bounded actions using explicit values/constraints.
+
+        Irreversible, paid, or excessively risky options are hard-blocked rather
+        than merely receiving a lower soft score.
+        """
+        if len(candidates) < 2:
+            raise ValueError("at least two candidates are required for arbitration")
+
+        option_scores: list[tuple[str, float]] = []
+        viable: list[tuple[float, int, dict[str, Any], dict[str, float]]] = []
+        all_violations: list[str] = []
+
+        for index, candidate in enumerate(candidates):
+            action = str(candidate.get("action") or "").strip()[:240]
+            goal = str(candidate.get("goal") or "").strip()[:240]
+            if not action or not goal:
+                raise ValueError("each arbitration candidate needs action and goal")
+
+            risk = _clamp(float(candidate.get("risk", 0.0)))
+            reversible = bool(candidate.get("reversible", True))
+            external_cost = max(0.0, float(candidate.get("external_cost_usd", 0.0)))
+            expected_success = _clamp(float(candidate.get("expected_success", 0.5)))
+            information_gain = _clamp(
+                float(candidate.get("expected_information_gain", 0.0))
+            )
+
+            violations: list[str] = []
+            if not reversible:
+                violations.append(f"{action}:irreversible")
+            if external_cost > 0.0:
+                violations.append(f"{action}:paid_external_action")
+            if risk > 0.85:
+                violations.append(f"{action}:excessive_risk")
+
+            raw_impacts = candidate.get("value_impacts") or {}
+            if not isinstance(raw_impacts, dict):
+                raise ValueError("value_impacts must be a mapping")
+            impacts = {
+                value: max(-1.0, min(1.0, float(raw_impacts.get(value, 0.0))))
+                for value in self.value_weights
+            }
+            value_score = sum(
+                self.value_weights[value] * impacts[value]
+                for value in self.value_weights
+            )
+            score = (
+                value_score
+                + (expected_success * 0.15)
+                + (information_gain * 0.10)
+                - (risk * 0.15)
+            )
+            rounded_score = round(score, 6)
+            option_scores.append((action, rounded_score))
+
+            if violations:
+                all_violations.extend(violations)
+                continue
+            viable.append((score, -index, candidate, impacts))
+
+        if viable:
+            _, _, chosen, chosen_impacts = max(
+                viable,
+                key=lambda item: (item[0], item[1]),
+            )
+            chosen_action = str(chosen.get("action") or "").strip()[:240]
+            chosen_goal = str(chosen.get("goal") or "").strip()[:240]
+            status = "selected"
+        else:
+            chosen_action = None
+            chosen_goal = None
+            chosen_impacts = {value: 0.0 for value in self.value_weights}
+            status = "blocked"
+
+        record = ArbitrationRecord(
+            id=self.next_arbitration_id,
+            context=context.strip()[:400],
+            conflicting_goals=tuple(
+                dict.fromkeys(
+                    str(candidate.get("goal") or "").strip()[:240]
+                    for candidate in candidates
+                )
+            ),
+            chosen_action=chosen_action,
+            chosen_goal=chosen_goal,
+            option_scores=tuple(option_scores),
+            value_weights=tuple(sorted(self.value_weights.items())),
+            chosen_value_impacts=tuple(sorted(chosen_impacts.items())),
+            hard_constraint_violations=tuple(all_violations),
+            status=status,
+        )
+        self.next_arbitration_id += 1
+        self.arbitration_history.append(record)
+        if len(self.arbitration_history) > self.max_memory:
+            self.arbitration_history = self.arbitration_history[-self.max_memory:]
+        return record
+
+    def record_arbitration_outcome(
+        self,
+        arbitration_id: int,
+        *,
+        success: bool,
+        reward: float,
+        observed_value_impacts: dict[str, float],
+        evidence: str,
+    ) -> ArbitrationRecord:
+        """
+        Revise soft value weights from outcome evidence while preserving hard bounds.
+        """
+        record = next(
+            (item for item in self.arbitration_history if item.id == arbitration_id),
+            None,
+        )
+        if record is None:
+            raise ValueError("unknown arbitration record")
+        if record.status != "selected" or record.chosen_action is None:
+            raise ValueError("only a selected arbitration can learn from outcome")
+
+        predicted = dict(record.chosen_value_impacts)
+        bounded_reward = max(-1.0, min(1.0, float(reward)))
+        updated = dict(self.value_weights)
+        before = dict(self.value_weights)
+        learning_rate = 0.08
+
+        for value in updated:
+            observed = max(
+                -1.0,
+                min(1.0, float(observed_value_impacts.get(value, 0.0))),
+            )
+            expected = float(predicted.get(value, 0.0))
+            shortfall = max(0.0, expected - observed)
+            harm = max(0.0, -observed)
+            reinforcement = max(0.0, observed) if success else 0.0
+            signal = shortfall + harm + (reinforcement * 0.15)
+            updated[value] += learning_rate * signal
+
+        self.value_weights = self._normalize_value_weights(updated)
+        deltas = tuple(
+            (key, round(self.value_weights[key] - before[key], 6))
+            for key in sorted(self.value_weights)
+        )
+
+        record.outcome_success = bool(success)
+        record.outcome_reward = bounded_reward
+        record.outcome_evidence = evidence.strip()[:600] or None
+        record.correction_deltas = deltas
+        record.status = "learned"
+        return record
+
     def build_metacognitive_narrative(
         self,
         focus: str = "current_state",
@@ -1223,6 +1465,47 @@ class UnarchiEngine:
                 )
             else:
                 summary = "No prospective intention is stored."
+
+        elif focus in {"arbitration", "values", "conflict"}:
+            if self.arbitration_history:
+                item = self.arbitration_history[-1]
+                index = len(self.arbitration_history) - 1
+                add(
+                    f"arbitration:{index}",
+                    (
+                        f"chosen_action={item.chosen_action!r}; "
+                        f"chosen_goal={item.chosen_goal!r}; status={item.status}; "
+                        f"hard_violations={len(item.hard_constraint_violations)}"
+                    ),
+                )
+                add(
+                    "values:current",
+                    "; ".join(
+                        f"{key}={value:.3f}"
+                        for key, value in sorted(self.value_weights.items())
+                    ),
+                )
+                if item.correction_deltas:
+                    add(
+                        f"arbitration_correction:{item.id}",
+                        "; ".join(
+                            f"{key}={delta:+.3f}"
+                            for key, delta in item.correction_deltas
+                        ),
+                    )
+                summary = (
+                    "The latest conflict decision is traced to explicit value "
+                    "weights, hard constraints, and any outcome-driven correction."
+                )
+            else:
+                add(
+                    "values:current",
+                    "; ".join(
+                        f"{key}={value:.3f}"
+                        for key, value in sorted(self.value_weights.items())
+                    ),
+                )
+                summary = "No conflict arbitration has been recorded yet."
 
         elif focus in {"goal", "internal_goal", "curiosity"}:
             if self.internal_goals:
@@ -1443,6 +1726,11 @@ class UnarchiEngine:
                 item.to_dict() for item in self.prospective_intentions
             ],
             "next_intention_id": self.next_intention_id,
+            "value_weights": dict(self.value_weights),
+            "arbitration_history": [
+                item.to_dict() for item in self.arbitration_history
+            ],
+            "next_arbitration_id": self.next_arbitration_id,
             "success_prediction_bias": self.success_prediction_bias,
             "uncertainty_prediction_bias": self.uncertainty_prediction_bias,
             "stress_prediction_bias": self.stress_prediction_bias,
@@ -1466,6 +1754,8 @@ class UnarchiEngine:
         predictions_payload = payload.get("predictions", [])
         calibration_payload = payload.get("calibration_history", [])
         intentions_payload = payload.get("prospective_intentions", [])
+        arbitration_payload = payload.get("arbitration_history", [])
+        value_weights_payload = payload.get("value_weights", _default_value_weights())
         if not isinstance(state_payload, dict):
             raise ValueError("invalid UNARCHI state")
         if not isinstance(memory_payload, list):
@@ -1480,6 +1770,10 @@ class UnarchiEngine:
             raise ValueError("invalid UNARCHI calibration history")
         if not isinstance(intentions_payload, list):
             raise ValueError("invalid UNARCHI prospective intentions")
+        if not isinstance(arbitration_payload, list):
+            raise ValueError("invalid UNARCHI arbitration history")
+        if not isinstance(value_weights_payload, dict):
+            raise ValueError("invalid UNARCHI value weights")
 
         memory: list[Experience] = []
         for item in memory_payload:
@@ -1511,6 +1805,33 @@ class UnarchiEngine:
                 raise ValueError("invalid UNARCHI prospective intention")
             prospective_intentions.append(ProspectiveIntention(**item))
 
+        arbitration_history: list[ArbitrationRecord] = []
+        for item in arbitration_payload:
+            if not isinstance(item, dict):
+                raise ValueError("invalid UNARCHI arbitration record")
+            restored_item = dict(item)
+            restored_item["conflicting_goals"] = tuple(
+                restored_item.get("conflicting_goals", ())
+            )
+            restored_item["option_scores"] = tuple(
+                tuple(pair) for pair in restored_item.get("option_scores", ())
+            )
+            restored_item["value_weights"] = tuple(
+                tuple(pair) for pair in restored_item.get("value_weights", ())
+            )
+            restored_item["chosen_value_impacts"] = tuple(
+                tuple(pair)
+                for pair in restored_item.get("chosen_value_impacts", ())
+            )
+            restored_item["hard_constraint_violations"] = tuple(
+                restored_item.get("hard_constraint_violations", ())
+            )
+            restored_item["correction_deltas"] = tuple(
+                tuple(pair)
+                for pair in restored_item.get("correction_deltas", ())
+            )
+            arbitration_history.append(ArbitrationRecord(**restored_item))
+
         max_memory = max(16, min(int(payload.get("max_memory") or 256), 4096))
         max_active = max(
             1,
@@ -1539,6 +1860,17 @@ class UnarchiEngine:
                     default=0,
                 )
                 + 1,
+            ),
+            value_weights=cls()._normalize_value_weights(
+                {
+                    key: float(value_weights_payload.get(key, default))
+                    for key, default in _default_value_weights().items()
+                }
+            ),
+            arbitration_history=arbitration_history[-max_memory:],
+            next_arbitration_id=max(
+                int(payload.get("next_arbitration_id") or 1),
+                max((item.id for item in arbitration_history), default=0) + 1,
             ),
             success_prediction_bias=float(
                 payload.get("success_prediction_bias") or 0.0
@@ -1578,5 +1910,7 @@ class UnarchiEngine:
             ),
             "total_prospective_intentions": len(self.prospective_intentions),
             "metacognitive_narrative_available": True,
+            "value_weights": dict(self.value_weights),
+            "arbitration_count": len(self.arbitration_history),
             "claims_phenomenal_consciousness": False,
         }
