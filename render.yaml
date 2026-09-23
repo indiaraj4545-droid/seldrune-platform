@@ -54,6 +54,10 @@ services:
         value: 2
       - key: SELDRUNE_AI_PDF_MAX_OUTPUT_TOKENS
         value: 2200
+      - key: SELDRUNE_PDF_BRAIN_ENABLED
+        value: true
+      - key: SELDRUNE_PDF_BRAIN_MIN_CONFIDENCE
+        value: 0.78
       - key: SELDRUNE_AI_IMAGE_DETAIL
         value: low
       - key: SELDRUNE_AI_PDF_DETAIL
@@ -135,6 +139,10 @@ services:
         value: 2
       - key: SELDRUNE_AI_PDF_MAX_OUTPUT_TOKENS
         value: 2200
+      - key: SELDRUNE_PDF_BRAIN_ENABLED
+        value: true
+      - key: SELDRUNE_PDF_BRAIN_MIN_CONFIDENCE
+        value: 0.78
       - key: SELDRUNE_AI_IMAGE_DETAIL
         value: low
       - key: SELDRUNE_AI_PDF_DETAIL
