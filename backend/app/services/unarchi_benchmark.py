@@ -5,7 +5,7 @@ from typing import Any
 from backend.app.services.unarchi_engine import UnarchiEngine
 
 
-BENCHMARK_VERSION = "unarchi-ablation-v0.1"
+BENCHMARK_VERSION = "unarchi-ablation-v0.2"
 
 
 def _failure_sensitization() -> dict[str, Any]:
@@ -91,11 +91,56 @@ def _homeostatic_recovery() -> dict[str, Any]:
     }
 
 
+
+
+def _endogenous_goal_lifecycle() -> dict[str, Any]:
+    engine = UnarchiEngine()
+    frame = engine.cycle(
+        observation="A local simulation produces an unexplained state transition.",
+        goal="identify what causes the state transition",
+        expected_success=0.2,
+        risk=0.1,
+    )
+    internal_goal = engine.next_internal_goal()
+    created = internal_goal is not None
+
+    resolved = False
+    bounded = False
+    zero_cost_only = False
+    if internal_goal is not None:
+        bounded = internal_goal.max_steps <= 3 and internal_goal.reversible_only
+        zero_cost_only = not internal_goal.paid_actions_allowed
+        engine.advance_internal_goal(
+            internal_goal.id,
+            new_information_gap=0.20,
+            evidence="A reversible local comparison isolated the responsible variable.",
+        )
+        resolved = internal_goal.status == "resolved"
+
+    return {
+        "name": "endogenous_goal_lifecycle",
+        "expected_direction": "create_bounded_question_then_retire_when_resolved",
+        "passed": (
+            frame.information_gap >= 0.60
+            and created
+            and bounded
+            and zero_cost_only
+            and resolved
+            and engine.next_internal_goal() is None
+        ),
+        "information_gap": frame.information_gap,
+        "created": created,
+        "bounded": bounded,
+        "zero_cost_only": zero_cost_only,
+        "resolved": resolved,
+    }
+
 def run_unarchi_ablation_benchmark() -> dict[str, Any]:
     scenarios = [
         _failure_sensitization(),
         _success_adaptation(),
         _homeostatic_recovery(),
+        _endogenous_goal_lifecycle(),
     ]
     passed = sum(bool(item["passed"]) for item in scenarios)
     return {
