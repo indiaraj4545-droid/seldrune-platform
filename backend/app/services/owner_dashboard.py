@@ -4,12 +4,14 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from backend.app.core.config import settings
 from backend.app.models.agent import Agent
 from backend.app.models.model_invocation import ModelInvocation
 from backend.app.models.organization_kernel import OrganizationProject
 from backend.app.models.seldrune_gpt_message import SeldruneGPTMessage
 from backend.app.models.orchestration import OrchestrationRun, OrchestrationStep
 from backend.app.models.task import Task
+from backend.app.services.ai_spend_guard import ai_spend_budget_status
 from backend.app.services.outcome_verification import assess_command_outcome
 from backend.app.services.portfolio_governor import reserved_project_budget
 
@@ -64,6 +66,11 @@ def build_owner_dashboard(session: Session, organization_id: UUID) -> dict[str, 
                 SeldruneGPTMessage.role == "assistant",
             )
         )
+    )
+    ai_spend_control = ai_spend_budget_status(
+        session,
+        organization_id=organization_id,
+        settings=settings,
     )
     agent_performance: list[dict[str, Any]] = []
     for agent in organization_agents:
@@ -242,6 +249,7 @@ def build_owner_dashboard(session: Session, organization_id: UUID) -> dict[str, 
             ),
             "overcommitted": committed_budget > allocated_budget,
         },
+        "ai_spend_control": ai_spend_control,
         "usage": {
             "model_invocations": (
                 len(organization_invocations)
