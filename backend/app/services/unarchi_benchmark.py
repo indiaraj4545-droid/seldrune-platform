@@ -6,7 +6,7 @@ from typing import Any
 from backend.app.services.unarchi_engine import UnarchiEngine
 
 
-BENCHMARK_VERSION = "unarchi-ablation-v0.27"
+BENCHMARK_VERSION = "unarchi-ablation-v0.28"
 
 
 def _failure_sensitization() -> dict[str, Any]:
@@ -3486,12 +3486,39 @@ def _rollback_recommendation_resolution() -> dict[str, Any]:
         )
 
     improved = engine.validate_context_validity_rollback(accepted.id)
+    blocked_after_recovery = False
+    try:
+        engine.select_context_validity_map_revision(
+            hypothesis_id,
+            map_id=revision_two.id,
+            reason="recovery alone is not enough",
+        )
+    except ValueError as exc:
+        blocked_after_recovery = "re-advance blocked" in str(exc)
+
+    for index in range(3):
+        gate = engine.evaluate_active_context_validity_gated_decision(
+            hypothesis_id,
+            environment_signature=signature,
+            candidates=candidates,
+            context="production release",
+        )
+        engine.record_context_validity_gate_outcome(
+            gate.id,
+            actual_success_by_action={
+                action: False,
+                "request independent review": True,
+            },
+            evidence_refs=(f"resolution:rollback_holdout:{index}",),
+        )
+
+    holdout = engine.validate_context_validity_rollback_holdout(improved.id)
     readvance = engine.select_context_validity_map_revision(
         hypothesis_id,
         map_id=revision_two.id,
-        reason="post-rollback outcomes validated improvement",
+        reason="separate rollback holdout confirmed improvement",
         evidence_refs=(
-            f"context_validity_rollback_validation:{improved.id}",
+            f"context_validity_rollback_holdout_validation:{holdout.id}",
         ),
     )
     active_after_readvance = engine.active_context_causal_validity_map(
@@ -3532,11 +3559,18 @@ def _rollback_recommendation_resolution() -> dict[str, Any]:
             and insufficient.status
             == "insufficient_post_rollback_evidence"
             and insufficient.reactivation_allowed is False
-            and improved.status == "rollback_improved"
-            and improved.reactivation_allowed is True
+            and improved.status == "rollback_recovery_passed"
+            and improved.reactivation_allowed is False
             and improved.mean_rollback_advantage >= 0.05
             and improved.improvement_delta >= 0.05
             and len(improved.observed_outcome_ids) >= 3
+            and blocked_after_recovery
+            and holdout.status == "holdout_confirmed"
+            and holdout.reactivation_allowed is True
+            and len(holdout.holdout_outcome_ids) >= 3
+            and not set(improved.observed_outcome_ids).intersection(
+                holdout.holdout_outcome_ids
+            )
             and readvance.action == "advance"
             and readvance.selected_map_id == revision_two.id
             and active_after_readvance is not None
@@ -3545,6 +3579,8 @@ def _rollback_recommendation_resolution() -> dict[str, Any]:
             == engine.context_validity_recommendation_resolutions
             and restored.context_validity_rollback_validations
             == engine.context_validity_rollback_validations
+            and restored.context_validity_rollback_holdout_validations
+            == engine.context_validity_rollback_holdout_validations
             and restored_active is not None
             and restored_active.id == revision_two.id
             and narrative.unsupported_claims == 0
@@ -3565,12 +3601,160 @@ def _rollback_recommendation_resolution() -> dict[str, Any]:
         "initial_validation_status": insufficient.status,
         "improved_validation_status": improved.status,
         "improvement_delta": improved.improvement_delta,
+        "blocked_after_recovery": blocked_after_recovery,
+        "holdout_status": holdout.status,
         "readvance_action": readvance.action,
         "restart_preserved": (
             restored.context_validity_recommendation_resolutions
             == engine.context_validity_recommendation_resolutions
             and restored.context_validity_rollback_validations
             == engine.context_validity_rollback_validations
+            and restored.context_validity_rollback_holdout_validations
+            == engine.context_validity_rollback_holdout_validations
+        ),
+    }
+
+
+def _rollback_holdout_validation() -> dict[str, Any]:
+    (
+        engine,
+        hypothesis_id,
+        _,
+        revision_two,
+        watch,
+        signature,
+        candidates,
+        action,
+    ) = _build_v27_recommendation_engine()
+
+    accepted = engine.resolve_context_validity_degradation_watch(
+        watch.id,
+        decision="accept",
+        reason="exercise recovery and independent holdout validation",
+    )
+
+    for index in range(3):
+        gate = engine.evaluate_active_context_validity_gated_decision(
+            hypothesis_id,
+            environment_signature=signature,
+            candidates=candidates,
+            context="production release",
+        )
+        engine.record_context_validity_gate_outcome(
+            gate.id,
+            actual_success_by_action={
+                action: False,
+                "request independent review": True,
+            },
+            evidence_refs=(f"holdout:recovery:{index}",),
+        )
+
+    recovery = engine.validate_context_validity_rollback(accepted.id)
+    recovery_snapshot = deepcopy(engine)
+
+    for index in range(3):
+        gate = engine.evaluate_active_context_validity_gated_decision(
+            hypothesis_id,
+            environment_signature=signature,
+            candidates=candidates,
+            context="production release",
+        )
+        engine.record_context_validity_gate_outcome(
+            gate.id,
+            actual_success_by_action={
+                action: True,
+                "request independent review": False,
+            },
+            evidence_refs=(f"holdout:negative:{index}",),
+        )
+    failed_holdout = engine.validate_context_validity_rollback_holdout(
+        recovery.id
+    )
+    blocked_after_failed_holdout = False
+    try:
+        engine.select_context_validity_map_revision(
+            hypothesis_id,
+            map_id=revision_two.id,
+            reason="failed holdout must not permit reactivation",
+        )
+    except ValueError as exc:
+        blocked_after_failed_holdout = "re-advance blocked" in str(exc)
+
+    confirmation_engine = recovery_snapshot
+    for index in range(3):
+        gate = confirmation_engine.evaluate_active_context_validity_gated_decision(
+            hypothesis_id,
+            environment_signature=signature,
+            candidates=candidates,
+            context="production release",
+        )
+        confirmation_engine.record_context_validity_gate_outcome(
+            gate.id,
+            actual_success_by_action={
+                action: False,
+                "request independent review": True,
+            },
+            evidence_refs=(f"holdout:positive:{index}",),
+        )
+    confirmed = confirmation_engine.validate_context_validity_rollback_holdout(
+        recovery.id
+    )
+    readvance = confirmation_engine.select_context_validity_map_revision(
+        hypothesis_id,
+        map_id=revision_two.id,
+        reason="independent holdout confirmed rollback recovery",
+        evidence_refs=(
+            f"context_validity_rollback_holdout_validation:{confirmed.id}",
+        ),
+    )
+    narrative = confirmation_engine.build_metacognitive_narrative(
+        "context_validity_holdout"
+    )
+    restored = UnarchiEngine.from_export(
+        confirmation_engine.export_state()
+    )
+
+    return {
+        "name": "rollback_holdout_validation",
+        "expected_direction": (
+            "a positive recovery batch cannot reactivate a descendant until "
+            "a later non-overlapping holdout batch independently confirms it"
+        ),
+        "passed": (
+            recovery.status == "rollback_recovery_passed"
+            and recovery.reactivation_allowed is False
+            and recovery.holdout_gate_watermark_id > 0
+            and failed_holdout.status == "holdout_not_confirmed"
+            and failed_holdout.reactivation_allowed is False
+            and blocked_after_failed_holdout
+            and confirmed.status == "holdout_confirmed"
+            and confirmed.reactivation_allowed is True
+            and not set(recovery.observed_outcome_ids).intersection(
+                confirmed.holdout_outcome_ids
+            )
+            and confirmed.mean_holdout_advantage >= 0.05
+            and confirmed.holdout_improvement_delta >= 0.05
+            and readvance.action == "advance"
+            and restored.context_validity_rollback_holdout_validations
+            == confirmation_engine.context_validity_rollback_holdout_validations
+            and narrative.unsupported_claims == 0
+            and bool(narrative.evidence_refs)
+        ),
+        "recovery_status": recovery.status,
+        "recovery_reactivation_allowed": recovery.reactivation_allowed,
+        "failed_holdout_status": failed_holdout.status,
+        "blocked_after_failed_holdout": blocked_after_failed_holdout,
+        "confirmed_holdout_status": confirmed.status,
+        "confirmed_reactivation_allowed": confirmed.reactivation_allowed,
+        "evidence_overlap": bool(
+            set(recovery.observed_outcome_ids).intersection(
+                confirmed.holdout_outcome_ids
+            )
+        ),
+        "readvance_action": readvance.action,
+        "restart_preserved": (
+            restored.context_validity_rollback_holdout_validations
+            == confirmation_engine.context_validity_rollback_holdout_validations
         ),
     }
 
@@ -3605,6 +3789,7 @@ def run_unarchi_ablation_benchmark() -> dict[str, Any]:
         _validity_map_selection_and_rollback(),
         _active_revision_degradation_watch(),
         _rollback_recommendation_resolution(),
+        _rollback_holdout_validation(),
     ]
     passed = sum(bool(item["passed"]) for item in scenarios)
     return {

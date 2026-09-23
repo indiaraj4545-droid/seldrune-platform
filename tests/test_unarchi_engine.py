@@ -167,7 +167,7 @@ def test_snapshot_never_claims_phenomenal_consciousness() -> None:
     snapshot = engine.snapshot()
 
     assert snapshot["claims_phenomenal_consciousness"] is False
-    assert snapshot["version"] == "unarchi-v0.27"
+    assert snapshot["version"] == "unarchi-v0.28"
 
 
 def test_export_restore_preserves_identity_state_and_memory() -> None:
@@ -4446,20 +4446,54 @@ def test_accepted_recommendation_blocks_readvance_until_rollback_improves() -> N
         )
 
     improved = engine.validate_context_validity_rollback(accepted.id)
+
+    try:
+        engine.select_context_validity_map_revision(
+            base_map.hypothesis_id,
+            map_id=revision_two.id,
+            reason="recovery alone must not permit re-advance",
+        )
+    except ValueError as exc:
+        assert "re-advance blocked" in str(exc)
+    else:
+        raise AssertionError("recovery batch must still require holdout")
+
+    for index in range(3):
+        gate = engine.evaluate_active_context_validity_gated_decision(
+            base_map.hypothesis_id,
+            environment_signature=signature,
+            candidates=_validity_gate_candidates(),
+            context="production release",
+        )
+        engine.record_context_validity_gate_outcome(
+            gate.id,
+            actual_success_by_action={
+                "run automated release check": False,
+                "request independent review": True,
+            },
+            evidence_refs=(f"resolution:rollback:holdout:{index}",),
+        )
+
+    holdout = engine.validate_context_validity_rollback_holdout(improved.id)
     readvance = engine.select_context_validity_map_revision(
         base_map.hypothesis_id,
         map_id=revision_two.id,
-        reason="post-rollback validation permits re-advance",
+        reason="separate holdout permits re-advance",
         evidence_refs=(
-            f"context_validity_rollback_validation:{improved.id}",
+            f"context_validity_rollback_holdout_validation:{holdout.id}",
         ),
     )
 
-    assert improved.status == "rollback_improved"
-    assert improved.reactivation_allowed is True
+    assert improved.status == "rollback_recovery_passed"
+    assert improved.reactivation_allowed is False
     assert improved.mean_rollback_advantage >= 0.05
     assert improved.improvement_delta >= 0.05
     assert len(improved.observed_outcome_ids) >= 3
+    assert holdout.status == "holdout_confirmed"
+    assert holdout.reactivation_allowed is True
+    assert not set(improved.observed_outcome_ids).intersection(
+        holdout.holdout_outcome_ids
+    )
     assert readvance.action == "advance"
     assert readvance.selected_map_id == revision_two.id
 
@@ -4543,17 +4577,37 @@ def test_rollback_resolution_and_validation_persist() -> None:
             evidence_refs=(f"resolution:persist:{index}",),
         )
     validation = engine.validate_context_validity_rollback(accepted.id)
+    for index in range(3):
+        gate = engine.evaluate_active_context_validity_gated_decision(
+            base_map.hypothesis_id,
+            environment_signature=signature,
+            candidates=_validity_gate_candidates(),
+            context="production release",
+        )
+        engine.record_context_validity_gate_outcome(
+            gate.id,
+            actual_success_by_action={
+                "run automated release check": False,
+                "request independent review": True,
+            },
+            evidence_refs=(f"resolution:persist:holdout:{index}",),
+        )
+    holdout = engine.validate_context_validity_rollback_holdout(validation.id)
     narrative = engine.build_metacognitive_narrative(
-        "context_validity_resolution"
+        "context_validity_holdout"
     )
     restored = UnarchiEngine.from_export(engine.export_state())
 
-    assert validation.status == "rollback_improved"
+    assert validation.status == "rollback_recovery_passed"
+    assert holdout.status == "holdout_confirmed"
     assert restored.context_validity_recommendation_resolutions == (
         engine.context_validity_recommendation_resolutions
     )
     assert restored.context_validity_rollback_validations == (
         engine.context_validity_rollback_validations
+    )
+    assert restored.context_validity_rollback_holdout_validations == (
+        engine.context_validity_rollback_holdout_validations
     )
     assert restored.next_context_validity_recommendation_resolution_id == (
         engine.next_context_validity_recommendation_resolution_id
@@ -4561,9 +4615,207 @@ def test_rollback_resolution_and_validation_persist() -> None:
     assert restored.next_context_validity_rollback_validation_id == (
         engine.next_context_validity_rollback_validation_id
     )
+    assert restored.next_context_validity_rollback_holdout_validation_id == (
+        engine.next_context_validity_rollback_holdout_validation_id
+    )
     assert restored.snapshot() == engine.snapshot()
     assert narrative.unsupported_claims == 0
     assert any(
         ref.startswith("context_validity_recommendation_resolution:")
+        for ref in narrative.evidence_refs
+    )
+
+
+
+def test_rollback_holdout_failure_keeps_descendant_blocked() -> None:
+    (
+        engine,
+        base_map,
+        revision_two,
+        _,
+        _,
+        watch,
+        signature,
+    ) = _build_resolution_recommendation_engine()
+    accepted = engine.resolve_context_validity_degradation_watch(
+        watch.id,
+        decision="accept",
+        reason="test failed holdout protection",
+    )
+
+    for index in range(3):
+        gate = engine.evaluate_active_context_validity_gated_decision(
+            base_map.hypothesis_id,
+            environment_signature=signature,
+            candidates=_validity_gate_candidates(),
+            context="production release",
+        )
+        engine.record_context_validity_gate_outcome(
+            gate.id,
+            actual_success_by_action={
+                "run automated release check": False,
+                "request independent review": True,
+            },
+            evidence_refs=(f"holdout:test:recovery:{index}",),
+        )
+    recovery = engine.validate_context_validity_rollback(accepted.id)
+
+    for index in range(3):
+        gate = engine.evaluate_active_context_validity_gated_decision(
+            base_map.hypothesis_id,
+            environment_signature=signature,
+            candidates=_validity_gate_candidates(),
+            context="production release",
+        )
+        engine.record_context_validity_gate_outcome(
+            gate.id,
+            actual_success_by_action={
+                "run automated release check": True,
+                "request independent review": False,
+            },
+            evidence_refs=(f"holdout:test:negative:{index}",),
+        )
+    holdout = engine.validate_context_validity_rollback_holdout(recovery.id)
+
+    assert recovery.status == "rollback_recovery_passed"
+    assert recovery.reactivation_allowed is False
+    assert holdout.status == "holdout_not_confirmed"
+    assert holdout.reactivation_allowed is False
+    assert not set(recovery.observed_outcome_ids).intersection(
+        holdout.holdout_outcome_ids
+    )
+
+    try:
+        engine.select_context_validity_map_revision(
+            base_map.hypothesis_id,
+            map_id=revision_two.id,
+            reason="failed holdout cannot reactivate descendant",
+        )
+    except ValueError as exc:
+        assert "re-advance blocked" in str(exc)
+    else:
+        raise AssertionError("failed holdout must keep re-advance blocked")
+
+
+def test_rollback_holdout_uses_only_post_recovery_outcomes() -> None:
+    (
+        engine,
+        base_map,
+        _,
+        _,
+        _,
+        watch,
+        signature,
+    ) = _build_resolution_recommendation_engine()
+    accepted = engine.resolve_context_validity_degradation_watch(
+        watch.id,
+        decision="accept",
+        reason="test holdout watermark",
+    )
+
+    for index in range(3):
+        gate = engine.evaluate_active_context_validity_gated_decision(
+            base_map.hypothesis_id,
+            environment_signature=signature,
+            candidates=_validity_gate_candidates(),
+            context="production release",
+        )
+        engine.record_context_validity_gate_outcome(
+            gate.id,
+            actual_success_by_action={
+                "run automated release check": False,
+                "request independent review": True,
+            },
+            evidence_refs=(f"holdout:watermark:recovery:{index}",),
+        )
+    recovery = engine.validate_context_validity_rollback(accepted.id)
+    assert recovery.holdout_gate_watermark_id > 0
+
+    insufficient = engine.validate_context_validity_rollback_holdout(
+        recovery.id
+    )
+    assert insufficient.status == "insufficient_holdout_evidence"
+    assert insufficient.holdout_outcome_ids == ()
+
+    for index in range(3):
+        gate = engine.evaluate_active_context_validity_gated_decision(
+            base_map.hypothesis_id,
+            environment_signature=signature,
+            candidates=_validity_gate_candidates(),
+            context="production release",
+        )
+        assert gate.id > recovery.holdout_gate_watermark_id
+        engine.record_context_validity_gate_outcome(
+            gate.id,
+            actual_success_by_action={
+                "run automated release check": False,
+                "request independent review": True,
+            },
+            evidence_refs=(f"holdout:watermark:holdout:{index}",),
+        )
+
+    confirmed = engine.validate_context_validity_rollback_holdout(
+        recovery.id
+    )
+    assert confirmed.status == "holdout_confirmed"
+    assert confirmed.reactivation_allowed is True
+    assert len(confirmed.holdout_outcome_ids) == 3
+    assert not set(recovery.observed_outcome_ids).intersection(
+        confirmed.holdout_outcome_ids
+    )
+
+
+def test_rollback_holdout_validation_persists_and_is_explainable() -> None:
+    (
+        engine,
+        base_map,
+        _,
+        _,
+        _,
+        watch,
+        signature,
+    ) = _build_resolution_recommendation_engine()
+    accepted = engine.resolve_context_validity_degradation_watch(
+        watch.id,
+        decision="accept",
+        reason="persist holdout evidence",
+    )
+
+    for phase in ("recovery", "holdout"):
+        for index in range(3):
+            gate = engine.evaluate_active_context_validity_gated_decision(
+                base_map.hypothesis_id,
+                environment_signature=signature,
+                candidates=_validity_gate_candidates(),
+                context="production release",
+            )
+            engine.record_context_validity_gate_outcome(
+                gate.id,
+                actual_success_by_action={
+                    "run automated release check": False,
+                    "request independent review": True,
+                },
+                evidence_refs=(f"holdout:persist:{phase}:{index}",),
+            )
+        if phase == "recovery":
+            recovery = engine.validate_context_validity_rollback(accepted.id)
+
+    holdout = engine.validate_context_validity_rollback_holdout(recovery.id)
+    narrative = engine.build_metacognitive_narrative(
+        "context_validity_holdout"
+    )
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    assert holdout.status == "holdout_confirmed"
+    assert restored.context_validity_rollback_holdout_validations == (
+        engine.context_validity_rollback_holdout_validations
+    )
+    assert restored.next_context_validity_rollback_holdout_validation_id == (
+        engine.next_context_validity_rollback_holdout_validation_id
+    )
+    assert restored.snapshot() == engine.snapshot()
+    assert narrative.unsupported_claims == 0
+    assert any(
+        ref.startswith("context_validity_rollback_holdout_validation:")
         for ref in narrative.evidence_refs
     )

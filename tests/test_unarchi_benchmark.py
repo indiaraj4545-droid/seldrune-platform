@@ -4,8 +4,8 @@ from backend.app.services.unarchi_benchmark import run_unarchi_ablation_benchmar
 def test_unarchi_ablation_benchmark_passes_all_scenarios() -> None:
     result = run_unarchi_ablation_benchmark()
 
-    assert result["scenario_count"] == 28
-    assert result["passed_scenarios"] == 28
+    assert result["scenario_count"] == 29
+    assert result["passed_scenarios"] == 29
     assert result["pass_rate"] == 1.0
     assert result["claims_phenomenal_consciousness"] is False
 
@@ -466,7 +466,28 @@ def test_unarchi_benchmark_covers_rollback_recommendation_resolution() -> None:
         resolution["initial_validation_status"]
         == "insufficient_post_rollback_evidence"
     )
-    assert resolution["improved_validation_status"] == "rollback_improved"
+    assert resolution["improved_validation_status"] == "rollback_recovery_passed"
     assert resolution["improvement_delta"] >= 0.05
+    assert resolution["blocked_after_recovery"] is True
+    assert resolution["holdout_status"] == "holdout_confirmed"
     assert resolution["readvance_action"] == "advance"
     assert resolution["restart_preserved"] is True
+
+
+
+def test_unarchi_benchmark_covers_rollback_holdout_validation() -> None:
+    result = run_unarchi_ablation_benchmark()
+    scenarios = {item["name"]: item for item in result["scenarios"]}
+
+    holdout = scenarios["rollback_holdout_validation"]
+
+    assert holdout["passed"] is True
+    assert holdout["recovery_status"] == "rollback_recovery_passed"
+    assert holdout["recovery_reactivation_allowed"] is False
+    assert holdout["failed_holdout_status"] == "holdout_not_confirmed"
+    assert holdout["blocked_after_failed_holdout"] is True
+    assert holdout["confirmed_holdout_status"] == "holdout_confirmed"
+    assert holdout["confirmed_reactivation_allowed"] is True
+    assert holdout["evidence_overlap"] is False
+    assert holdout["readvance_action"] == "advance"
+    assert holdout["restart_preserved"] is True

@@ -1481,11 +1481,65 @@ rollback validation are auditable governance mechanisms and do not establish
 subjective identity, sentience, phenomenal consciousness, qualia, or
 unrestricted real-world causation.
 
-## Next checkpoint: v0.28 rollback holdout validation
+## v0.28 rollback holdout-validation checkpoint
 
-The next research step should separate rollback recovery evidence from the data
-used to justify reactivation by reserving a deterministic holdout window.
+UNARCHI v0.28 separates rollback recovery evidence from the evidence that can
+authorize descendant reactivation.
 
-The measurable target is anti-overfitting governance: a rollback must first
-recover on one post-rollback evidence batch and then confirm that recovery on a
-separate holdout batch before descendant reactivation is permitted.
+The accepted v0.27 rollback still creates a decision-gate watermark. New
+post-rollback outcomes after that watermark form the recovery batch. Recovery
+validation now has three important properties:
+
+- every degraded signature must meet the configured minimum sample count;
+- mean gated-policy advantage must be positive by the configured margin and
+  materially better than the degraded descendant;
+- even a passed recovery batch cannot authorize reactivation.
+
+When recovery passes, v0.28 freezes a second decision-gate watermark. Only
+outcomes from later gates can enter holdout validation. This prevents the same
+observations from being counted both as evidence that recovery occurred and as
+evidence that recovery generalizes.
+
+Holdout validation requires:
+
+- the rollback map to remain active;
+- the recovery validation to have passed;
+- a separate post-recovery sample count for every degraded signature;
+- positive holdout gated-policy advantage;
+- material improvement over the previously degraded revision; and
+- no larger than the configured tolerated drop from recovery performance.
+
+Possible holdout statuses are:
+
+- `insufficient_holdout_evidence`;
+- `holdout_not_confirmed`;
+- `holdout_confirmed`.
+
+Only `holdout_confirmed` sets `reactivation_allowed=true`. Normal revision
+selection checks this holdout record before permitting re-advance to the
+blocked descendant. A favorable recovery batch by itself remains insufficient.
+
+The deterministic v0.28 benchmark requires:
+
+accepted rollback -> three favorable post-rollback outcomes -> recovery passes
+but reactivation remains blocked -> branch A receives three unfavorable
+post-recovery outcomes and holdout fails -> descendant remains blocked ->
+independent branch B receives three favorable post-recovery outcomes -> holdout
+confirms recovery -> recovery and holdout outcome IDs do not overlap -> explicit
+re-advance succeeds -> export/restore preserves holdout-validation history.
+
+This remains bounded functional causal research. The holdout gate is an
+anti-overfitting evidence-governance mechanism and does not establish
+subjective identity, sentience, phenomenal consciousness, qualia, or
+unrestricted real-world causation.
+
+## Next checkpoint: v0.29 rollback holdout drift monitoring
+
+The next research step should monitor an already confirmed rollback after
+reactivation and detect whether the holdout-supported recovery remains stable
+under later observations.
+
+The measurable target is post-reactivation robustness: use only outcomes that
+arrive after reactivation, detect renewed degradation without reusing the
+recovery or holdout batches, and recommend a new governance action while
+preserving the full prior rollback/holdout audit trail.
