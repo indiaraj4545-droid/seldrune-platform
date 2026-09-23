@@ -384,3 +384,60 @@ evidence.
 The measurable target is causal model revision: incorrect hypotheses should
 lose confidence when their predictions fail, while alternatives gain support
 only when their own predicted evidence is observed.
+
+
+## v0.8 causal world model and competing hypotheses checkpoint
+
+UNARCHI v0.8 adds a small explicit world model that can keep multiple causal
+explanations alive at the same time.
+
+Each causal hypothesis stores:
+
+- a statement;
+- a prior confidence;
+- one or more test -> expected-evidence predictions;
+- supporting-evidence count;
+- contradicting-evidence count.
+
+The kernel can inspect a set of candidate tests and select only a test that is:
+
+- reversible;
+- zero-cost;
+- below the bounded risk threshold;
+- predicted differently by at least two active hypotheses.
+
+Among valid tests it prefers stronger discrimination and lower risk.
+
+Hypothesis confidence does not change when a hypothesis is merely added,
+described, or selected for testing. Confidence changes only after observed
+evidence is recorded for a planned discriminating experiment.
+
+Evidence matching the predicted observation strengthens that hypothesis.
+Strongly contradictory evidence weakens it. Active hypothesis confidence is
+then normalized, and the current leading hypothesis can change.
+
+The world model and experiment history survive export/restore. The
+metacognitive narrative can reconstruct the current leading explanation from
+stored hypotheses and the actual discriminating experiment record.
+
+The benchmark now requires this sequence:
+
+competing hypotheses -> different predictions -> reversible discriminating
+test -> no confidence change before evidence -> observed result -> confidence
+revision -> evidence-grounded world-model explanation.
+
+This is functional causal hypothesis competition. It does not prove human-like
+understanding, subjective experience, or phenomenal consciousness.
+
+## Next checkpoint: v0.9 recursive model integration
+
+The next research step should integrate the self-model and world model so
+Seldrune explicitly represents itself as one causal component inside the
+environment. Candidate explanations should be able to include both external
+causes and Seldrune's own action, memory state, prediction bias, or resource
+limits.
+
+The measurable target is intervention-aware self/world reasoning: when an
+outcome changes because Seldrune changes its own action or internal policy, the
+world model should distinguish that intervention from an external environmental
+cause.
