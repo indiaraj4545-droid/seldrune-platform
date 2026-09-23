@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 
-UNARCHI_VERSION = "unarchi-v0.11"
+UNARCHI_VERSION = "unarchi-v0.12"
 _STOPWORDS = {
     "a",
     "an",
@@ -342,6 +342,27 @@ class CounterfactualComparison:
         return asdict(self)
 
 
+@dataclass
+class SelfSchemaEntry:
+    id: int
+    pattern: str
+    kind: str
+    confidence: float
+    evidence_count: int
+    success_count: int
+    failure_count: int
+    success_rate: float
+    mean_reward: float
+    success_bias: float
+    risk_bias: float
+    evidence_refs: tuple[str, ...] = ()
+    status: str = "active"
+    last_updated_experience_count: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 @dataclass(frozen=True)
 class MetacognitiveNarrative:
     focus: str
@@ -395,11 +416,12 @@ class UnarchiEngine:
     """
     CPU-only experimental cognitive kernel.
 
-    v0.11 includes causal internal dynamics, bounded endogenous goals, a
+    v0.12 includes causal internal dynamics, bounded endogenous goals, a
     calibrated predictive self-model, prospective memory, evidence-grounded
     metacognition, explicit value arbitration, competing causal hypotheses,
     controlled self-intervention trials, a bounded recurrent global workspace,
-    and counterfactual future simulation with prediction-error feedback.
+    counterfactual future simulation with prediction-error feedback, and a
+    compact autobiographical self-schema for longitudinal transfer.
     """
 
     state: UnarchiState = field(default_factory=UnarchiState)
@@ -431,6 +453,9 @@ class UnarchiEngine:
     counterfactual_futures: list[CounterfactualFuture] = field(default_factory=list)
     next_counterfactual_id: int = 1
     max_counterfactual_futures: int = 4
+    self_schema: list[SelfSchemaEntry] = field(default_factory=list)
+    next_self_schema_id: int = 1
+    max_self_schema_entries: int = 32
     success_prediction_bias: float = 0.0
     uncertainty_prediction_bias: float = 0.0
     stress_prediction_bias: float = 0.0
@@ -885,43 +910,61 @@ class UnarchiEngine:
         expected_information_gain: float,
         risk: float,
         reversible: bool = True,
+        context: str = "",
+        use_self_schema: bool = True,
     ) -> SelfPrediction:
         """
         Predict external success and internal consequences before an action.
 
-        This is a compact learned self-model. Calibration residuals update the
-        bias terms after real outcomes, allowing forecasts to improve without
-        GPU training or an external model.
+        v0.12 can transfer bounded evidence from the autobiographical self-schema.
+        Passing use_self_schema=False provides the longitudinal-transfer ablation.
         """
         expected_success = _clamp(expected_success)
         expected_information_gain = _clamp(expected_information_gain)
         risk = _clamp(risk)
 
-        predicted_success = _clamp(expected_success + self.success_prediction_bias)
+        schema_success_bias = 0.0
+        schema_risk_bias = 0.0
+        if use_self_schema:
+            (
+                schema_success_bias,
+                schema_risk_bias,
+                _,
+            ) = self.self_schema_adjustment(
+                context=context,
+                action=action,
+            )
+
+        effective_risk = _clamp(risk + schema_risk_bias)
+        predicted_success = _clamp(
+            expected_success
+            + self.success_prediction_bias
+            + schema_success_bias
+        )
         predicted_information_gain = expected_information_gain
 
         predicted_uncertainty = _clamp(
             self.state.uncertainty
             - (expected_information_gain * 0.45)
-            + (risk * 0.12)
+            + (effective_risk * 0.12)
             + self.uncertainty_prediction_bias
         )
         predicted_stress = _clamp(
             self.state.stress
-            + (risk * 0.30)
+            + (effective_risk * 0.30)
             - (predicted_success * 0.08)
             + self.stress_prediction_bias
         )
         predicted_agency = _clamp(
             self.state.agency
             + (predicted_success * 0.10)
-            - (risk * 0.08)
+            - (effective_risk * 0.08)
             + self.agency_prediction_bias
         )
         predicted_coherence = _clamp(
             self.state.coherence
             + (expected_information_gain * 0.12)
-            - (risk * 0.05)
+            - (effective_risk * 0.05)
         )
 
         irreversibility_penalty = 0.35 if not reversible else 0.0
@@ -930,7 +973,7 @@ class UnarchiEngine:
             + (predicted_information_gain * 0.28)
             + (predicted_agency * 0.12)
             + (predicted_coherence * 0.09)
-            - (risk * 0.08)
+            - (effective_risk * 0.08)
             - (predicted_stress * 0.07)
             - irreversibility_penalty
         )
@@ -943,7 +986,7 @@ class UnarchiEngine:
             predicted_stress=round(predicted_stress, 6),
             predicted_agency=round(predicted_agency, 6),
             predicted_coherence=round(predicted_coherence, 6),
-            risk=round(risk, 6),
+            risk=round(effective_risk, 6),
             reversible=bool(reversible),
             utility=round(utility, 6),
         )
@@ -956,6 +999,9 @@ class UnarchiEngine:
     def choose_predicted_action(
         self,
         candidates: list[dict[str, Any]],
+        *,
+        context: str = "",
+        use_self_schema: bool = True,
     ) -> SelfPrediction:
         """Predict each candidate and return the highest-utility option."""
         if not candidates:
@@ -970,6 +1016,8 @@ class UnarchiEngine:
                 ),
                 risk=float(candidate.get("risk", 0.0)),
                 reversible=bool(candidate.get("reversible", True)),
+                context=str(candidate.get("context") or context),
+                use_self_schema=use_self_schema,
             )
             for candidate in candidates
         ]
@@ -1866,6 +1914,7 @@ class UnarchiEngine:
             "intention",
             "arbitration",
             "intervention",
+            "self_schema",
         }
         if source not in allowed_sources:
             raise ValueError("unsupported global workspace source")
@@ -1963,6 +2012,23 @@ class UnarchiEngine:
                         prediction.risk,
                     ),
                     evidence_refs=(f"prediction:{len(self.predictions) - 1}",),
+                )
+            )
+
+        active_schema = self.active_self_schema()
+        if active_schema:
+            schema = active_schema[0]
+            staged.append(
+                self.stage_global_workspace_item(
+                    source="self_schema",
+                    content=(
+                        f"kind={schema.kind}; pattern={schema.pattern}; "
+                        f"confidence={schema.confidence:.3f}; "
+                        f"success_bias={schema.success_bias:+.3f}; "
+                        f"risk_bias={schema.risk_bias:+.3f}"
+                    ),
+                    salience=max(0.30, schema.confidence),
+                    evidence_refs=(f"self_schema:{schema.id}",),
                 )
             )
 
@@ -2438,6 +2504,261 @@ class UnarchiEngine:
             simulation_causally_active=active,
         )
 
+
+    def active_self_schema(self) -> tuple[SelfSchemaEntry, ...]:
+        return tuple(
+            sorted(
+                (item for item in self.self_schema if item.status == "active"),
+                key=lambda item: (-item.confidence, item.id),
+            )
+        )
+
+    def consolidate_self_schema(
+        self,
+        *,
+        min_evidence: int = 2,
+        similarity_threshold: float = 0.28,
+    ) -> tuple[SelfSchemaEntry, ...]:
+        """
+        Consolidate repeated autobiographical evidence into a compact self-schema.
+
+        The schema is reconstructed from stored evidence rather than generated by
+        a language model. Re-running consolidation over the same evidence is
+        idempotent: entries are revised from the underlying records instead of
+        double-counting them.
+        """
+        min_evidence = max(2, min(int(min_evidence), 12))
+        similarity_threshold = _clamp(similarity_threshold, 0.10, 0.90)
+        eligible = [
+            (index, item)
+            for index, item in enumerate(self.memory)
+            if item.success is not None
+        ]
+
+        clusters: list[dict[str, Any]] = []
+        for index, experience in eligible:
+            signature = f"{experience.goal} {experience.action}".strip()
+            best_cluster: dict[str, Any] | None = None
+            best_score = 0.0
+            for cluster in clusters:
+                score = _similarity(signature, str(cluster["signature"]))
+                if score > best_score:
+                    best_score = score
+                    best_cluster = cluster
+            if best_cluster is not None and best_score >= similarity_threshold:
+                best_cluster["items"].append((index, experience))
+            else:
+                clusters.append(
+                    {
+                        "signature": signature,
+                        "items": [(index, experience)],
+                    }
+                )
+
+        existing = list(self.self_schema)
+        used_ids: set[int] = set()
+        active: list[SelfSchemaEntry] = []
+
+        for cluster in clusters:
+            records: list[tuple[int, Experience]] = cluster["items"]
+            if len(records) < min_evidence:
+                continue
+
+            pattern = str(cluster["signature"])[:400]
+            successes = sum(1 for _, item in records if item.success is True)
+            failures = sum(1 for _, item in records if item.success is False)
+            evidence_count = successes + failures
+            if evidence_count < min_evidence:
+                continue
+
+            success_rate = successes / evidence_count
+            mean_reward = sum(item.reward for _, item in records) / evidence_count
+            if success_rate >= 0.75:
+                kind = "capability"
+            elif success_rate <= 0.35:
+                kind = "limitation"
+            else:
+                kind = "mixed"
+
+            evidence_refs = [f"experience:{index}" for index, _ in records]
+            auxiliary_refs: list[str] = []
+
+            for index, item in enumerate(self.calibration_history):
+                if _similarity(item.action, pattern) >= 0.25:
+                    auxiliary_refs.append(f"calibration:{index}")
+
+            for index, item in enumerate(self.intervention_trials):
+                if (
+                    item.status == "observed"
+                    and _similarity(item.action, pattern) >= 0.25
+                ):
+                    auxiliary_refs.append(f"intervention:{index}")
+
+            for index, item in enumerate(self.counterfactual_futures):
+                if (
+                    item.status == "observed"
+                    and _similarity(item.action, pattern) >= 0.25
+                ):
+                    auxiliary_refs.append(f"counterfactual:{index}")
+
+            for index, cycle in enumerate(self.global_workspace_cycles):
+                related = False
+                for item_id in cycle.selected_item_ids:
+                    workspace_item = next(
+                        (
+                            candidate
+                            for candidate in self.global_workspace_items
+                            if candidate.id == item_id
+                        ),
+                        None,
+                    )
+                    if (
+                        workspace_item is not None
+                        and _similarity(workspace_item.content, pattern) >= 0.20
+                    ):
+                        related = True
+                        break
+                if related:
+                    auxiliary_refs.append(f"workspace_cycle:{index}")
+
+            evidence_refs = list(
+                dict.fromkeys(evidence_refs + auxiliary_refs)
+            )
+            consistency = max(success_rate, 1.0 - success_rate)
+            confidence = _clamp(
+                0.25
+                + min(0.45, evidence_count * 0.10)
+                + min(0.18, len(auxiliary_refs) * 0.04)
+                + (consistency * 0.10),
+                0.0,
+                0.98,
+            )
+            success_bias = max(
+                -0.22,
+                min(
+                    0.22,
+                    (success_rate - 0.5) * 0.44 * confidence,
+                ),
+            )
+            risk_bias = max(
+                -0.16,
+                min(
+                    0.16,
+                    (0.5 - success_rate) * 0.32 * confidence,
+                ),
+            )
+
+            match: SelfSchemaEntry | None = None
+            best_match = 0.0
+            for candidate in existing:
+                if candidate.id in used_ids:
+                    continue
+                score = _similarity(pattern, candidate.pattern)
+                if score > best_match:
+                    best_match = score
+                    match = candidate
+            if match is None or best_match < 0.55:
+                match = SelfSchemaEntry(
+                    id=self.next_self_schema_id,
+                    pattern=pattern,
+                    kind=kind,
+                    confidence=round(confidence, 6),
+                    evidence_count=evidence_count,
+                    success_count=successes,
+                    failure_count=failures,
+                    success_rate=round(success_rate, 6),
+                    mean_reward=round(mean_reward, 6),
+                    success_bias=round(success_bias, 6),
+                    risk_bias=round(risk_bias, 6),
+                    evidence_refs=tuple(evidence_refs),
+                    last_updated_experience_count=self.state.experience_count,
+                )
+                self.next_self_schema_id += 1
+                self.self_schema.append(match)
+                existing.append(match)
+            else:
+                match.pattern = pattern
+                match.kind = kind
+                match.confidence = round(confidence, 6)
+                match.evidence_count = evidence_count
+                match.success_count = successes
+                match.failure_count = failures
+                match.success_rate = round(success_rate, 6)
+                match.mean_reward = round(mean_reward, 6)
+                match.success_bias = round(success_bias, 6)
+                match.risk_bias = round(risk_bias, 6)
+                match.evidence_refs = tuple(evidence_refs)
+                match.status = "active"
+                match.last_updated_experience_count = self.state.experience_count
+
+            used_ids.add(match.id)
+            active.append(match)
+
+        for item in self.self_schema:
+            if item.id not in used_ids:
+                item.status = "retired"
+
+        if len(self.self_schema) > self.max_self_schema_entries:
+            keep = sorted(
+                self.self_schema,
+                key=lambda item: (
+                    item.status == "active",
+                    item.confidence,
+                    item.last_updated_experience_count,
+                    -item.id,
+                ),
+                reverse=True,
+            )[: self.max_self_schema_entries]
+            self.self_schema = sorted(keep, key=lambda item: item.id)
+
+        return tuple(
+            sorted(
+                (item for item in self.self_schema if item.status == "active"),
+                key=lambda item: (-item.confidence, item.id),
+            )
+        )
+
+    def self_schema_adjustment(
+        self,
+        *,
+        context: str,
+        action: str,
+    ) -> tuple[float, float, tuple[str, ...]]:
+        """Return bounded transfer biases from related demonstrated self-schema."""
+        query = f"{context} {action}".strip()
+        matches: list[tuple[float, SelfSchemaEntry]] = []
+        for item in self.self_schema:
+            if item.status != "active":
+                continue
+            similarity = max(
+                _similarity(query, item.pattern),
+                _similarity(action, item.pattern),
+            )
+            if similarity < 0.18:
+                continue
+            weight = similarity * item.confidence
+            if weight > 0.0:
+                matches.append((weight, item))
+
+        if not matches:
+            return 0.0, 0.0, ()
+
+        matches.sort(key=lambda pair: (pair[0], pair[1].confidence), reverse=True)
+        selected = matches[:3]
+        total_weight = sum(weight for weight, _ in selected) or 1.0
+        success_bias = sum(
+            weight * item.success_bias for weight, item in selected
+        ) / total_weight
+        risk_bias = sum(
+            weight * item.risk_bias for weight, item in selected
+        ) / total_weight
+        refs = tuple(f"self_schema:{item.id}" for _, item in selected)
+        return (
+            round(max(-0.22, min(0.22, success_bias)), 6),
+            round(max(-0.16, min(0.16, risk_bias)), 6),
+            refs,
+        )
+
     def build_metacognitive_narrative(
         self,
         focus: str = "current_state",
@@ -2456,7 +2777,34 @@ class UnarchiEngine:
             refs.append(ref)
             details.append(detail)
 
-        if focus in {"counterfactual", "simulation", "imagination"}:
+        if focus in {"self_schema", "schema", "identity"}:
+            active = self.active_self_schema()
+            if active:
+                for item in active[:3]:
+                    add(
+                        f"self_schema:{item.id}",
+                        (
+                            f"kind={item.kind}; pattern='{item.pattern[:180]}'; "
+                            f"confidence={item.confidence:.3f}; "
+                            f"success_rate={item.success_rate:.3f}; "
+                            f"success_bias={item.success_bias:+.3f}; "
+                            f"risk_bias={item.risk_bias:+.3f}"
+                        ),
+                    )
+                    for ref in item.evidence_refs[:4]:
+                        add(
+                            ref,
+                            f"stored evidence supporting self-schema entry {item.id}",
+                        )
+                summary = (
+                    "The autobiographical self-schema is reconstructed only from "
+                    "stored outcomes and related causal records; it is compact, "
+                    "revisable, and used as bounded evidence for later predictions."
+                )
+            else:
+                summary = "No autobiographical self-schema has been consolidated."
+
+        elif focus in {"counterfactual", "simulation", "imagination"}:
             if self.counterfactual_futures:
                 item = self.counterfactual_futures[-1]
                 index = len(self.counterfactual_futures) - 1
@@ -3077,6 +3425,9 @@ class UnarchiEngine:
             ],
             "next_counterfactual_id": self.next_counterfactual_id,
             "max_counterfactual_futures": self.max_counterfactual_futures,
+            "self_schema": [item.to_dict() for item in self.self_schema],
+            "next_self_schema_id": self.next_self_schema_id,
+            "max_self_schema_entries": self.max_self_schema_entries,
             "success_prediction_bias": self.success_prediction_bias,
             "uncertainty_prediction_bias": self.uncertainty_prediction_bias,
             "stress_prediction_bias": self.stress_prediction_bias,
@@ -3107,6 +3458,7 @@ class UnarchiEngine:
         workspace_items_payload = payload.get("global_workspace_items", [])
         workspace_cycles_payload = payload.get("global_workspace_cycles", [])
         counterfactuals_payload = payload.get("counterfactual_futures", [])
+        self_schema_payload = payload.get("self_schema", [])
         value_weights_payload = payload.get("value_weights", _default_value_weights())
         if not isinstance(state_payload, dict):
             raise ValueError("invalid UNARCHI state")
@@ -3138,6 +3490,8 @@ class UnarchiEngine:
             raise ValueError("invalid UNARCHI global workspace cycles")
         if not isinstance(counterfactuals_payload, list):
             raise ValueError("invalid UNARCHI counterfactual futures")
+        if not isinstance(self_schema_payload, list):
+            raise ValueError("invalid UNARCHI self schema")
 
         memory: list[Experience] = []
         for item in memory_payload:
@@ -3270,6 +3624,16 @@ class UnarchiEngine:
                 raise ValueError("invalid UNARCHI counterfactual future")
             counterfactual_futures.append(CounterfactualFuture(**item))
 
+        self_schema: list[SelfSchemaEntry] = []
+        for item in self_schema_payload:
+            if not isinstance(item, dict):
+                raise ValueError("invalid UNARCHI self schema entry")
+            restored_item = dict(item)
+            restored_item["evidence_refs"] = tuple(
+                restored_item.get("evidence_refs", ())
+            )
+            self_schema.append(SelfSchemaEntry(**restored_item))
+
         max_memory = max(16, min(int(payload.get("max_memory") or 256), 4096))
         max_active = max(
             1,
@@ -3352,6 +3716,15 @@ class UnarchiEngine:
                 1,
                 min(int(payload.get("max_counterfactual_futures") or 4), 8),
             ),
+            self_schema=self_schema[-max_memory:],
+            next_self_schema_id=max(
+                int(payload.get("next_self_schema_id") or 1),
+                max((item.id for item in self_schema), default=0) + 1,
+            ),
+            max_self_schema_entries=max(
+                4,
+                min(int(payload.get("max_self_schema_entries") or 32), 128),
+            ),
             success_prediction_bias=float(
                 payload.get("success_prediction_bias") or 0.0
             ),
@@ -3406,6 +3779,8 @@ class UnarchiEngine:
             ),
             "global_workspace_cycle_count": len(self.global_workspace_cycles),
             "counterfactual_future_count": len(self.counterfactual_futures),
+            "self_schema_active_count": len(self.active_self_schema()),
+            "self_schema_total_count": len(self.self_schema),
             "observed_counterfactual_count": len(
                 [
                     item

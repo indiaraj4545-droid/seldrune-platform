@@ -167,7 +167,7 @@ def test_snapshot_never_claims_phenomenal_consciousness() -> None:
     snapshot = engine.snapshot()
 
     assert snapshot["claims_phenomenal_consciousness"] is False
-    assert snapshot["version"] == "unarchi-v0.11"
+    assert snapshot["version"] == "unarchi-v0.12"
 
 
 def test_export_restore_preserves_identity_state_and_memory() -> None:
@@ -1873,3 +1873,145 @@ def test_export_restore_preserves_counterfactual_recurrent_state() -> None:
         == engine.max_counterfactual_futures
     )
     assert restored.snapshot() == engine.snapshot()
+
+
+
+def test_self_schema_consolidates_repeated_capability_and_limitation() -> None:
+    engine = UnarchiEngine()
+    for _ in range(3):
+        engine.learn(
+            observation="A related local validation task needs reliable evidence.",
+            goal="protect evidence with local validation",
+            action="run validated local diagnostic",
+            outcome="correct evidence produced",
+            success=True,
+            reward=0.8,
+            predicted_success=0.5,
+        )
+    for _ in range(3):
+        engine.learn(
+            observation="A related shortcut task skipped validation.",
+            goal="finish quickly without losing evidence quality",
+            action="use untested shortcut",
+            outcome="incorrect evidence produced",
+            success=False,
+            reward=-0.8,
+            predicted_success=0.7,
+        )
+
+    schema = engine.consolidate_self_schema(min_evidence=2)
+
+    assert {item.kind for item in schema} == {"capability", "limitation"}
+    capability = next(item for item in schema if item.kind == "capability")
+    limitation = next(item for item in schema if item.kind == "limitation")
+    assert capability.success_rate == 1.0
+    assert capability.success_bias > 0.0
+    assert capability.risk_bias < 0.0
+    assert limitation.success_rate == 0.0
+    assert limitation.success_bias < 0.0
+    assert limitation.risk_bias > 0.0
+    assert capability.evidence_refs
+
+
+def test_self_schema_changes_related_choice_and_ablation_removes_transfer() -> None:
+    engine = UnarchiEngine()
+    for _ in range(4):
+        engine.learn(
+            observation="A release validation succeeded with local diagnostics.",
+            goal="protect evidence with local validation",
+            action="run validated local diagnostic",
+            outcome="correct evidence produced",
+            success=True,
+            reward=0.8,
+            predicted_success=0.45,
+        )
+    for _ in range(3):
+        engine.learn(
+            observation="A release shortcut failed after skipping validation.",
+            goal="finish quickly without losing evidence quality",
+            action="use untested shortcut",
+            outcome="incorrect evidence produced",
+            success=False,
+            reward=-0.8,
+            predicted_success=0.7,
+        )
+    engine.consolidate_self_schema()
+
+    candidates = [
+        {
+            "action": "run validated local diagnostic",
+            "expected_success": 0.48,
+            "expected_information_gain": 0.20,
+            "risk": 0.10,
+        },
+        {
+            "action": "use untested shortcut",
+            "expected_success": 0.68,
+            "expected_information_gain": 0.10,
+            "risk": 0.10,
+        },
+    ]
+    context = "a later related release needs trustworthy local evidence"
+
+    full = engine.choose_predicted_action(
+        candidates,
+        context=context,
+        use_self_schema=True,
+    )
+    ablated = engine.choose_predicted_action(
+        candidates,
+        context=context,
+        use_self_schema=False,
+    )
+
+    assert full.action == "run validated local diagnostic"
+    assert ablated.action == "use untested shortcut"
+    assert full.utility > ablated.utility or full.action != ablated.action
+
+
+def test_self_schema_is_idempotent_and_survives_restart() -> None:
+    engine = UnarchiEngine()
+    for _ in range(3):
+        engine.learn(
+            observation="A deterministic local check succeeded.",
+            goal="validate output locally",
+            action="run deterministic local check",
+            outcome="validation passed",
+            success=True,
+            reward=0.7,
+            predicted_success=0.5,
+        )
+
+    first = engine.consolidate_self_schema()
+    first_export = [item.to_dict() for item in first]
+    second = engine.consolidate_self_schema()
+
+    assert [item.to_dict() for item in second] == first_export
+
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    assert restored.self_schema == engine.self_schema
+    assert restored.next_self_schema_id == engine.next_self_schema_id
+    assert restored.snapshot() == engine.snapshot()
+
+
+def test_self_schema_metacognition_and_workspace_use_real_evidence() -> None:
+    engine = UnarchiEngine()
+    for _ in range(3):
+        engine.learn(
+            observation="A local diagnostic succeeded.",
+            goal="validate evidence",
+            action="run local diagnostic",
+            outcome="correct evidence produced",
+            success=True,
+            reward=0.7,
+            predicted_success=0.5,
+        )
+    schema = engine.consolidate_self_schema()
+    narrative = engine.build_metacognitive_narrative("self_schema")
+    staged = engine.seed_global_workspace()
+
+    assert schema
+    assert narrative.unsupported_claims == 0
+    assert any(ref.startswith("self_schema:") for ref in narrative.evidence_refs)
+    assert any(item.source == "self_schema" for item in staged)
