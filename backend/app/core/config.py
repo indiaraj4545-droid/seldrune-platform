@@ -53,6 +53,8 @@ class Settings(BaseSettings):
     ai_pdf_max_total_usd: float = 0.10
     ai_pdf_max_attempts: int = 2
     ai_pdf_max_output_tokens: int = 2200
+    pdf_brain_enabled: bool = True
+    pdf_brain_min_confidence: float = 0.78
     ai_image_job_max_usd: float = 0.08
     ai_video_job_max_usd: float = 0.40
     ai_video_default_seconds: int = 4
@@ -124,6 +126,10 @@ class Settings(BaseSettings):
         if not 256 <= self.ai_pdf_max_output_tokens <= 12000:
             raise ValueError(
                 "SELDRUNE_AI_PDF_MAX_OUTPUT_TOKENS must be between 256 and 12000"
+            )
+        if not 0.5 <= self.pdf_brain_min_confidence <= 0.99:
+            raise ValueError(
+                "SELDRUNE_PDF_BRAIN_MIN_CONFIDENCE must be between 0.5 and 0.99"
             )
         if self.ai_image_job_max_usd <= 0:
             raise ValueError("SELDRUNE_AI_IMAGE_JOB_MAX_USD must be positive")
