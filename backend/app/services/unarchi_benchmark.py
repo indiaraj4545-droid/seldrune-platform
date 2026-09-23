@@ -5,7 +5,7 @@ from typing import Any
 from backend.app.services.unarchi_engine import UnarchiEngine
 
 
-BENCHMARK_VERSION = "unarchi-ablation-v0.15"
+BENCHMARK_VERSION = "unarchi-ablation-v0.16"
 
 
 def _failure_sensitization() -> dict[str, Any]:
@@ -1087,6 +1087,156 @@ def _context_transfer_boundary_learning() -> dict[str, Any]:
         ),
     }
 
+
+def _latent_context_hypothesis_discovery() -> dict[str, Any]:
+    engine = UnarchiEngine()
+    goal = "validate release evidence"
+    action = "run automated release check"
+
+    for index in range(5):
+        engine.learn(
+            observation=f"Sandbox release validation {index}.",
+            goal=goal,
+            action=action,
+            outcome="correct evidence",
+            success=True,
+            reward=0.8,
+            predicted_success=0.55,
+        )
+    for index in range(5):
+        engine.learn(
+            observation=f"Production release validation {index}.",
+            goal=goal,
+            action=action,
+            outcome="invalid evidence escaped",
+            success=False,
+            reward=-0.8,
+            predicted_success=0.70,
+        )
+
+    parent = next(
+        item
+        for item in engine.consolidate_self_schema()
+        if item.kind == "mixed" and action in item.pattern
+    )
+    discovery = engine.discover_latent_context_hypotheses(
+        parent.id,
+        max_candidates=3,
+        min_term_support=3,
+        min_rate_contrast=0.40,
+        min_holdout_improvement=0.10,
+    )
+    selected = next(
+        item
+        for item in engine.latent_context_hypotheses
+        if item.id == discovery.selected_hypothesis_id
+    )
+    contextual = {
+        item.context_label: item.kind
+        for item in engine.active_contextual_self_schema(
+            parent_schema_id=parent.id
+        )
+    }
+
+    noisy = UnarchiEngine()
+    alpha_outcomes = [True, True, True, False]
+    beta_outcomes = [False, False, False, True]
+    for index, success in enumerate(alpha_outcomes):
+        noisy.learn(
+            observation=f"Alpha release validation {index}.",
+            goal=goal,
+            action=action,
+            outcome="evidence observed",
+            success=success,
+            reward=0.6 if success else -0.6,
+            predicted_success=0.5,
+        )
+    for index, success in enumerate(beta_outcomes):
+        noisy.learn(
+            observation=f"Beta release validation {index}.",
+            goal=goal,
+            action=action,
+            outcome="evidence observed",
+            success=success,
+            reward=0.6 if success else -0.6,
+            predicted_success=0.5,
+        )
+    noisy_parent = next(
+        item
+        for item in noisy.consolidate_self_schema()
+        if item.kind == "mixed"
+    )
+    noisy_discovery = noisy.discover_latent_context_hypotheses(
+        noisy_parent.id,
+        max_candidates=2,
+        min_term_support=3,
+        min_rate_contrast=0.40,
+        min_holdout_improvement=0.10,
+    )
+    noisy_hypotheses = [
+        item
+        for item in noisy.latent_context_hypotheses
+        if item.id in noisy_discovery.hypothesis_ids
+    ]
+
+    narrative = engine.build_metacognitive_narrative(
+        "latent_context"
+    )
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    return {
+        "name": "latent_context_hypothesis_discovery",
+        "expected_direction": (
+            "useful outcome-associated context terms survive held-out "
+            "validation while spurious candidates are rejected"
+        ),
+        "passed": (
+            discovery.status == "selected"
+            and discovery.proposed_count <= 3
+            and discovery.validated_count >= 1
+            and selected.validation_status == "selected"
+            and selected.holdout_improvement > 0.0
+            and {
+                selected.positive_term,
+                selected.negative_term,
+            } == {"sandbox", "production"}
+            and contextual.get("sandbox") == "capability"
+            and contextual.get("production") == "limitation"
+            and noisy_discovery.status == "no_validated_hypothesis"
+            and noisy_discovery.proposed_count >= 1
+            and all(
+                item.validation_status == "rejected_validation"
+                for item in noisy_hypotheses
+            )
+            and noisy.active_contextual_self_schema(
+                parent_schema_id=noisy_parent.id
+            ) == ()
+            and restored.latent_context_hypotheses
+            == engine.latent_context_hypotheses
+            and restored.latent_context_discoveries
+            == engine.latent_context_discoveries
+            and narrative.unsupported_claims == 0
+            and bool(narrative.evidence_refs)
+        ),
+        "proposed_count": discovery.proposed_count,
+        "validated_count": discovery.validated_count,
+        "selected_positive_term": selected.positive_term,
+        "selected_negative_term": selected.negative_term,
+        "selected_gain": selected.holdout_improvement,
+        "contextual_kinds": contextual,
+        "noisy_status": noisy_discovery.status,
+        "noisy_proposed_count": noisy_discovery.proposed_count,
+        "noisy_validation_statuses": [
+            item.validation_status for item in noisy_hypotheses
+        ],
+        "restart_preserved": (
+            restored.latent_context_hypotheses
+            == engine.latent_context_hypotheses
+            and restored.latent_context_discoveries
+            == engine.latent_context_discoveries
+        ),
+    }
+
 def run_unarchi_ablation_benchmark() -> dict[str, Any]:
     scenarios = [
         _failure_sensitization(),
@@ -1105,6 +1255,7 @@ def run_unarchi_ablation_benchmark() -> dict[str, Any]:
         _contradiction_driven_self_schema_revision(),
         _context_sensitive_self_schema_decomposition(),
         _context_transfer_boundary_learning(),
+        _latent_context_hypothesis_discovery(),
     ]
     passed = sum(bool(item["passed"]) for item in scenarios)
     return {
