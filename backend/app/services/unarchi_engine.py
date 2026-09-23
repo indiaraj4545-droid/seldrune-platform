@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 
-UNARCHI_VERSION = "unarchi-v0.17"
+UNARCHI_VERSION = "unarchi-v0.18"
 _STOPWORDS = {
     "a",
     "an",
@@ -536,6 +536,26 @@ class ContextCausalityTrial:
 
 
 @dataclass(frozen=True)
+class ContextCausalStabilityAssessment:
+    id: int
+    hypothesis_id: int
+    forward_trial_ids: tuple[int, ...]
+    reverse_trial_ids: tuple[int, ...]
+    independent_forward_batches: int
+    independent_reverse_batches: int
+    forward_replication_rate: float
+    reverse_replication_rate: float
+    mean_causal_strength: float
+    reversal_direction_followed: bool
+    status: str
+    confidence: float
+    evidence_refs: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class LatentContextDiscovery:
     id: int
     parent_schema_id: int
@@ -604,14 +624,15 @@ class UnarchiEngine:
     """
     CPU-only experimental cognitive kernel.
 
-    v0.17 includes causal internal dynamics, bounded endogenous goals, a
+    v0.18 includes causal internal dynamics, bounded endogenous goals, a
     calibrated predictive self-model, prospective memory, evidence-grounded
     metacognition, explicit value arbitration, competing causal hypotheses,
     controlled self-intervention trials, a bounded recurrent global workspace,
     counterfactual future simulation with prediction-error feedback, a compact
     autobiographical self-schema, contradiction-driven revision, validated
     context decomposition, transfer boundaries, conservative latent context
-    discovery, and intervention-supported context causality evidence.
+    discovery, intervention-supported context causality evidence, and replicated
+    reversible context-causality stability checks.
     """
 
     state: UnarchiState = field(default_factory=UnarchiState)
@@ -672,6 +693,10 @@ class UnarchiEngine:
         default_factory=list
     )
     next_context_causality_trial_id: int = 1
+    context_causal_stability_assessments: list[
+        ContextCausalStabilityAssessment
+    ] = field(default_factory=list)
+    next_context_causal_stability_assessment_id: int = 1
     success_prediction_bias: float = 0.0
     uncertainty_prediction_bias: float = 0.0
     stress_prediction_bias: float = 0.0
@@ -3657,8 +3682,15 @@ class UnarchiEngine:
                     decomposition_id=item.decomposition_id,
                     evidence_refs=item.evidence_refs,
                     causal_status=(
-                        "intervention_supported"
+                        item.causal_status
                         if supported
+                        and item.causal_status == "replicated_reversible"
+                        else "intervention_supported"
+                        if supported
+                        or item.causal_status in {
+                            "intervention_supported",
+                            "replicated_reversible",
+                        }
                         else "intervention_not_supported"
                     ),
                     causal_evidence_refs=causal_refs,
@@ -3682,6 +3714,231 @@ class UnarchiEngine:
                 ),
             )
         return trial
+
+    def assess_context_causal_stability(
+        self,
+        hypothesis_id: int,
+        *,
+        forward_trial_ids: tuple[int, ...] | list[int],
+        reverse_trial_ids: tuple[int, ...] | list[int],
+        min_forward_batches: int = 2,
+        min_reverse_batches: int = 1,
+    ) -> ContextCausalStabilityAssessment:
+        """
+        Require replicated forward evidence plus a clean reversal test.
+
+        Distinct evidence references are used as a lightweight independence gate:
+        repeated observations that reuse the same external evidence batch do not
+        count as independent replication.
+        """
+        hypothesis = next(
+            (
+                item
+                for item in self.latent_context_hypotheses
+                if item.id == hypothesis_id
+            ),
+            None,
+        )
+        if hypothesis is None:
+            raise ValueError("unknown latent context hypothesis")
+
+        forward_ids = tuple(dict.fromkeys(int(item) for item in forward_trial_ids))
+        reverse_ids = tuple(dict.fromkeys(int(item) for item in reverse_trial_ids))
+        if not forward_ids:
+            raise ValueError("at least one forward context trial is required")
+
+        trial_map = {item.id: item for item in self.context_causality_trials}
+        requested = forward_ids + reverse_ids
+        if any(item_id not in trial_map for item_id in requested):
+            raise ValueError("unknown context causality trial in stability assessment")
+
+        forward = [trial_map[item_id] for item_id in forward_ids]
+        reverse = [trial_map[item_id] for item_id in reverse_ids]
+        if any(item.hypothesis_id != hypothesis_id for item in forward + reverse):
+            raise ValueError("all stability trials must test the same hypothesis")
+
+        source = forward[0].from_context
+        target = forward[0].to_context
+        if any(
+            item.from_context != source or item.to_context != target
+            for item in forward
+        ):
+            raise ValueError("forward replication trials must share one direction")
+        if any(
+            item.from_context != target or item.to_context != source
+            for item in reverse
+        ):
+            raise ValueError("reverse trials must invert the forward contexts")
+
+        min_forward = max(2, min(int(min_forward_batches), 6))
+        min_reverse = max(1, min(int(min_reverse_batches), 4))
+
+        def supported(item: ContextCausalityTrial) -> bool:
+            return (
+                item.status == "intervention_supported"
+                and item.competing_variables_held_constant is True
+                and item.predicted_direction_followed is True
+                and item.sample_count >= item.min_samples
+                and (item.causal_strength or 0.0) >= 0.35
+            )
+
+        def independent_supported_count(
+            trials: list[ContextCausalityTrial],
+        ) -> int:
+            used_refs: set[str] = set()
+            count = 0
+            for item in trials:
+                if not supported(item):
+                    continue
+                batch_refs = {
+                    ref
+                    for ref in item.evidence_refs
+                    if not ref.startswith("latent_context_hypothesis:")
+                    and not ref.startswith("self_schema_decomposition:")
+                    and not ref.startswith("context_causality_trial:")
+                }
+                if not batch_refs or batch_refs & used_refs:
+                    continue
+                used_refs.update(batch_refs)
+                count += 1
+            return count
+
+        forward_supported = sum(1 for item in forward if supported(item))
+        reverse_supported = sum(1 for item in reverse if supported(item))
+        independent_forward = independent_supported_count(forward)
+        independent_reverse = independent_supported_count(reverse)
+        forward_rate = forward_supported / max(1, len(forward))
+        reverse_rate = reverse_supported / max(1, len(reverse))
+        reversal_followed = bool(reverse) and all(
+            supported(item) for item in reverse
+        )
+
+        strengths = [
+            item.causal_strength or 0.0
+            for item in forward + reverse
+            if supported(item)
+        ]
+        mean_strength = sum(strengths) / max(1, len(strengths))
+        enough_replication = (
+            independent_forward >= min_forward
+            and independent_reverse >= min_reverse
+        )
+        stable = (
+            enough_replication
+            and forward_rate == 1.0
+            and reverse_rate == 1.0
+            and reversal_followed
+        )
+        status = (
+            "replicated_reversible"
+            if stable
+            else "insufficient_replication"
+            if not enough_replication
+            else "unstable"
+        )
+        confidence = _clamp(
+            mean_strength
+            * min(forward_rate, reverse_rate)
+            * min(1.0, independent_forward / min_forward)
+            * min(1.0, independent_reverse / min_reverse)
+        )
+
+        assessment = ContextCausalStabilityAssessment(
+            id=self.next_context_causal_stability_assessment_id,
+            hypothesis_id=hypothesis_id,
+            forward_trial_ids=forward_ids,
+            reverse_trial_ids=reverse_ids,
+            independent_forward_batches=independent_forward,
+            independent_reverse_batches=independent_reverse,
+            forward_replication_rate=round(forward_rate, 6),
+            reverse_replication_rate=round(reverse_rate, 6),
+            mean_causal_strength=round(mean_strength, 6),
+            reversal_direction_followed=reversal_followed,
+            status=status,
+            confidence=round(confidence, 6),
+            evidence_refs=tuple(
+                dict.fromkeys(
+                    tuple(
+                        f"context_causality_trial:{item_id}"
+                        for item_id in requested
+                    )
+                    + tuple(
+                        ref
+                        for item in forward + reverse
+                        for ref in item.evidence_refs
+                    )
+                )
+            ),
+        )
+        self.next_context_causal_stability_assessment_id += 1
+        self.context_causal_stability_assessments.append(assessment)
+        if len(self.context_causal_stability_assessments) > self.max_memory:
+            self.context_causal_stability_assessments = (
+                self.context_causal_stability_assessments[-self.max_memory:]
+            )
+
+        updated: list[LatentContextHypothesis] = []
+        for item in self.latent_context_hypotheses:
+            if item.id != hypothesis_id:
+                updated.append(item)
+                continue
+            next_status = (
+                "replicated_reversible"
+                if stable
+                else "intervention_supported"
+                if item.causal_status in {
+                    "intervention_supported",
+                    "replicated_reversible",
+                }
+                else item.causal_status
+            )
+            updated.append(
+                LatentContextHypothesis(
+                    id=item.id,
+                    parent_schema_id=item.parent_schema_id,
+                    positive_term=item.positive_term,
+                    negative_term=item.negative_term,
+                    positive_support=item.positive_support,
+                    negative_support=item.negative_support,
+                    positive_success_rate=item.positive_success_rate,
+                    negative_success_rate=item.negative_success_rate,
+                    rate_contrast=item.rate_contrast,
+                    validation_status=item.validation_status,
+                    holdout_improvement=item.holdout_improvement,
+                    decomposition_id=item.decomposition_id,
+                    evidence_refs=item.evidence_refs,
+                    causal_status=next_status,
+                    causal_evidence_refs=tuple(
+                        dict.fromkeys(
+                            item.causal_evidence_refs
+                            + (
+                                "context_causal_stability_assessment:"
+                                f"{assessment.id}",
+                            )
+                            + assessment.evidence_refs
+                        )
+                    ),
+                )
+            )
+        self.latent_context_hypotheses = updated
+
+        if stable:
+            self.stage_global_workspace_item(
+                source="intervention",
+                content=(
+                    f"context causal stability assessment={assessment.id}; "
+                    f"hypothesis={hypothesis_id}; "
+                    f"forward_batches={independent_forward}; "
+                    f"reverse_batches={independent_reverse}; "
+                    f"confidence={assessment.confidence:.3f}"
+                ),
+                salience=max(0.65, assessment.confidence),
+                evidence_refs=(
+                    f"context_causal_stability_assessment:{assessment.id}",
+                    *assessment.evidence_refs[-4:],
+                ),
+            )
+        return assessment
 
     def discover_latent_context_hypotheses(
         self,
@@ -4412,6 +4669,37 @@ class UnarchiEngine:
             details.append(detail)
 
         if focus in {
+            "context_causal_stability",
+            "causal_stability",
+            "replicated_context_causality",
+        }:
+            if self.context_causal_stability_assessments:
+                assessment = self.context_causal_stability_assessments[-1]
+                add(
+                    f"context_causal_stability_assessment:{assessment.id}",
+                    (
+                        f"hypothesis={assessment.hypothesis_id}; "
+                        f"status={assessment.status}; "
+                        f"forward_independent="
+                        f"{assessment.independent_forward_batches}; "
+                        f"reverse_independent="
+                        f"{assessment.independent_reverse_batches}; "
+                        f"reversal_followed="
+                        f"{assessment.reversal_direction_followed}; "
+                        f"confidence={assessment.confidence}"
+                    ),
+                )
+                for ref in assessment.evidence_refs[-6:]:
+                    add(ref, "replication or reversal evidence")
+                summary = (
+                    "The latest causal-stability assessment requires independent "
+                    "forward replication and a clean reverse intervention before "
+                    "escalating context causality beyond single-trial support."
+                )
+            else:
+                summary = "No replicated context-causality assessment exists."
+
+        elif focus in {
             "context_causality",
             "context_intervention",
             "causal_context",
@@ -5305,6 +5593,13 @@ class UnarchiEngine:
             "next_context_causality_trial_id": (
                 self.next_context_causality_trial_id
             ),
+            "context_causal_stability_assessments": [
+                item.to_dict()
+                for item in self.context_causal_stability_assessments
+            ],
+            "next_context_causal_stability_assessment_id": (
+                self.next_context_causal_stability_assessment_id
+            ),
             "success_prediction_bias": self.success_prediction_bias,
             "uncertainty_prediction_bias": self.uncertainty_prediction_bias,
             "stress_prediction_bias": self.stress_prediction_bias,
@@ -5358,6 +5653,10 @@ class UnarchiEngine:
             "context_causality_trials",
             [],
         )
+        context_causal_stability_assessments_payload = payload.get(
+            "context_causal_stability_assessments",
+            [],
+        )
         value_weights_payload = payload.get("value_weights", _default_value_weights())
         if not isinstance(state_payload, dict):
             raise ValueError("invalid UNARCHI state")
@@ -5405,6 +5704,8 @@ class UnarchiEngine:
             raise ValueError("invalid UNARCHI latent context discoveries")
         if not isinstance(context_causality_trials_payload, list):
             raise ValueError("invalid UNARCHI context causality trials")
+        if not isinstance(context_causal_stability_assessments_payload, list):
+            raise ValueError("invalid UNARCHI context causal stability assessments")
 
         memory: list[Experience] = []
         for item in memory_payload:
@@ -5647,6 +5948,28 @@ class UnarchiEngine:
                 ContextCausalityTrial(**restored_item)
             )
 
+        context_causal_stability_assessments: list[
+            ContextCausalStabilityAssessment
+        ] = []
+        for item in context_causal_stability_assessments_payload:
+            if not isinstance(item, dict):
+                raise ValueError(
+                    "invalid UNARCHI context causal stability assessment"
+                )
+            restored_item = dict(item)
+            restored_item["forward_trial_ids"] = tuple(
+                restored_item.get("forward_trial_ids", ())
+            )
+            restored_item["reverse_trial_ids"] = tuple(
+                restored_item.get("reverse_trial_ids", ())
+            )
+            restored_item["evidence_refs"] = tuple(
+                restored_item.get("evidence_refs", ())
+            )
+            context_causal_stability_assessments.append(
+                ContextCausalStabilityAssessment(**restored_item)
+            )
+
         max_memory = max(16, min(int(payload.get("max_memory") or 256), 4096))
         max_active = max(
             1,
@@ -5797,6 +6120,25 @@ class UnarchiEngine:
                 )
                 + 1,
             ),
+            context_causal_stability_assessments=(
+                context_causal_stability_assessments[-max_memory:]
+            ),
+            next_context_causal_stability_assessment_id=max(
+                int(
+                    payload.get(
+                        "next_context_causal_stability_assessment_id"
+                    )
+                    or 1
+                ),
+                max(
+                    (
+                        item.id
+                        for item in context_causal_stability_assessments
+                    ),
+                    default=0,
+                )
+                + 1,
+            ),
             success_prediction_bias=float(
                 payload.get("success_prediction_bias") or 0.0
             ),
@@ -5879,7 +6221,20 @@ class UnarchiEngine:
                 [
                     item
                     for item in self.latent_context_hypotheses
-                    if item.causal_status == "intervention_supported"
+                    if item.causal_status in {
+                        "intervention_supported",
+                        "replicated_reversible",
+                    }
+                ]
+            ),
+            "context_causal_stability_assessment_count": len(
+                self.context_causal_stability_assessments
+            ),
+            "replicated_reversible_context_count": len(
+                [
+                    item
+                    for item in self.latent_context_hypotheses
+                    if item.causal_status == "replicated_reversible"
                 ]
             ),
             "observed_counterfactual_count": len(
