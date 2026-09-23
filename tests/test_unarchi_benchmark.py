@@ -4,8 +4,8 @@ from backend.app.services.unarchi_benchmark import run_unarchi_ablation_benchmar
 def test_unarchi_ablation_benchmark_passes_all_scenarios() -> None:
     result = run_unarchi_ablation_benchmark()
 
-    assert result["scenario_count"] == 26
-    assert result["passed_scenarios"] == 26
+    assert result["scenario_count"] == 27
+    assert result["passed_scenarios"] == 27
     assert result["pass_rate"] == 1.0
     assert result["claims_phenomenal_consciousness"] is False
 
@@ -431,3 +431,20 @@ def test_unarchi_benchmark_covers_validity_map_selection_and_rollback() -> None:
     assert selection["later_revision_preserved"] is True
     assert selection["readvance_action"] == "advance"
     assert selection["restart_preserved"] is True
+
+
+
+def test_unarchi_benchmark_covers_active_revision_degradation_watch() -> None:
+    result = run_unarchi_ablation_benchmark()
+    scenarios = {item["name"]: item for item in result["scenarios"]}
+
+    watch = scenarios["active_revision_degradation_watch"]
+
+    assert watch["passed"] is True
+    assert watch["initial_watch_status"] == "insufficient_post_activation_evidence"
+    assert watch["negative_calibration_status"] == "nearby_support_revoked"
+    assert watch["recommendation_status"] == "rollback_recommended"
+    assert watch["recommended_map_id"] is not None
+    assert watch["active_map_unchanged"] is True
+    assert watch["automatic_rollback_count"] == 0
+    assert watch["restart_preserved"] is True
