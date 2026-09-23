@@ -512,7 +512,19 @@ async function load() {
     $('#progress').textContent =
       `${dashboard.execution.succeeded_steps}/${dashboard.execution.total_steps}`;
     $('#cost').textContent =
-      `${dashboard.usage.estimated_cost_usd.toFixed(4)}`;
+      `${Number(dashboard.usage?.estimated_cost_usd || 0).toFixed(4)}`;
+    const aiSpend = dashboard.ai_spend_control || {};
+    const spendLimit = $('#ai-spend-limit');
+    const dailyRemaining = Number(aiSpend.daily_remaining_usd);
+    const monthlyRemaining = Number(aiSpend.monthly_remaining_usd);
+    if (Number.isFinite(dailyRemaining) && Number.isFinite(monthlyRemaining)) {
+      spendLimit.textContent =
+        `${dailyRemaining.toFixed(2)} left today · ${monthlyRemaining.toFixed(2)} left this month`;
+      spendLimit.classList.toggle('risk', Boolean(aiSpend.near_limit));
+    } else {
+      spendLimit.textContent = 'USD across all metered AI work';
+      spendLimit.classList.remove('risk');
+    }
     const treasury = dashboard.treasury || {};
     $('#treasury-projects').textContent =
       `${Number(treasury.project_count || 0)} projects`;
