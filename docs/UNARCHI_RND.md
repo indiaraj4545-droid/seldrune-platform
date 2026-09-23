@@ -1349,13 +1349,77 @@ auditable machine-state governance and does not establish subjective identity,
 sentience, phenomenal consciousness, qualia, or unrestricted real-world
 causation.
 
-## Next checkpoint: v0.26 active-revision degradation watch
+## v0.26 active-revision degradation-watch checkpoint
 
-The next research step should monitor outcome calibration specifically for the
-currently active revision and generate a bounded rollback recommendation when
-new evidence shows sustained degradation.
+UNARCHI v0.26 monitors calibration evidence specifically for the currently
+active validity-map revision and can produce an evidence-backed rollback
+recommendation without changing the active pointer.
 
-The measurable target is evidence-triggered governance: detect repeated active
-policy underperformance, identify the nearest intact ancestor with better
-calibration support, and produce a recommendation record without automatically
-changing the active pointer.
+Each activation, advance, or rollback selection now records the highest
+region-calibration ID that existed at the time of selection. This calibration
+watermark separates historical evidence from genuinely new post-activation
+evidence.
+
+The degradation watch considers only region calibrations that:
+
+- belong to the currently active map;
+- were created after the active selection's calibration watermark; and
+- meet the minimum observed-outcome sample threshold.
+
+A region is treated as degraded only when its gated-policy calibration
+advantage is below the configured negative margin. One such region-calibration
+record already represents repeated matched outcomes because v0.23 requires
+multiple observed gate outcomes before calibration.
+
+When degradation is detected, the watch walks the active revision lineage from
+the nearest ancestor backward. An ancestor is eligible for recommendation only
+when it has favorable matched calibration for at least one degraded environment
+and its mean calibration advantage is better than the active degraded evidence.
+
+The watch stores:
+
+- active map ID and activation-selection ID;
+- activation calibration watermark;
+- post-activation calibration IDs considered;
+- degraded environment signatures;
+- mean active gated-policy advantage;
+- recommended ancestor map and revision, when one qualifies;
+- the ancestor calibration IDs supporting that recommendation;
+- status and evidence-linked reason.
+
+Possible statuses include:
+
+- `insufficient_post_activation_evidence`;
+- `stable`;
+- `degradation_detected_no_supported_ancestor`;
+- `rollback_recommended`.
+
+A rollback recommendation never changes the active pointer. The v0.25 rollback
+operation remains an explicit separate action, so later revisions and all
+evidence remain intact until an operator or higher-level policy decides to act.
+
+The deterministic v0.26 benchmark requires:
+
+base map with favorable nearby calibration -> revision 2 -> activate revision 2
+and record calibration watermark -> watch sees no new calibration and returns
+insufficient evidence -> three new matched outcomes show active-revision
+underperformance -> new region calibration becomes unfavorable -> degradation
+watch recommends the nearest ancestor with prior favorable calibration -> active
+pointer remains revision 2 -> no rollback history entry is created ->
+export/restore preserves the recommendation and active pointer.
+
+This remains bounded functional causal research. A rollback recommendation is
+an evidence-governance record, not autonomous authority, and does not establish
+subjective identity, sentience, phenomenal consciousness, qualia, or
+unrestricted real-world causation.
+
+## Next checkpoint: v0.27 rollback-recommendation resolution
+
+The next research step should add explicit accept, defer, and dismiss resolution
+records for degradation-watch recommendations and measure the outcome of an
+accepted rollback before allowing re-advance.
+
+The measurable target is closed-loop governance: every recommendation receives
+an auditable resolution, accepted rollback uses the existing v0.25 ancestor-only
+operation, and later evidence determines whether the rollback improved
+calibration before any descendant is reactivated.

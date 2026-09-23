@@ -167,7 +167,7 @@ def test_snapshot_never_claims_phenomenal_consciousness() -> None:
     snapshot = engine.snapshot()
 
     assert snapshot["claims_phenomenal_consciousness"] is False
-    assert snapshot["version"] == "unarchi-v0.25"
+    assert snapshot["version"] == "unarchi-v0.26"
 
 
 def test_export_restore_preserves_identity_state_and_memory() -> None:
@@ -4139,5 +4139,174 @@ def test_validity_map_selection_persists_and_can_readvance_after_rollback() -> N
     assert narrative.unsupported_claims == 0
     assert any(
         ref.startswith("context_validity_map_selection:")
+        for ref in narrative.evidence_refs
+    )
+
+
+
+def _build_active_degradation_watch_engine():
+    engine, base_map = _build_validity_calibration_engine()
+    signature = "code=v1;load=normal;data=shifted"
+    positive = _calibrate_validity_signature(
+        engine,
+        base_map.id,
+        signature,
+        causal_path_should_win=True,
+        prefix="degradation:base_positive",
+    )
+    revision_two = engine.revise_context_causal_validity_map(
+        base_map.id,
+        calibration_ids=(positive.id,),
+    )
+    selection = engine.select_context_validity_map_revision(
+        base_map.hypothesis_id,
+        map_id=revision_two.id,
+        reason="activate revision for degradation watch",
+    )
+    return engine, base_map, revision_two, selection, positive, signature
+
+
+def test_degradation_watch_uses_only_post_activation_calibration() -> None:
+    engine, base_map = _build_validity_calibration_engine()
+    signature = "code=v1;load=normal;data=shifted"
+    positive = _calibrate_validity_signature(
+        engine,
+        base_map.id,
+        signature,
+        causal_path_should_win=True,
+        prefix="degradation:pre:positive",
+    )
+    revision_two = engine.revise_context_causal_validity_map(
+        base_map.id,
+        calibration_ids=(positive.id,),
+    )
+    historical_negative = _calibrate_validity_signature(
+        engine,
+        revision_two.id,
+        signature,
+        causal_path_should_win=False,
+        prefix="degradation:pre:negative",
+    )
+    selection = engine.select_context_validity_map_revision(
+        base_map.hypothesis_id,
+        map_id=revision_two.id,
+        reason="activate after historical calibration",
+    )
+
+    watch = engine.watch_active_context_validity_degradation(
+        base_map.hypothesis_id
+    )
+
+    assert historical_negative.id == selection.calibration_watermark_id
+    assert watch.status == "insufficient_post_activation_evidence"
+    assert watch.observed_calibration_ids == ()
+    assert watch.recommended_map_id is None
+
+
+def test_degradation_watch_recommends_ancestor_without_auto_rollback() -> None:
+    (
+        engine,
+        base_map,
+        revision_two,
+        selection,
+        positive,
+        signature,
+    ) = _build_active_degradation_watch_engine()
+
+    negative = _calibrate_validity_signature(
+        engine,
+        revision_two.id,
+        signature,
+        causal_path_should_win=False,
+        prefix="degradation:active:negative",
+    )
+    watch = engine.watch_active_context_validity_degradation(
+        base_map.hypothesis_id
+    )
+    active = engine.active_context_causal_validity_map(
+        base_map.hypothesis_id
+    )
+
+    assert negative.id > selection.calibration_watermark_id
+    assert watch.status == "rollback_recommended"
+    assert watch.active_map_id == revision_two.id
+    assert watch.recommended_map_id == base_map.id
+    assert watch.recommended_revision_number == 1
+    assert watch.degraded_signatures == (signature,)
+    assert watch.mean_active_advantage <= -0.05
+    assert watch.ancestor_support_calibration_ids == (positive.id,)
+    assert active is not None
+    assert active.id == revision_two.id
+    assert engine.snapshot()["context_validity_map_rollback_count"] == 0
+    assert engine.snapshot()["rollback_recommendation_count"] == 1
+
+
+def test_degradation_watch_stays_stable_on_favorable_post_activation_evidence() -> None:
+    (
+        engine,
+        base_map,
+        revision_two,
+        _,
+        _,
+        signature,
+    ) = _build_active_degradation_watch_engine()
+
+    favorable = _calibrate_validity_signature(
+        engine,
+        revision_two.id,
+        signature,
+        causal_path_should_win=True,
+        prefix="degradation:active:positive",
+    )
+    watch = engine.watch_active_context_validity_degradation(
+        base_map.hypothesis_id
+    )
+
+    assert favorable.status == "nearby_support_calibrated"
+    assert watch.status == "stable"
+    assert watch.degraded_signatures == ()
+    assert watch.recommended_map_id is None
+
+
+def test_degradation_watch_persists_and_is_explainable() -> None:
+    (
+        engine,
+        base_map,
+        revision_two,
+        _,
+        _,
+        signature,
+    ) = _build_active_degradation_watch_engine()
+    _calibrate_validity_signature(
+        engine,
+        revision_two.id,
+        signature,
+        causal_path_should_win=False,
+        prefix="degradation:persist:negative",
+    )
+    watch = engine.watch_active_context_validity_degradation(
+        base_map.hypothesis_id
+    )
+    narrative = engine.build_metacognitive_narrative(
+        "context_validity_degradation"
+    )
+    restored = UnarchiEngine.from_export(engine.export_state())
+    restored_active = restored.active_context_causal_validity_map(
+        base_map.hypothesis_id
+    )
+
+    assert watch.status == "rollback_recommended"
+    assert restored.context_validity_degradation_watches == (
+        engine.context_validity_degradation_watches
+    )
+    assert restored.next_context_validity_degradation_watch_id == (
+        engine.next_context_validity_degradation_watch_id
+    )
+    assert restored_active is not None
+    assert restored_active.id == revision_two.id
+    assert restored.snapshot() == engine.snapshot()
+    assert narrative.unsupported_claims == 0
+    assert any(
+        ref.startswith("context_validity_degradation_watch:")
         for ref in narrative.evidence_refs
     )
