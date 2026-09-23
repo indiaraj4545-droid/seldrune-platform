@@ -5,7 +5,7 @@ from typing import Any
 from backend.app.services.unarchi_engine import UnarchiEngine
 
 
-BENCHMARK_VERSION = "unarchi-ablation-v0.19"
+BENCHMARK_VERSION = "unarchi-ablation-v0.20"
 
 
 def _failure_sensitization() -> dict[str, Any]:
@@ -1635,6 +1635,220 @@ def _cross_environment_causal_invariance() -> dict[str, Any]:
     }
 
 
+def _active_context_boundary_discovery() -> dict[str, Any]:
+    engine = UnarchiEngine()
+    goal = "validate release evidence"
+    action = "run automated release check"
+
+    for index in range(6):
+        engine.learn(
+            observation=f"Sandbox release validation {index}.",
+            goal=goal,
+            action=action,
+            outcome="correct evidence",
+            success=True,
+            reward=0.8,
+            predicted_success=0.55,
+        )
+        engine.learn(
+            observation=f"Production release validation {index}.",
+            goal=goal,
+            action=action,
+            outcome="invalid evidence escaped",
+            success=False,
+            reward=-0.8,
+            predicted_success=0.70,
+        )
+
+    parent = next(
+        item
+        for item in engine.consolidate_self_schema()
+        if item.kind == "mixed" and action in item.pattern
+    )
+    discovery = engine.discover_latent_context_hypotheses(parent.id)
+    hypothesis = next(
+        item
+        for item in engine.latent_context_hypotheses
+        if item.id == discovery.selected_hypothesis_id
+    )
+
+    normal_forward: list[int] = []
+    normal_signature = "code=v1;load=normal;data=fixed"
+    for batch in ("a", "b"):
+        trial = engine.propose_context_causality_intervention(
+            hypothesis.id,
+            from_context="production",
+            to_context="sandbox",
+            controlled_signature=normal_signature,
+            min_samples=4,
+        )
+        trial = engine.observe_context_causality_intervention(
+            trial.id,
+            observed_target_success_rate=1.0,
+            observed_signature=normal_signature,
+            sample_count=4,
+            evidence_refs=(f"boundary:normal:forward:{batch}",),
+        )
+        normal_forward.append(trial.id)
+    normal_reverse = engine.propose_context_causality_intervention(
+        hypothesis.id,
+        from_context="sandbox",
+        to_context="production",
+        controlled_signature=normal_signature,
+        min_samples=4,
+    )
+    normal_reverse = engine.observe_context_causality_intervention(
+        normal_reverse.id,
+        observed_target_success_rate=0.0,
+        observed_signature=normal_signature,
+        sample_count=4,
+        evidence_refs=("boundary:normal:reverse:a",),
+    )
+    normal = engine.assess_context_causal_stability(
+        hypothesis.id,
+        forward_trial_ids=normal_forward,
+        reverse_trial_ids=(normal_reverse.id,),
+    )
+
+    extreme_forward: list[int] = []
+    extreme_signature = "code=v1;load=extreme;data=fixed"
+    for batch in ("a", "b"):
+        trial = engine.propose_context_causality_intervention(
+            hypothesis.id,
+            from_context="production",
+            to_context="sandbox",
+            controlled_signature=extreme_signature,
+            min_samples=4,
+        )
+        trial = engine.observe_context_causality_intervention(
+            trial.id,
+            observed_target_success_rate=1.0,
+            observed_signature=extreme_signature,
+            sample_count=4,
+            evidence_refs=(f"boundary:extreme:forward:{batch}",),
+        )
+        extreme_forward.append(trial.id)
+    extreme_reverse = engine.propose_context_causality_intervention(
+        hypothesis.id,
+        from_context="sandbox",
+        to_context="production",
+        controlled_signature=extreme_signature,
+        min_samples=4,
+    )
+    extreme_reverse = engine.observe_context_causality_intervention(
+        extreme_reverse.id,
+        observed_target_success_rate=1.0,
+        observed_signature=extreme_signature,
+        sample_count=4,
+        evidence_refs=("boundary:extreme:reverse:a",),
+    )
+    extreme = engine.assess_context_causal_stability(
+        hypothesis.id,
+        forward_trial_ids=extreme_forward,
+        reverse_trial_ids=(extreme_reverse.id,),
+    )
+
+    bounded = engine.assess_context_causal_invariance(
+        hypothesis.id,
+        stability_assessment_ids=(normal.id, extreme.id),
+    )
+    plan = engine.plan_context_boundary_discovery(
+        hypothesis.id,
+        invariance_assessment_id=bounded.id,
+        candidate_risks={
+            "code=v1;load=high;data=fixed": 0.08,
+            "code=v1;load=normal;data=shifted": 0.05,
+            "code=v2;load=extreme;data=shifted": 0.40,
+        },
+    )
+
+    high_signature = plan.selected_signature
+    high_forward: list[int] = []
+    for batch in ("a", "b"):
+        trial = engine.propose_context_causality_intervention(
+            hypothesis.id,
+            from_context="production",
+            to_context="sandbox",
+            controlled_signature=high_signature,
+            min_samples=4,
+        )
+        trial = engine.observe_context_causality_intervention(
+            trial.id,
+            observed_target_success_rate=1.0,
+            observed_signature=high_signature,
+            sample_count=4,
+            evidence_refs=(f"boundary:high:forward:{batch}",),
+        )
+        high_forward.append(trial.id)
+    high_reverse = engine.propose_context_causality_intervention(
+        hypothesis.id,
+        from_context="sandbox",
+        to_context="production",
+        controlled_signature=high_signature,
+        min_samples=4,
+    )
+    high_reverse = engine.observe_context_causality_intervention(
+        high_reverse.id,
+        observed_target_success_rate=0.0,
+        observed_signature=high_signature,
+        sample_count=4,
+        evidence_refs=("boundary:high:reverse:a",),
+    )
+    high = engine.assess_context_causal_stability(
+        hypothesis.id,
+        forward_trial_ids=high_forward,
+        reverse_trial_ids=(high_reverse.id,),
+    )
+    resolved = engine.observe_context_boundary_discovery(
+        plan.id,
+        stability_assessment_id=high.id,
+    )
+
+    narrative = engine.build_metacognitive_narrative(
+        "context_boundary_discovery"
+    )
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    return {
+        "name": "active_context_boundary_discovery",
+        "expected_direction": (
+            "a low-risk one-dimension probe near a known stable/boundary pair "
+            "is selected for information gain without external execution, then "
+            "supplied stability evidence resolves the plan"
+        ),
+        "passed": (
+            bounded.status == "environment_bounded"
+            and extreme.status != "replicated_reversible"
+            and plan.selected_signature == "code=v1;load=high;data=fixed"
+            and plan.selected_risk <= 0.25
+            and plan.external_execution_allowed is False
+            and plan.paid_actions_allowed is False
+            and plan.reversible_only is True
+            and resolved.status == "resolved"
+            and resolved.outcome_status == "expanded_valid_region"
+            and resolved.uncertainty_reduction is not None
+            and resolved.uncertainty_reduction > 0.0
+            and restored.context_boundary_discovery_plans
+            == engine.context_boundary_discovery_plans
+            and narrative.unsupported_claims == 0
+            and bool(narrative.evidence_refs)
+        ),
+        "bounded_status": bounded.status,
+        "selected_signature": plan.selected_signature,
+        "selected_risk": plan.selected_risk,
+        "information_gain": plan.selected_information_gain,
+        "priority": plan.selected_priority_score,
+        "changed_dimensions": plan.changed_dimensions,
+        "outcome_status": resolved.outcome_status,
+        "uncertainty_reduction": resolved.uncertainty_reduction,
+        "no_external_execution": not plan.external_execution_allowed,
+        "restart_preserved": (
+            restored.context_boundary_discovery_plans
+            == engine.context_boundary_discovery_plans
+        ),
+    }
+
+
 def run_unarchi_ablation_benchmark() -> dict[str, Any]:
     scenarios = [
         _failure_sensitization(),
@@ -1657,6 +1871,7 @@ def run_unarchi_ablation_benchmark() -> dict[str, Any]:
         _context_causality_intervention_support(),
         _replicated_reversible_context_causality(),
         _cross_environment_causal_invariance(),
+        _active_context_boundary_discovery(),
     ]
     passed = sum(bool(item["passed"]) for item in scenarios)
     return {
