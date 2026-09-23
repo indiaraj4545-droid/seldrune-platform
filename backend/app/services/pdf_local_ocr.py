@@ -8,7 +8,7 @@ import re
 import shutil
 import subprocess
 import tempfile
-from typing import Iterable
+from collections.abc import Iterable
 
 import pymupdf
 
