@@ -4,8 +4,8 @@ from backend.app.services.unarchi_benchmark import run_unarchi_ablation_benchmar
 def test_unarchi_ablation_benchmark_passes_all_scenarios() -> None:
     result = run_unarchi_ablation_benchmark()
 
-    assert result["scenario_count"] == 21
-    assert result["passed_scenarios"] == 21
+    assert result["scenario_count"] == 22
+    assert result["passed_scenarios"] == 22
     assert result["pass_rate"] == 1.0
     assert result["claims_phenomenal_consciousness"] is False
 
@@ -333,3 +333,20 @@ def test_unarchi_benchmark_covers_active_context_boundary_discovery() -> None:
     assert boundary["uncertainty_reduction"] > 0.0
     assert boundary["no_external_execution"] is True
     assert boundary["restart_preserved"] is True
+
+
+
+def test_unarchi_benchmark_covers_causal_validity_map_consolidation() -> None:
+    result = run_unarchi_ablation_benchmark()
+    scenarios = {item["name"]: item for item in result["scenarios"]}
+
+    validity = scenarios["causal_validity_map_consolidation"]
+
+    assert validity["passed"] is True
+    assert validity["bounded_status"] == "environment_bounded"
+    assert validity["exact_valid_status"] == "tested_valid"
+    assert validity["exact_invalid_status"] == "tested_invalid"
+    assert validity["nearby_status"] == "supported_nearby"
+    assert validity["ambiguous_status"] == "unknown"
+    assert validity["map_confidence"] > 0.0
+    assert validity["restart_preserved"] is True
