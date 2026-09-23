@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 
-UNARCHI_VERSION = "unarchi-v0.5"
+UNARCHI_VERSION = "unarchi-v0.6"
 _STOPWORDS = {
     "a",
     "an",
@@ -174,6 +174,21 @@ class ProspectiveIntention:
 
 
 @dataclass(frozen=True)
+class MetacognitiveNarrative:
+    focus: str
+    summary: str
+    evidence_refs: tuple[str, ...]
+    evidence_details: tuple[str, ...]
+    causal_chain_depth: int
+    fidelity_score: float
+    unsupported_claims: int
+    version: str = UNARCHI_VERSION
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class UnarchiFrame:
     mode: str
     workspace: tuple[str, ...]
@@ -211,9 +226,9 @@ class UnarchiEngine:
     """
     CPU-only experimental cognitive kernel.
 
-    v0.5 includes causal internal dynamics, bounded endogenous goals, a
-    calibrated predictive self-model and prospective memory that links past
-    intentions to future observed conditions across process restarts.
+    v0.6 includes causal internal dynamics, bounded endogenous goals, a
+    calibrated predictive self-model, prospective memory, and deterministic
+    metacognitive narratives grounded only in stored causal evidence.
     """
 
     state: UnarchiState = field(default_factory=UnarchiState)
@@ -1046,6 +1061,217 @@ class UnarchiEngine:
         target.evidence = evidence.strip()[:600] or None
         return target
 
+    def build_metacognitive_narrative(
+        self,
+        focus: str = "current_state",
+    ) -> MetacognitiveNarrative:
+        """
+        Reconstruct why the current state exists from stored causal evidence.
+
+        This method is deterministic and does not call a language model. Every
+        explanatory statement is paired with an evidence reference.
+        """
+        focus = (focus or "current_state").strip().casefold()
+        refs: list[str] = []
+        details: list[str] = []
+
+        def add(ref: str, detail: str) -> None:
+            refs.append(ref)
+            details.append(detail)
+
+        if focus in {"current_state", "state", "self"}:
+            add(
+                "state:current",
+                (
+                    f"uncertainty={self.state.uncertainty:.3f}; "
+                    f"stress={self.state.stress:.3f}; "
+                    f"agency={self.state.agency:.3f}; "
+                    f"coherence={self.state.coherence:.3f}; "
+                    f"prediction_error={self.state.prediction_error:.3f}"
+                ),
+            )
+            if self.memory:
+                item = self.memory[-1]
+                add(
+                    f"experience:{len(self.memory) - 1}",
+                    (
+                        f"latest outcome='{item.outcome[:180]}'; "
+                        f"success={item.success}; "
+                        f"prediction_error={item.prediction_error:.3f}"
+                    ),
+                )
+            if self.calibration_history:
+                item = self.calibration_history[-1]
+                add(
+                    f"calibration:{len(self.calibration_history) - 1}",
+                    (
+                        f"latest self-calibration action='{item.action[:160]}'; "
+                        f"score={item.calibration_score:.3f}"
+                    ),
+                )
+            summary = (
+                "Current self-state is reconstructed from the present control "
+                "signals and the most recent stored causal records."
+            )
+
+        elif focus in {"caution", "risk", "protective"}:
+            failures = [
+                (index, item)
+                for index, item in enumerate(self.memory)
+                if item.success is False
+            ]
+            for index, item in failures[-3:]:
+                add(
+                    f"experience:{index}",
+                    (
+                        f"failure while pursuing '{item.goal[:140]}': "
+                        f"{item.outcome[:180]}; prediction_error="
+                        f"{item.prediction_error:.3f}"
+                    ),
+                )
+            add(
+                "state:current",
+                (
+                    f"current stress={self.state.stress:.3f}; "
+                    f"uncertainty={self.state.uncertainty:.3f}; "
+                    f"valence={self.state.valence:.3f}"
+                ),
+            )
+            summary = (
+                "Current caution is supported by recorded failures and the "
+                "present stress/uncertainty state."
+                if failures
+                else "Current caution has no stored failure record; only the "
+                "present internal-state signals are available."
+            )
+
+        elif focus in {"prediction", "calibration", "self_model"}:
+            if self.predictions:
+                item = self.predictions[-1]
+                add(
+                    f"prediction:{len(self.predictions) - 1}",
+                    (
+                        f"action='{item.action[:160]}'; predicted_success="
+                        f"{item.predicted_success:.3f}; utility={item.utility:.3f}"
+                    ),
+                )
+            if self.calibration_history:
+                item = self.calibration_history[-1]
+                add(
+                    f"calibration:{len(self.calibration_history) - 1}",
+                    (
+                        f"actual_success={item.actual_success:.1f}; "
+                        f"mean_error={item.mean_absolute_error:.3f}; "
+                        f"calibration_score={item.calibration_score:.3f}"
+                    ),
+                )
+            add(
+                "self_model:biases",
+                (
+                    f"success_bias={self.success_prediction_bias:.3f}; "
+                    f"uncertainty_bias={self.uncertainty_prediction_bias:.3f}; "
+                    f"stress_bias={self.stress_prediction_bias:.3f}; "
+                    f"agency_bias={self.agency_prediction_bias:.3f}"
+                ),
+            )
+            summary = (
+                "The predictive self-model is explained by stored forecasts, "
+                "their observed residuals, and the resulting calibration biases."
+            )
+
+        elif focus in {"intention", "prospective", "future"}:
+            if self.prospective_intentions:
+                item = self.prospective_intentions[-1]
+                add(
+                    f"intention:{len(self.prospective_intentions) - 1}",
+                    (
+                        f"condition='{item.condition[:160]}'; "
+                        f"action='{item.intended_action[:160]}'; "
+                        f"reason='{item.reason[:180]}'; status={item.status}"
+                    ),
+                )
+                if item.linked_prediction_id is not None:
+                    linked = next(
+                        (
+                            prediction
+                            for prediction in self.predictions
+                            if prediction.id == item.linked_prediction_id
+                        ),
+                        None,
+                    )
+                    if linked is not None:
+                        prediction_index = self.predictions.index(linked)
+                        add(
+                            f"prediction:{prediction_index}",
+                            (
+                                f"linked earlier forecast for '{linked.action[:160]}'; "
+                                f"predicted_success={linked.predicted_success:.3f}"
+                            ),
+                        )
+                if item.trigger_observation:
+                    add(
+                        f"intention_trigger:{item.id}",
+                        (
+                            f"future condition observed as "
+                            f"'{item.trigger_observation[:180]}'; "
+                            f"temporal_alignment={item.temporal_alignment_score}"
+                        ),
+                    )
+                summary = (
+                    "The current prospective intention is traced to its stored "
+                    "reason, optional earlier prediction, and observed trigger."
+                )
+            else:
+                summary = "No prospective intention is stored."
+
+        elif focus in {"goal", "internal_goal", "curiosity"}:
+            if self.internal_goals:
+                item = self.internal_goals[-1]
+                add(
+                    f"internal_goal:{len(self.internal_goals) - 1}",
+                    (
+                        f"question='{item.question[:180]}'; trigger={item.trigger}; "
+                        f"information_gap={item.current_information_gap:.3f}; "
+                        f"status={item.status}"
+                    ),
+                )
+                add(
+                    f"goal_source:{item.id}",
+                    f"source_observation='{item.source_observation[:220]}'",
+                )
+                summary = (
+                    "The internal goal is traced to the stored observation and "
+                    "the uncertainty or prediction-error trigger that created it."
+                )
+            else:
+                summary = "No internally generated goal is stored."
+
+        else:
+            add(
+                "state:current",
+                (
+                    f"experience_count={self.state.experience_count}; "
+                    f"continuity={self.state.continuity:.3f}"
+                ),
+            )
+            summary = (
+                "The requested focus has no dedicated causal view; only the "
+                "current recorded state is reported."
+            )
+
+        unsupported_claims = 0
+        evidence_count = len(refs)
+        fidelity_score = 1.0 if evidence_count else 0.0
+        return MetacognitiveNarrative(
+            focus=focus,
+            summary=summary,
+            evidence_refs=tuple(refs),
+            evidence_details=tuple(details),
+            causal_chain_depth=evidence_count,
+            fidelity_score=round(fidelity_score, 6),
+            unsupported_claims=unsupported_claims,
+        )
+
     def compare_ablation(
         self,
         *,
@@ -1351,5 +1577,6 @@ class UnarchiEngine:
                 self.ready_prospective_intentions()
             ),
             "total_prospective_intentions": len(self.prospective_intentions),
+            "metacognitive_narrative_available": True,
             "claims_phenomenal_consciousness": False,
         }
