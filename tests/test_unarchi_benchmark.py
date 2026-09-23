@@ -4,8 +4,8 @@ from backend.app.services.unarchi_benchmark import run_unarchi_ablation_benchmar
 def test_unarchi_ablation_benchmark_passes_all_scenarios() -> None:
     result = run_unarchi_ablation_benchmark()
 
-    assert result["scenario_count"] == 3
-    assert result["passed_scenarios"] == 3
+    assert result["scenario_count"] == 4
+    assert result["passed_scenarios"] == 4
     assert result["pass_rate"] == 1.0
     assert result["claims_phenomenal_consciousness"] is False
 
@@ -20,3 +20,16 @@ def test_unarchi_benchmark_contains_causal_comparisons() -> None:
     assert failure["comparison"]["state_causally_active"] is True
     assert failure["comparison"]["risk_delta"] > 0
     assert success["comparison"]["risk_delta"] < 0
+
+
+def test_unarchi_benchmark_covers_endogenous_goal_lifecycle() -> None:
+    result = run_unarchi_ablation_benchmark()
+    scenarios = {item["name"]: item for item in result["scenarios"]}
+
+    endogenous = scenarios["endogenous_goal_lifecycle"]
+
+    assert endogenous["created"] is True
+    assert endogenous["bounded"] is True
+    assert endogenous["zero_cost_only"] is True
+    assert endogenous["resolved"] is True
+    assert endogenous["passed"] is True
