@@ -111,8 +111,10 @@ def _find_matches(
     if not target_tokens or not words:
         return []
 
-    page_tokens = [_normalize(word.text) for word in words]
-    page_tokens = [token for token in page_tokens if token]
+    filtered_words = [
+        word for word in words if _normalize(word.text)
+    ]
+    page_tokens = [_normalize(word.text) for word in filtered_words]
     if not page_tokens:
         return []
 
@@ -150,7 +152,9 @@ def _find_matches(
         if key in seen:
             continue
         seen.add(key)
-        confidence_values = [word.confidence for word in words[start:end]]
+        confidence_values = [
+            word.confidence for word in filtered_words[start:end]
+        ]
         ocr_confidence = (
             sum(confidence_values) / len(confidence_values)
             if confidence_values
@@ -160,7 +164,7 @@ def _find_matches(
             OCRMatch(
                 page=page,
                 bbox=_window_bbox(
-                    words,
+                    filtered_words,
                     start,
                     end,
                     width=width,
