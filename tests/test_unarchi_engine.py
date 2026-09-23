@@ -168,3 +168,57 @@ def test_snapshot_never_claims_phenomenal_consciousness() -> None:
 
     assert snapshot["claims_phenomenal_consciousness"] is False
     assert snapshot["version"] == "unarchi-v0.2"
+
+
+def test_export_restore_preserves_identity_state_and_memory() -> None:
+    engine = UnarchiEngine()
+    engine.cycle(
+        observation="A new research hypothesis appears.",
+        goal="test the hypothesis cheaply",
+        expected_success=0.45,
+        risk=0.2,
+    )
+    engine.learn(
+        observation="A new research hypothesis appears.",
+        goal="test the hypothesis cheaply",
+        action="run reversible test",
+        outcome="the test produced useful evidence",
+        success=True,
+        reward=0.7,
+        predicted_success=0.45,
+    )
+
+    exported = engine.export_state()
+    restored = UnarchiEngine.from_export(exported)
+
+    assert restored.snapshot() == engine.snapshot()
+    assert restored.memory == engine.memory
+    assert restored.observation_history == engine.observation_history
+
+    original_next = engine.compare_ablation(
+        observation="A new research hypothesis appears.",
+        goal="test the hypothesis cheaply",
+        expected_success=0.45,
+        risk=0.2,
+    )
+    restored_next = restored.compare_ablation(
+        observation="A new research hypothesis appears.",
+        goal="test the hypothesis cheaply",
+        expected_success=0.45,
+        risk=0.2,
+    )
+
+    assert restored_next == original_next
+
+
+def test_restore_rejects_unknown_state_version() -> None:
+    engine = UnarchiEngine()
+    exported = engine.export_state()
+    exported["version"] = "future-incompatible-version"
+
+    try:
+        UnarchiEngine.from_export(exported)
+    except ValueError as exc:
+        assert "unsupported UNARCHI state version" in str(exc)
+    else:
+        raise AssertionError("unknown state versions must not be restored")
