@@ -865,3 +865,64 @@ treating correlation as a discovered truth.
 The measurable target is conservative context discovery: useful latent context
 hypotheses should improve held-out prediction, while noisy or spurious
 candidate splits should be rejected.
+
+
+## v0.16 latent context-hypothesis discovery checkpoint
+
+UNARCHI v0.16 can now propose a small bounded set of candidate context
+variables from repeated autobiographical outcome differences without treating
+those correlations as discovered truths.
+
+For one active parent self-schema, the discovery process:
+
+- gathers matching autobiographical experiences;
+- extracts observation terms that are not already part of the parent schema;
+- ignores numeric-only terms and terms with insufficient repeated support;
+- estimates the observed success rate associated with each surviving term;
+- forms only mutually exclusive term pairs with a sufficiently large outcome
+  contrast;
+- ranks those pairs and caps the number of candidates considered;
+- evaluates every candidate on an isolated copy of the engine;
+- reuses the v0.14 held-out decomposition test for falsification;
+- applies only the best candidate that survives held-out validation.
+
+Rejected candidates cannot mutate the live contextual self-schema because their
+decomposition tests happen on deep copies.
+
+A latent-context hypothesis records:
+
+- parent self-schema identifier;
+- positive- and negative-associated candidate terms;
+- support count and observed success rate for each term;
+- outcome-rate contrast;
+- held-out validation status and improvement;
+- the resulting decomposition identifier only when that hypothesis is selected;
+- exact autobiographical evidence references.
+
+The discovery record stores the bounded hypothesis set, how many candidates
+validated, which hypothesis was selected, and the selected decomposition.
+
+The deterministic v0.16 benchmark includes both:
+
+- a useful hidden sandbox/production distinction that survives held-out
+  validation and becomes active context structure;
+- a deliberately misleading alpha/beta correlation whose apparent full-history
+  contrast reverses on the held-out examples, causing the candidate split to be
+  rejected without altering the live contextual schema.
+
+All discovery and hypothesis records persist through export/restore and can be
+reconstructed by evidence-grounded metacognition.
+
+This is conservative functional context discovery. It is not proof that the
+candidate term is a real causal variable, and it does not establish subjective
+identity, self-awareness, sentience, phenomenal consciousness, or qualia.
+
+## Next checkpoint: v0.17 context-causality intervention
+
+The next research step should distinguish context variables that merely predict
+outcomes from context variables that survive controlled intervention evidence.
+
+The measurable target is causal context discrimination: an observationally
+useful context hypothesis should gain causal status only when a bounded
+intervention changes the candidate context while relevant competing variables
+are held fixed and the predicted outcome difference follows.
