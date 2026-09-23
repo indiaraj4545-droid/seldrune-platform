@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 
-UNARCHI_VERSION = "unarchi-v0.15"
+UNARCHI_VERSION = "unarchi-v0.16"
 _STOPWORDS = {
     "a",
     "an",
@@ -488,6 +488,42 @@ class ContextTransferComparison:
 
 
 @dataclass(frozen=True)
+class LatentContextHypothesis:
+    id: int
+    parent_schema_id: int
+    positive_term: str
+    negative_term: str
+    positive_support: int
+    negative_support: int
+    positive_success_rate: float
+    negative_success_rate: float
+    rate_contrast: float
+    validation_status: str
+    holdout_improvement: float
+    decomposition_id: int | None
+    evidence_refs: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class LatentContextDiscovery:
+    id: int
+    parent_schema_id: int
+    hypothesis_ids: tuple[int, ...]
+    proposed_count: int
+    validated_count: int
+    selected_hypothesis_id: int | None
+    selected_decomposition_id: int | None
+    status: str
+    evidence_refs: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class MetacognitiveNarrative:
     focus: str
     summary: str
@@ -540,13 +576,14 @@ class UnarchiEngine:
     """
     CPU-only experimental cognitive kernel.
 
-    v0.15 includes causal internal dynamics, bounded endogenous goals, a
+    v0.16 includes causal internal dynamics, bounded endogenous goals, a
     calibrated predictive self-model, prospective memory, evidence-grounded
     metacognition, explicit value arbitration, competing causal hypotheses,
     controlled self-intervention trials, a bounded recurrent global workspace,
     counterfactual future simulation with prediction-error feedback, a compact
     autobiographical self-schema, contradiction-driven revision, validated
-    context decomposition, and evidence-gated context transfer boundaries.
+    context decomposition, transfer boundaries, and conservative latent
+    context-hypothesis discovery.
     """
 
     state: UnarchiState = field(default_factory=UnarchiState)
@@ -595,6 +632,14 @@ class UnarchiEngine:
         default_factory=list
     )
     next_context_transfer_boundary_id: int = 1
+    latent_context_hypotheses: list[LatentContextHypothesis] = field(
+        default_factory=list
+    )
+    next_latent_context_hypothesis_id: int = 1
+    latent_context_discoveries: list[LatentContextDiscovery] = field(
+        default_factory=list
+    )
+    next_latent_context_discovery_id: int = 1
     success_prediction_bias: float = 0.0
     uncertainty_prediction_bias: float = 0.0
     stress_prediction_bias: float = 0.0
@@ -3397,6 +3442,305 @@ class UnarchiEngine:
         return record
 
 
+
+    def discover_latent_context_hypotheses(
+        self,
+        schema_id: int,
+        *,
+        max_candidates: int = 4,
+        min_term_support: int = 3,
+        min_rate_contrast: float = 0.40,
+        min_holdout_improvement: float = 0.10,
+        similarity_threshold: float = 0.28,
+    ) -> LatentContextDiscovery:
+        """
+        Propose and falsify a small set of latent context hypotheses.
+
+        Observation terms are only proposal features. A hypothesis becomes active
+        context structure only when the existing held-out decomposition test
+        validates it. Candidate evaluation happens on deep copies so rejected
+        hypotheses cannot mutate the live self-schema.
+        """
+        parent = next(
+            (item for item in self.self_schema if item.id == schema_id),
+            None,
+        )
+        if parent is None:
+            raise ValueError("unknown self schema")
+        if parent.status != "active":
+            raise ValueError("self schema is not active")
+
+        max_candidates = max(1, min(int(max_candidates), 6))
+        min_term_support = max(2, min(int(min_term_support), 24))
+        min_rate_contrast = _clamp(min_rate_contrast, 0.10, 1.0)
+        min_holdout_improvement = _clamp(
+            min_holdout_improvement,
+            0.01,
+            0.80,
+        )
+
+        matching = self._matching_schema_experiences(
+            parent,
+            similarity_threshold=similarity_threshold,
+        )
+        parent_terms = _terms(parent.pattern)
+        term_records: dict[str, list[tuple[int, Experience]]] = {}
+        for index, experience in matching:
+            for term in _terms(experience.observation) - parent_terms:
+                if term.isdigit():
+                    continue
+                term_records.setdefault(term, []).append((index, experience))
+
+        stats: list[tuple[str, int, float, tuple[str, ...]]] = []
+        for term, records in term_records.items():
+            support = len(records)
+            if support < min_term_support:
+                continue
+            successes = sum(
+                1 for _, experience in records if experience.success is True
+            )
+            rate = successes / support
+            refs = tuple(f"experience:{index}" for index, _ in records)
+            stats.append((term, support, rate, refs))
+
+        pair_candidates: list[
+            tuple[
+                float,
+                str,
+                int,
+                float,
+                tuple[str, ...],
+                str,
+                int,
+                float,
+                tuple[str, ...],
+            ]
+        ] = []
+        for left_index, left in enumerate(stats):
+            for right in stats[left_index + 1:]:
+                (
+                    left_term,
+                    left_support,
+                    left_rate,
+                    left_refs,
+                ) = left
+                (
+                    right_term,
+                    right_support,
+                    right_rate,
+                    right_refs,
+                ) = right
+                contrast = abs(left_rate - right_rate)
+                if contrast < min_rate_contrast:
+                    continue
+                overlap = set(left_refs).intersection(right_refs)
+                if overlap:
+                    continue
+                if left_rate >= right_rate:
+                    positive = left
+                    negative = right
+                else:
+                    positive = right
+                    negative = left
+                score = (
+                    contrast
+                    * min(positive[1], negative[1])
+                    * min(1.0, (positive[1] + negative[1]) / 12.0)
+                )
+                pair_candidates.append(
+                    (
+                        score,
+                        positive[0],
+                        positive[1],
+                        positive[2],
+                        positive[3],
+                        negative[0],
+                        negative[1],
+                        negative[2],
+                        negative[3],
+                    )
+                )
+
+        pair_candidates.sort(
+            key=lambda item: (
+                item[0],
+                item[3] - item[7],
+                item[2] + item[6],
+                item[1],
+                item[5],
+            ),
+            reverse=True,
+        )
+        selected_pairs = pair_candidates[:max_candidates]
+
+        hypothesis_ids: list[int] = []
+        validated: list[
+            tuple[
+                float,
+                LatentContextHypothesis,
+                SelfSchemaDecomposition,
+            ]
+        ] = []
+        discovery_refs: list[str] = []
+
+        for (
+            _,
+            positive_term,
+            positive_support,
+            positive_rate,
+            positive_refs,
+            negative_term,
+            negative_support,
+            negative_rate,
+            negative_refs,
+        ) in selected_pairs:
+            trial = deepcopy(self)
+            decomposition = trial.decompose_self_schema_context(
+                schema_id,
+                context_rules={
+                    positive_term: (positive_term,),
+                    negative_term: (negative_term,),
+                },
+                min_evidence_per_context=min_term_support,
+                min_holdout_improvement=min_holdout_improvement,
+                similarity_threshold=similarity_threshold,
+            )
+            rate_contrast = positive_rate - negative_rate
+            validation_status = (
+                "validated"
+                if decomposition.status == "accepted"
+                else "rejected_validation"
+            )
+            evidence_refs = tuple(
+                dict.fromkeys(positive_refs + negative_refs)
+            )
+            hypothesis = LatentContextHypothesis(
+                id=self.next_latent_context_hypothesis_id,
+                parent_schema_id=schema_id,
+                positive_term=positive_term,
+                negative_term=negative_term,
+                positive_support=positive_support,
+                negative_support=negative_support,
+                positive_success_rate=round(positive_rate, 6),
+                negative_success_rate=round(negative_rate, 6),
+                rate_contrast=round(rate_contrast, 6),
+                validation_status=validation_status,
+                holdout_improvement=decomposition.improvement,
+                decomposition_id=None,
+                evidence_refs=evidence_refs,
+            )
+            self.next_latent_context_hypothesis_id += 1
+            self.latent_context_hypotheses.append(hypothesis)
+            hypothesis_ids.append(hypothesis.id)
+            discovery_refs.extend(evidence_refs)
+            if decomposition.status == "accepted":
+                validated.append(
+                    (decomposition.improvement, hypothesis, decomposition)
+                )
+
+        selected_hypothesis_id: int | None = None
+        selected_decomposition_id: int | None = None
+        if validated:
+            validated.sort(
+                key=lambda item: (
+                    item[0],
+                    item[1].rate_contrast,
+                    item[1].positive_support
+                    + item[1].negative_support,
+                ),
+                reverse=True,
+            )
+            _, best_hypothesis, _ = validated[0]
+            applied = self.decompose_self_schema_context(
+                schema_id,
+                context_rules={
+                    best_hypothesis.positive_term: (
+                        best_hypothesis.positive_term,
+                    ),
+                    best_hypothesis.negative_term: (
+                        best_hypothesis.negative_term,
+                    ),
+                },
+                min_evidence_per_context=min_term_support,
+                min_holdout_improvement=min_holdout_improvement,
+                similarity_threshold=similarity_threshold,
+            )
+            selected_hypothesis_id = best_hypothesis.id
+            selected_decomposition_id = applied.id
+
+            updated_hypotheses: list[LatentContextHypothesis] = []
+            for item in self.latent_context_hypotheses:
+                if item.id == best_hypothesis.id:
+                    item = LatentContextHypothesis(
+                        id=item.id,
+                        parent_schema_id=item.parent_schema_id,
+                        positive_term=item.positive_term,
+                        negative_term=item.negative_term,
+                        positive_support=item.positive_support,
+                        negative_support=item.negative_support,
+                        positive_success_rate=item.positive_success_rate,
+                        negative_success_rate=item.negative_success_rate,
+                        rate_contrast=item.rate_contrast,
+                        validation_status="selected",
+                        holdout_improvement=item.holdout_improvement,
+                        decomposition_id=applied.id,
+                        evidence_refs=item.evidence_refs,
+                    )
+                updated_hypotheses.append(item)
+            self.latent_context_hypotheses = updated_hypotheses
+
+        discovery = LatentContextDiscovery(
+            id=self.next_latent_context_discovery_id,
+            parent_schema_id=schema_id,
+            hypothesis_ids=tuple(hypothesis_ids),
+            proposed_count=len(hypothesis_ids),
+            validated_count=len(validated),
+            selected_hypothesis_id=selected_hypothesis_id,
+            selected_decomposition_id=selected_decomposition_id,
+            status=(
+                "selected"
+                if selected_hypothesis_id is not None
+                else "no_validated_hypothesis"
+            ),
+            evidence_refs=tuple(dict.fromkeys(discovery_refs)),
+        )
+        self.next_latent_context_discovery_id += 1
+        self.latent_context_discoveries.append(discovery)
+        if len(self.latent_context_hypotheses) > self.max_memory:
+            self.latent_context_hypotheses = self.latent_context_hypotheses[
+                -self.max_memory:
+            ]
+        if len(self.latent_context_discoveries) > self.max_memory:
+            self.latent_context_discoveries = self.latent_context_discoveries[
+                -self.max_memory:
+            ]
+
+        if selected_hypothesis_id is not None:
+            chosen = next(
+                item
+                for item in self.latent_context_hypotheses
+                if item.id == selected_hypothesis_id
+            )
+            self.stage_global_workspace_item(
+                source="self_schema",
+                content=(
+                    f"latent context discovery id={discovery.id}; "
+                    f"selected={chosen.positive_term}/"
+                    f"{chosen.negative_term}; "
+                    f"heldout_gain={chosen.holdout_improvement:.3f}"
+                ),
+                salience=max(
+                    0.55,
+                    _clamp(chosen.holdout_improvement + 0.35),
+                ),
+                evidence_refs=(
+                    f"latent_context_discovery:{discovery.id}",
+                    f"latent_context_hypothesis:{chosen.id}",
+                    *chosen.evidence_refs[-4:],
+                ),
+            )
+        return discovery
+
     def active_context_transfer_boundaries(
         self,
     ) -> tuple[ContextTransferBoundary, ...]:
@@ -3826,6 +4170,55 @@ class UnarchiEngine:
             details.append(detail)
 
         if focus in {
+            "latent_context",
+            "context_discovery",
+            "latent_context_discovery",
+        }:
+            if self.latent_context_discoveries:
+                discovery = self.latent_context_discoveries[-1]
+                add(
+                    f"latent_context_discovery:{discovery.id}",
+                    (
+                        f"parent_schema={discovery.parent_schema_id}; "
+                        f"proposed={discovery.proposed_count}; "
+                        f"validated={discovery.validated_count}; "
+                        f"status={discovery.status}"
+                    ),
+                )
+                for hypothesis_id in discovery.hypothesis_ids[:4]:
+                    hypothesis = next(
+                        (
+                            item
+                            for item in self.latent_context_hypotheses
+                            if item.id == hypothesis_id
+                        ),
+                        None,
+                    )
+                    if hypothesis is not None:
+                        add(
+                            f"latent_context_hypothesis:{hypothesis.id}",
+                            (
+                                f"terms={hypothesis.positive_term}/"
+                                f"{hypothesis.negative_term}; "
+                                f"contrast={hypothesis.rate_contrast:.3f}; "
+                                f"validation={hypothesis.validation_status}; "
+                                f"gain={hypothesis.holdout_improvement:.3f}"
+                            ),
+                        )
+                for ref in discovery.evidence_refs[-4:]:
+                    add(
+                        ref,
+                        "autobiographical evidence used for candidate discovery",
+                    )
+                summary = (
+                    "The latest latent-context discovery proposed only bounded "
+                    "outcome-associated term pairs and accepted context structure "
+                    "only through held-out decomposition validation."
+                )
+            else:
+                summary = "No latent context-hypothesis discovery has been run."
+
+        elif focus in {
             "context_transfer",
             "transfer_boundary",
             "context_generalization",
@@ -4615,6 +5008,18 @@ class UnarchiEngine:
             "next_context_transfer_boundary_id": (
                 self.next_context_transfer_boundary_id
             ),
+            "latent_context_hypotheses": [
+                item.to_dict() for item in self.latent_context_hypotheses
+            ],
+            "next_latent_context_hypothesis_id": (
+                self.next_latent_context_hypothesis_id
+            ),
+            "latent_context_discoveries": [
+                item.to_dict() for item in self.latent_context_discoveries
+            ],
+            "next_latent_context_discovery_id": (
+                self.next_latent_context_discovery_id
+            ),
             "success_prediction_bias": self.success_prediction_bias,
             "uncertainty_prediction_bias": self.uncertainty_prediction_bias,
             "stress_prediction_bias": self.stress_prediction_bias,
@@ -4654,6 +5059,14 @@ class UnarchiEngine:
         )
         context_transfer_boundaries_payload = payload.get(
             "context_transfer_boundaries",
+            [],
+        )
+        latent_context_hypotheses_payload = payload.get(
+            "latent_context_hypotheses",
+            [],
+        )
+        latent_context_discoveries_payload = payload.get(
+            "latent_context_discoveries",
             [],
         )
         value_weights_payload = payload.get("value_weights", _default_value_weights())
@@ -4697,6 +5110,10 @@ class UnarchiEngine:
             raise ValueError("invalid UNARCHI self schema decompositions")
         if not isinstance(context_transfer_boundaries_payload, list):
             raise ValueError("invalid UNARCHI context transfer boundaries")
+        if not isinstance(latent_context_hypotheses_payload, list):
+            raise ValueError("invalid UNARCHI latent context hypotheses")
+        if not isinstance(latent_context_discoveries_payload, list):
+            raise ValueError("invalid UNARCHI latent context discoveries")
 
         memory: list[Experience] = []
         for item in memory_payload:
@@ -4897,6 +5314,33 @@ class UnarchiEngine:
                 ContextTransferBoundary(**restored_item)
             )
 
+        latent_context_hypotheses: list[LatentContextHypothesis] = []
+        for item in latent_context_hypotheses_payload:
+            if not isinstance(item, dict):
+                raise ValueError("invalid UNARCHI latent context hypothesis")
+            restored_item = dict(item)
+            restored_item["evidence_refs"] = tuple(
+                restored_item.get("evidence_refs", ())
+            )
+            latent_context_hypotheses.append(
+                LatentContextHypothesis(**restored_item)
+            )
+
+        latent_context_discoveries: list[LatentContextDiscovery] = []
+        for item in latent_context_discoveries_payload:
+            if not isinstance(item, dict):
+                raise ValueError("invalid UNARCHI latent context discovery")
+            restored_item = dict(item)
+            restored_item["hypothesis_ids"] = tuple(
+                restored_item.get("hypothesis_ids", ())
+            )
+            restored_item["evidence_refs"] = tuple(
+                restored_item.get("evidence_refs", ())
+            )
+            latent_context_discoveries.append(
+                LatentContextDiscovery(**restored_item)
+            )
+
         max_memory = max(16, min(int(payload.get("max_memory") or 256), 4096))
         max_active = max(
             1,
@@ -5020,6 +5464,24 @@ class UnarchiEngine:
                 )
                 + 1,
             ),
+            latent_context_hypotheses=latent_context_hypotheses[-max_memory:],
+            next_latent_context_hypothesis_id=max(
+                int(payload.get("next_latent_context_hypothesis_id") or 1),
+                max(
+                    (item.id for item in latent_context_hypotheses),
+                    default=0,
+                )
+                + 1,
+            ),
+            latent_context_discoveries=latent_context_discoveries[-max_memory:],
+            next_latent_context_discovery_id=max(
+                int(payload.get("next_latent_context_discovery_id") or 1),
+                max(
+                    (item.id for item in latent_context_discoveries),
+                    default=0,
+                )
+                + 1,
+            ),
             success_prediction_bias=float(
                 payload.get("success_prediction_bias") or 0.0
             ),
@@ -5088,6 +5550,12 @@ class UnarchiEngine:
             ),
             "accepted_context_transfer_count": len(
                 self.active_context_transfer_boundaries()
+            ),
+            "latent_context_hypothesis_count": len(
+                self.latent_context_hypotheses
+            ),
+            "latent_context_discovery_count": len(
+                self.latent_context_discoveries
             ),
             "observed_counterfactual_count": len(
                 [
