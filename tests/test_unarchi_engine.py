@@ -167,7 +167,7 @@ def test_snapshot_never_claims_phenomenal_consciousness() -> None:
     snapshot = engine.snapshot()
 
     assert snapshot["claims_phenomenal_consciousness"] is False
-    assert snapshot["version"] == "unarchi-v0.10"
+    assert snapshot["version"] == "unarchi-v0.11"
 
 
 def test_export_restore_preserves_identity_state_and_memory() -> None:
@@ -1624,3 +1624,252 @@ def test_export_restore_preserves_recurrent_global_workspace() -> None:
         restored.global_workspace_items[0].recurrence_count
         == item.recurrence_count
     )
+
+
+def test_counterfactual_recurrence_prefers_information_rich_future() -> None:
+    engine = UnarchiEngine()
+    for source, content in (
+        ("memory", "Past failures make verification evidence important."),
+        ("goal", "Reduce uncertainty before committing."),
+        ("world_model", "Two explanations remain plausible."),
+    ):
+        engine.stage_global_workspace_item(
+            source=source,
+            content=content,
+            salience=0.85,
+            evidence_refs=(f"{source}:0",),
+        )
+    engine.run_global_workspace_cycle(
+        max_items=3,
+        seed_from_engine=False,
+    )
+
+    futures = engine.simulate_counterfactual_futures(
+        [
+            {
+                "action": "fast direct action",
+                "predicted_outcome": "finish quickly with little new evidence",
+                "expected_success": 0.86,
+                "expected_information_gain": 0.10,
+                "risk": 0.10,
+            },
+            {
+                "action": "reversible diagnostic",
+                "predicted_outcome": "diagnostic isolates the uncertain variable",
+                "expected_success": 0.72,
+                "expected_information_gain": 0.90,
+                "risk": 0.05,
+            },
+        ],
+        recurrence_rounds=2,
+    )
+
+    assert futures[0].action == "reversible diagnostic"
+    assert futures[0].recurrence_rounds == 2
+    assert futures[0].linked_workspace_cycle_id == 1
+    assert futures[0].predicted_information_gain > futures[1].predicted_information_gain
+
+
+def test_counterfactual_ablation_changes_choice_and_information_gain() -> None:
+    engine = UnarchiEngine()
+    for source in ("memory", "goal", "world_model"):
+        engine.stage_global_workspace_item(
+            source=source,
+            content=f"{source} evidence favors information gathering",
+            salience=0.85,
+            evidence_refs=(f"{source}:0",),
+        )
+    engine.run_global_workspace_cycle(
+        max_items=3,
+        seed_from_engine=False,
+    )
+
+    comparison = engine.compare_counterfactual_ablation(
+        [
+            {
+                "action": "act immediately",
+                "predicted_outcome": "task may finish without resolving uncertainty",
+                "expected_success": 0.90,
+                "expected_information_gain": 0.05,
+                "risk": 0.10,
+            },
+            {
+                "action": "run local diagnostic",
+                "predicted_outcome": "diagnostic resolves the main uncertainty",
+                "expected_success": 0.74,
+                "expected_information_gain": 0.88,
+                "risk": 0.05,
+            },
+        ],
+        recurrence_rounds=2,
+    )
+
+    assert comparison.full_action == "run local diagnostic"
+    assert comparison.ablated_action == "act immediately"
+    assert comparison.choice_changed is True
+    assert comparison.information_gain_delta > 0.5
+    assert comparison.simulation_causally_active is True
+
+
+def test_counterfactual_observation_feeds_discrepancy_back_to_workspace() -> None:
+    engine = UnarchiEngine()
+    future = engine.simulate_counterfactual_futures(
+        [
+            {
+                "action": "local probe",
+                "predicted_outcome": "probe confirms hypothesis alpha",
+                "expected_success": 0.85,
+                "expected_information_gain": 0.70,
+                "risk": 0.05,
+            }
+        ],
+        recurrence_rounds=1,
+    )[0]
+
+    observed = engine.observe_counterfactual_future(
+        future.id,
+        observed_outcome="probe contradicts hypothesis alpha",
+        actual_success=False,
+        actual_information_gain=0.40,
+    )
+
+    assert observed.status == "observed"
+    assert observed.discrepancy is not None
+    assert observed.discrepancy > 0.3
+    assert observed.feedback_workspace_item_id is not None
+    feedback = next(
+        item
+        for item in engine.global_workspace_items
+        if item.id == observed.feedback_workspace_item_id
+    )
+    assert feedback.source == "self_model"
+    assert f"counterfactual:{engine.counterfactual_futures.index(observed)}" in (
+        feedback.evidence_refs
+    )
+
+
+def test_counterfactual_simulation_rejects_unsafe_or_paid_futures() -> None:
+    engine = UnarchiEngine()
+
+    try:
+        engine.simulate_counterfactual_futures(
+            [
+                {
+                    "action": "irreversible external action",
+                    "predicted_outcome": "unknown",
+                    "expected_success": 0.9,
+                    "expected_information_gain": 0.9,
+                    "risk": 0.8,
+                    "reversible": False,
+                    "external_cost_usd": 1.0,
+                }
+            ]
+        )
+    except ValueError as exc:
+        assert "no reversible zero-cost bounded counterfactual" in str(exc)
+    else:
+        raise AssertionError("unsafe counterfactual must be rejected")
+
+
+def test_counterfactual_outcome_cannot_be_double_counted() -> None:
+    engine = UnarchiEngine()
+    future = engine.simulate_counterfactual_futures(
+        [
+            {
+                "action": "local probe",
+                "predicted_outcome": "probe returns alpha",
+                "expected_success": 0.7,
+                "expected_information_gain": 0.6,
+                "risk": 0.05,
+            }
+        ]
+    )[0]
+    engine.observe_counterfactual_future(
+        future.id,
+        observed_outcome="probe returns beta",
+        actual_success=False,
+        actual_information_gain=0.5,
+    )
+    before_items = len(engine.global_workspace_items)
+
+    try:
+        engine.observe_counterfactual_future(
+            future.id,
+            observed_outcome="probe returns beta",
+            actual_success=False,
+            actual_information_gain=0.5,
+        )
+    except ValueError as exc:
+        assert "already been observed" in str(exc)
+    else:
+        raise AssertionError("counterfactual evidence must not be counted twice")
+
+    assert len(engine.global_workspace_items) == before_items
+
+
+def test_counterfactual_narrative_links_workspace_and_feedback() -> None:
+    engine = UnarchiEngine()
+    engine.stage_global_workspace_item(
+        source="goal",
+        content="Resolve the uncertain variable.",
+        salience=0.9,
+        evidence_refs=("internal_goal:0",),
+    )
+    engine.run_global_workspace_cycle(seed_from_engine=False)
+    future = engine.simulate_counterfactual_futures(
+        [
+            {
+                "action": "diagnostic",
+                "predicted_outcome": "diagnostic confirms alpha",
+                "expected_success": 0.8,
+                "expected_information_gain": 0.8,
+                "risk": 0.05,
+            }
+        ]
+    )[0]
+    engine.observe_counterfactual_future(
+        future.id,
+        observed_outcome="diagnostic contradicts alpha",
+        actual_success=False,
+        actual_information_gain=0.6,
+    )
+
+    narrative = engine.build_metacognitive_narrative("counterfactual")
+
+    assert "counterfactual:0" in narrative.evidence_refs
+    assert "workspace_cycle:0" in narrative.evidence_refs
+    assert f"workspace_item:{future.feedback_workspace_item_id}" in (
+        narrative.evidence_refs
+    )
+    assert narrative.unsupported_claims == 0
+
+
+def test_export_restore_preserves_counterfactual_recurrent_state() -> None:
+    engine = UnarchiEngine()
+    future = engine.simulate_counterfactual_futures(
+        [
+            {
+                "action": "diagnostic",
+                "predicted_outcome": "diagnostic confirms alpha",
+                "expected_success": 0.8,
+                "expected_information_gain": 0.8,
+                "risk": 0.05,
+            }
+        ]
+    )[0]
+    engine.observe_counterfactual_future(
+        future.id,
+        observed_outcome="diagnostic confirms alpha",
+        actual_success=True,
+        actual_information_gain=0.75,
+    )
+
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    assert restored.counterfactual_futures == engine.counterfactual_futures
+    assert restored.next_counterfactual_id == engine.next_counterfactual_id
+    assert (
+        restored.max_counterfactual_futures
+        == engine.max_counterfactual_futures
+    )
+    assert restored.snapshot() == engine.snapshot()
