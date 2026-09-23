@@ -5,7 +5,7 @@ from typing import Any
 from backend.app.services.unarchi_engine import UnarchiEngine
 
 
-BENCHMARK_VERSION = "unarchi-ablation-v0.9"
+BENCHMARK_VERSION = "unarchi-ablation-v0.10"
 
 
 def _failure_sensitization() -> dict[str, Any]:
@@ -524,6 +524,99 @@ def _recurrent_global_workspace_integration() -> dict[str, Any]:
         "second_recurrence_depth": second.recurrence_depth,
     }
 
+
+
+def _counterfactual_recurrent_information_gain() -> dict[str, Any]:
+    engine = UnarchiEngine()
+    for source, content, evidence in (
+        ("memory", "Past failures make missing evidence important.", "experience:0"),
+        ("goal", "Resolve uncertainty before committing.", "internal_goal:0"),
+        (
+            "world_model",
+            "Two causal explanations remain plausible.",
+            "hypothesis:0",
+        ),
+    ):
+        engine.stage_global_workspace_item(
+            source=source,
+            content=content,
+            salience=0.85,
+            evidence_refs=(evidence,),
+        )
+    engine.run_global_workspace_cycle(
+        max_items=3,
+        seed_from_engine=False,
+    )
+
+    candidates = [
+        {
+            "action": "act immediately",
+            "predicted_outcome": "finish without resolving the hidden variable",
+            "expected_success": 0.90,
+            "expected_information_gain": 0.05,
+            "risk": 0.10,
+        },
+        {
+            "action": "run reversible diagnostic",
+            "predicted_outcome": "diagnostic isolates the hidden variable",
+            "expected_success": 0.74,
+            "expected_information_gain": 0.88,
+            "risk": 0.05,
+        },
+    ]
+    comparison = engine.compare_counterfactual_ablation(
+        candidates,
+        recurrence_rounds=2,
+    )
+    futures = engine.simulate_counterfactual_futures(
+        candidates,
+        recurrence_rounds=2,
+    )
+    selected = futures[0]
+
+    measured_information_gain = {
+        "act immediately": 0.05,
+        "run reversible diagnostic": 0.82,
+    }
+    observed = engine.observe_counterfactual_future(
+        selected.id,
+        observed_outcome="diagnostic isolates a schema mismatch",
+        actual_success=True,
+        actual_information_gain=measured_information_gain[selected.action],
+    )
+    feedback_reentered = (
+        observed.feedback_workspace_item_id is not None
+        and any(
+            item.id == observed.feedback_workspace_item_id
+            and item.source == "self_model"
+            for item in engine.global_workspace_items
+        )
+    )
+    full_measured_gain = measured_information_gain[comparison.full_action]
+    ablated_measured_gain = measured_information_gain[comparison.ablated_action]
+
+    return {
+        "name": "counterfactual_recurrent_information_gain",
+        "expected_direction": (
+            "recurrent_simulation_selects_more_informative_future_and_learns_error"
+        ),
+        "passed": (
+            comparison.simulation_causally_active
+            and comparison.full_action == "run reversible diagnostic"
+            and comparison.ablated_action == "act immediately"
+            and full_measured_gain > ablated_measured_gain
+            and feedback_reentered
+            and observed.status == "observed"
+        ),
+        "simulation_causally_active": comparison.simulation_causally_active,
+        "full_action": comparison.full_action,
+        "ablated_action": comparison.ablated_action,
+        "full_measured_information_gain": full_measured_gain,
+        "ablated_measured_information_gain": ablated_measured_gain,
+        "feedback_reentered": feedback_reentered,
+        "prediction_discrepancy": observed.discrepancy,
+    }
+
 def run_unarchi_ablation_benchmark() -> dict[str, Any]:
     scenarios = [
         _failure_sensitization(),
@@ -537,6 +630,7 @@ def run_unarchi_ablation_benchmark() -> dict[str, Any]:
         _causal_hypothesis_revision(),
         _intervention_aware_self_world_revision(),
         _recurrent_global_workspace_integration(),
+        _counterfactual_recurrent_information_gain(),
     ]
     passed = sum(bool(item["passed"]) for item in scenarios)
     return {
