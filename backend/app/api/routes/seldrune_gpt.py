@@ -678,6 +678,7 @@ def edit_seldrune_gpt_pdf(
             payload.instruction,
             password=payload.password,
             minimum_confidence=settings.pdf_brain_min_confidence,
+            allow_ocr=settings.pdf_local_ocr_enabled,
         )
 
     if local_edit is not None:
@@ -724,6 +725,7 @@ def edit_seldrune_gpt_pdf(
                 "local_intent": local_edit.prediction.intent,
                 "local_confidence": round(local_edit.prediction.confidence, 6),
                 "model_fingerprint": local_edit.prediction.model_fingerprint,
+                "local_ocr_used": local_edit.ocr_used,
             },
         )
         session.add(
@@ -745,7 +747,12 @@ def edit_seldrune_gpt_pdf(
                     f"{edit_result.verification_score}% content verification, "
                     f"{visual_summary}, and "
                     f"{selected_assessment.layout_integrity_score}% layout integrity. "
-                    "No external AI model call was required."
+                    + (
+                        "Local CPU OCR was used. "
+                        if local_edit.ocr_used
+                        else ""
+                    )
+                    + "No external AI model call was required."
                 ),
                 model=local_model,
                 response_id=local_response_id,
@@ -781,6 +788,17 @@ def edit_seldrune_gpt_pdf(
             model_calls=0,
             models_used=[local_model],
             verification_notes=edit_result.verification_notes,
+        )
+
+    if not settings.pdf_external_fallback_enabled:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Seldrune PDF Brain could not safely resolve this edit locally. "
+                "Zero-credit PDF mode is enabled, so Seldrune did not call OpenAI. "
+                "Use a more explicit instruction with the exact old and new text, "
+                "and include the page number when the value appears more than once."
+            ),
         )
 
     if settings.model_provider != "openai":
@@ -1336,7 +1354,13 @@ def seldrune_gpt_capabilities(
                 **pdf_brain_training_summary(),
                 "enabled": settings.pdf_brain_enabled,
                 "minimum_confidence": settings.pdf_brain_min_confidence,
-                "routing": "local-first with OpenAI fallback",
+                "routing": (
+                    "local-only zero-credit"
+                    if not settings.pdf_external_fallback_enabled
+                    else "local-first with OpenAI fallback"
+                ),
+                "local_ocr_enabled": settings.pdf_local_ocr_enabled,
+                "external_fallback_enabled": settings.pdf_external_fallback_enabled,
                 "local_ai_cost_usd": 0.0,
             },
             "daily_limit_usd": settings.ai_daily_max_usd,
