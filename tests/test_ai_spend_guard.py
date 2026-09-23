@@ -9,6 +9,7 @@ from sqlalchemy.pool import StaticPool
 from backend.app import models  # noqa: F401
 from backend.app.core.config import Settings
 from backend.app.db.base import Base
+from backend.app.models.audit import AuditLog
 from backend.app.models.model_invocation import ModelInvocation
 from backend.app.models.seldrune_gpt_message import SeldruneGPTMessage
 from backend.app.services.ai_spend_guard import (
@@ -57,6 +58,19 @@ def test_cumulative_spend_guard_sums_agent_and_direct_gpt_costs() -> None:
                 created_at=now,
             )
         )
+        session.add(
+            AuditLog(
+                organization_id=organization_id,
+                action="ai.cost_recorded",
+                resource_type="ai_planner",
+                details={
+                    "estimated_cost_usd": 0.1,
+                    "input_tokens": 100,
+                    "output_tokens": 20,
+                },
+                occurred_at=now,
+            )
+        )
         session.commit()
 
         snapshot = current_ai_spend(
@@ -64,8 +78,8 @@ def test_cumulative_spend_guard_sums_agent_and_direct_gpt_costs() -> None:
             organization_id=organization_id,
             now=now,
         )
-        assert snapshot.daily_usd == pytest.approx(0.7)
-        assert snapshot.monthly_usd == pytest.approx(0.7)
+        assert snapshot.daily_usd == pytest.approx(0.8)
+        assert snapshot.monthly_usd == pytest.approx(0.8)
 
         settings = Settings(
             ai_daily_max_usd=1.0,
@@ -78,15 +92,15 @@ def test_cumulative_spend_guard_sums_agent_and_direct_gpt_costs() -> None:
             settings=settings,
             now=now,
         )
-        assert status["daily_remaining_usd"] == pytest.approx(0.3)
-        assert status["monthly_remaining_usd"] == pytest.approx(4.3)
-        assert status["near_limit"] is False
+        assert status["daily_remaining_usd"] == pytest.approx(0.2)
+        assert status["monthly_remaining_usd"] == pytest.approx(4.2)
+        assert status["near_limit"] is True
 
         enforce_ai_spend_budget(
             session,
             organization_id=organization_id,
             settings=settings,
-            projected_usd=0.2,
+            projected_usd=0.19,
             now=now,
         )
         with pytest.raises(AISpendBudgetExceeded, match="daily spend guard"):
@@ -94,7 +108,7 @@ def test_cumulative_spend_guard_sums_agent_and_direct_gpt_costs() -> None:
                 session,
                 organization_id=organization_id,
                 settings=settings,
-                projected_usd=0.31,
+                projected_usd=0.21,
                 now=now,
             )
     finally:
