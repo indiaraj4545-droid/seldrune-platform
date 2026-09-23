@@ -167,7 +167,7 @@ def test_snapshot_never_claims_phenomenal_consciousness() -> None:
     snapshot = engine.snapshot()
 
     assert snapshot["claims_phenomenal_consciousness"] is False
-    assert snapshot["version"] == "unarchi-v0.24"
+    assert snapshot["version"] == "unarchi-v0.25"
 
 
 def test_export_restore_preserves_identity_state_and_memory() -> None:
@@ -3963,5 +3963,181 @@ def test_validity_map_revision_persists_and_preserves_exact_evidence() -> None:
     assert narrative.unsupported_claims == 0
     assert any(
         ref == f"context_causal_validity_map:{revised.id}"
+        for ref in narrative.evidence_refs
+    )
+
+
+
+def _build_three_revision_validity_engine():
+    engine, base_map = _build_validity_calibration_engine()
+    signature = "code=v1;load=normal;data=shifted"
+
+    positive = _calibrate_validity_signature(
+        engine,
+        base_map.id,
+        signature,
+        causal_path_should_win=True,
+        prefix="selection:positive",
+    )
+    revision_two = engine.revise_context_causal_validity_map(
+        base_map.id,
+        calibration_ids=(positive.id,),
+    )
+    negative = _calibrate_validity_signature(
+        engine,
+        revision_two.id,
+        signature,
+        causal_path_should_win=False,
+        prefix="selection:negative",
+    )
+    revision_three = engine.revise_context_causal_validity_map(
+        revision_two.id,
+        calibration_ids=(negative.id,),
+    )
+    return engine, base_map, revision_two, revision_three, signature
+
+
+def test_validity_map_selection_activates_latest_intact_lineage() -> None:
+    (
+        engine,
+        base_map,
+        revision_two,
+        revision_three,
+        signature,
+    ) = _build_three_revision_validity_engine()
+
+    selection = engine.select_context_validity_map_revision(
+        base_map.hypothesis_id,
+        reason="activate latest tested revision",
+    )
+    active = engine.active_context_causal_validity_map(
+        base_map.hypothesis_id
+    )
+    decision = engine.evaluate_active_context_validity_gated_decision(
+        base_map.hypothesis_id,
+        environment_signature=signature,
+        candidates=_validity_gate_candidates(),
+        context="production release",
+    )
+
+    assert selection.action == "activate"
+    assert selection.selected_map_id == revision_three.id
+    assert selection.lineage == (
+        base_map.id,
+        revision_two.id,
+        revision_three.id,
+    )
+    assert active is not None
+    assert active.id == revision_three.id
+    assert decision.classification_status == "unknown"
+    assert decision.causal_context_allowed is False
+
+
+def test_validity_map_rollback_preserves_descendant_and_rejects_sibling() -> None:
+    (
+        engine,
+        base_map,
+        revision_two,
+        revision_three,
+        _,
+    ) = _build_three_revision_validity_engine()
+    engine.select_context_validity_map_revision(
+        base_map.hypothesis_id,
+        reason="activate latest revision",
+    )
+
+    sibling_calibration = next(
+        item
+        for item in engine.context_validity_region_calibrations
+        if item.validity_map_id == base_map.id
+    )
+    sibling = engine.revise_context_causal_validity_map(
+        base_map.id,
+        calibration_ids=(sibling_calibration.id,),
+    )
+
+    try:
+        engine.rollback_context_validity_map(
+            base_map.hypothesis_id,
+            target_map_id=sibling.id,
+            reason="invalid sibling rollback",
+        )
+    except ValueError as exc:
+        assert "not an ancestor" in str(exc)
+    else:
+        raise AssertionError("rollback to a sibling revision must be rejected")
+
+    rollback = engine.rollback_context_validity_map(
+        base_map.hypothesis_id,
+        target_map_id=revision_two.id,
+        reason="rollback after descendant policy warning",
+        evidence_refs=("rollback:warning",),
+    )
+    active = engine.active_context_causal_validity_map(
+        base_map.hypothesis_id
+    )
+
+    assert rollback.action == "rollback"
+    assert rollback.previous_map_id == revision_three.id
+    assert rollback.selected_map_id == revision_two.id
+    assert active is not None
+    assert active.id == revision_two.id
+    assert any(
+        item.id == revision_three.id
+        for item in engine.context_causal_validity_maps
+    )
+    assert any(
+        item.id == sibling.id
+        for item in engine.context_causal_validity_maps
+    )
+
+
+def test_validity_map_selection_persists_and_can_readvance_after_rollback() -> None:
+    (
+        engine,
+        base_map,
+        revision_two,
+        revision_three,
+        _,
+    ) = _build_three_revision_validity_engine()
+    engine.select_context_validity_map_revision(
+        base_map.hypothesis_id,
+        reason="activate latest revision",
+    )
+    engine.rollback_context_validity_map(
+        base_map.hypothesis_id,
+        target_map_id=revision_two.id,
+        reason="temporary rollback for review",
+    )
+    readvance = engine.select_context_validity_map_revision(
+        base_map.hypothesis_id,
+        reason="review complete; re-advance intact lineage",
+    )
+    narrative = engine.build_metacognitive_narrative(
+        "context_validity_selection"
+    )
+    restored = UnarchiEngine.from_export(engine.export_state())
+    restored_active = restored.active_context_causal_validity_map(
+        base_map.hypothesis_id
+    )
+
+    assert readvance.action == "advance"
+    assert readvance.selected_map_id == revision_three.id
+    assert restored.active_context_validity_map_ids == (
+        engine.active_context_validity_map_ids
+    )
+    assert restored.context_validity_map_selection_history == (
+        engine.context_validity_map_selection_history
+    )
+    assert restored.next_context_validity_map_selection_id == (
+        engine.next_context_validity_map_selection_id
+    )
+    assert restored_active is not None
+    assert restored_active.id == revision_three.id
+    assert restored.snapshot() == engine.snapshot()
+    assert engine.snapshot()["context_validity_map_rollback_count"] == 1
+    assert narrative.unsupported_claims == 0
+    assert any(
+        ref.startswith("context_validity_map_selection:")
         for ref in narrative.evidence_refs
     )

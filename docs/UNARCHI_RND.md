@@ -1296,12 +1296,66 @@ auditable machine-state structures and do not establish subjective identity,
 sentience, phenomenal consciousness, qualia, or unrestricted real-world
 causation.
 
-## Next checkpoint: v0.25 revision selection and rollback policy
+## v0.25 revision-selection and rollback checkpoint
 
-The next research step should add a deterministic policy for selecting the
-currently active validity-map revision and safely rolling back to a prior
-revision when a newer revision loses calibration support.
+UNARCHI v0.25 adds an explicit active validity-map pointer for each latent
+context hypothesis.
 
-The measurable target is lineage-aware control: activate only a revision whose
-parent chain is intact, preserve an auditable active-map pointer, and permit
-rollback without deleting any later evidence or revision history.
+A revision is eligible for activation only when its full parent chain is
+intact. Lineage validation rejects:
+
+- missing parents;
+- parent links that cross hypotheses;
+- revision-number gaps;
+- cycles;
+- malformed base maps that are not revision 1.
+
+When no map ID is supplied, selection deterministically chooses the highest
+intact revision, breaking revision ties by map ID. Creating a newer map does not
+automatically activate it.
+
+If an active pointer already exists, ordinary selection may retain the current
+revision or advance only to a descendant on the same lineage. Moving backward
+requires the dedicated rollback operation.
+
+Rollback requires the target map to be an actual ancestor of the active map.
+It changes only the active pointer and appends an audit record. It never deletes
+the newer map, its calibration evidence, its gate outcomes, or any later
+revision history. Rollback to a sibling or unrelated branch is rejected.
+
+Every selection record stores:
+
+- hypothesis ID;
+- previous and selected map IDs;
+- action: `activate`, `retain`, `advance`, or `rollback`;
+- the validated selected lineage;
+- a required human-readable reason;
+- optional supporting evidence references.
+
+Downstream decisions can use the active pointer directly through the
+active-validity gated-decision path. The pointer and selection/rollback history
+persist across export/restore.
+
+The deterministic v0.25 benchmark requires:
+
+three-revision lineage -> deterministic latest activation -> latest revision
+blocks causal context in a revoked nearby region -> rollback to revision 2 ->
+same region again uses revision-2 calibrated support -> revision 3 remains
+stored -> explicit re-advance selects revision 3 again -> export/restore ->
+identical active pointer, lineage history, and evidence-grounded narrative.
+
+This remains bounded functional causal research. Active revision control is
+auditable machine-state governance and does not establish subjective identity,
+sentience, phenomenal consciousness, qualia, or unrestricted real-world
+causation.
+
+## Next checkpoint: v0.26 active-revision degradation watch
+
+The next research step should monitor outcome calibration specifically for the
+currently active revision and generate a bounded rollback recommendation when
+new evidence shows sustained degradation.
+
+The measurable target is evidence-triggered governance: detect repeated active
+policy underperformance, identify the nearest intact ancestor with better
+calibration support, and produce a recommendation record without automatically
+changing the active pointer.
