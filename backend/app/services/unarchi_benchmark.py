@@ -5,7 +5,7 @@ from typing import Any
 from backend.app.services.unarchi_engine import UnarchiEngine
 
 
-BENCHMARK_VERSION = "unarchi-ablation-v0.4"
+BENCHMARK_VERSION = "unarchi-ablation-v0.5"
 
 
 def _failure_sensitization() -> dict[str, Any]:
@@ -218,6 +218,45 @@ def _prospective_temporal_continuity() -> dict[str, Any]:
         "alignment_recorded": alignment_recorded,
     }
 
+
+
+def _metacognitive_retrospective_fidelity() -> dict[str, Any]:
+    engine = UnarchiEngine()
+    engine.learn(
+        observation="A local migration experiment was attempted.",
+        goal="protect test data",
+        action="run migration",
+        outcome="the migration corrupted a disposable test dataset",
+        success=False,
+        reward=-0.8,
+        predicted_success=0.9,
+    )
+    before = engine.build_metacognitive_narrative("caution")
+    restored = UnarchiEngine.from_export(engine.export_state())
+    after = restored.build_metacognitive_narrative("caution")
+
+    identical_after_restart = before == after
+    evidence_linked = (
+        "experience:0" in before.evidence_refs
+        and "state:current" in before.evidence_refs
+    )
+    no_unsupported_claims = before.unsupported_claims == 0
+
+    return {
+        "name": "metacognitive_retrospective_fidelity",
+        "expected_direction": "same_evidence_produces_same_self_explanation",
+        "passed": (
+            identical_after_restart
+            and evidence_linked
+            and no_unsupported_claims
+            and before.fidelity_score == 1.0
+        ),
+        "identical_after_restart": identical_after_restart,
+        "evidence_linked": evidence_linked,
+        "no_unsupported_claims": no_unsupported_claims,
+        "fidelity_score": before.fidelity_score,
+    }
+
 def run_unarchi_ablation_benchmark() -> dict[str, Any]:
     scenarios = [
         _failure_sensitization(),
@@ -226,6 +265,7 @@ def run_unarchi_ablation_benchmark() -> dict[str, Any]:
         _endogenous_goal_lifecycle(),
         _predictive_self_calibration(),
         _prospective_temporal_continuity(),
+        _metacognitive_retrospective_fidelity(),
     ]
     passed = sum(bool(item["passed"]) for item in scenarios)
     return {
