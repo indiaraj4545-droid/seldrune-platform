@@ -5,7 +5,7 @@ from typing import Any
 from backend.app.services.unarchi_engine import UnarchiEngine
 
 
-BENCHMARK_VERSION = "unarchi-ablation-v0.17"
+BENCHMARK_VERSION = "unarchi-ablation-v0.18"
 
 
 def _failure_sensitization() -> dict[str, Any]:
@@ -1365,6 +1365,137 @@ def _context_causality_intervention_support() -> dict[str, Any]:
         ),
     }
 
+
+def _replicated_reversible_context_causality() -> dict[str, Any]:
+    engine = UnarchiEngine()
+    goal = "validate release evidence"
+    action = "run automated release check"
+
+    for index in range(6):
+        engine.learn(
+            observation=f"Sandbox release validation {index}.",
+            goal=goal,
+            action=action,
+            outcome="correct evidence",
+            success=True,
+            reward=0.8,
+            predicted_success=0.55,
+        )
+        engine.learn(
+            observation=f"Production release validation {index}.",
+            goal=goal,
+            action=action,
+            outcome="invalid evidence escaped",
+            success=False,
+            reward=-0.8,
+            predicted_success=0.70,
+        )
+
+    parent = next(
+        item
+        for item in engine.consolidate_self_schema()
+        if item.kind == "mixed" and action in item.pattern
+    )
+    discovery = engine.discover_latent_context_hypotheses(parent.id)
+    hypothesis = next(
+        item
+        for item in engine.latent_context_hypotheses
+        if item.id == discovery.selected_hypothesis_id
+    )
+
+    forward_ids: list[int] = []
+    for batch in ("a", "b"):
+        trial = engine.propose_context_causality_intervention(
+            hypothesis.id,
+            from_context="production",
+            to_context="sandbox",
+            controlled_signature="code=v1;load=normal;data=fixed",
+            min_samples=4,
+        )
+        trial = engine.observe_context_causality_intervention(
+            trial.id,
+            observed_target_success_rate=1.0,
+            observed_signature="code=v1;load=normal;data=fixed",
+            sample_count=4,
+            evidence_refs=(f"context_replication:forward:{batch}",),
+        )
+        forward_ids.append(trial.id)
+
+    reverse = engine.propose_context_causality_intervention(
+        hypothesis.id,
+        from_context="sandbox",
+        to_context="production",
+        controlled_signature="code=v1;load=normal;data=fixed",
+        min_samples=4,
+    )
+    reverse = engine.observe_context_causality_intervention(
+        reverse.id,
+        observed_target_success_rate=0.0,
+        observed_signature="code=v1;load=normal;data=fixed",
+        sample_count=4,
+        evidence_refs=("context_replication:reverse:a",),
+    )
+
+    assessment = engine.assess_context_causal_stability(
+        hypothesis.id,
+        forward_trial_ids=forward_ids,
+        reverse_trial_ids=(reverse.id,),
+    )
+    final_hypothesis = next(
+        item
+        for item in engine.latent_context_hypotheses
+        if item.id == hypothesis.id
+    )
+    narrative = engine.build_metacognitive_narrative(
+        "context_causal_stability"
+    )
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    return {
+        "name": "replicated_reversible_context_causality",
+        "expected_direction": (
+            "two independent forward intervention batches plus a clean reverse "
+            "batch escalate single-trial support to replicated-reversible status"
+        ),
+        "passed": (
+            assessment.status == "replicated_reversible"
+            and assessment.independent_forward_batches == 2
+            and assessment.independent_reverse_batches == 1
+            and assessment.forward_replication_rate == 1.0
+            and assessment.reverse_replication_rate == 1.0
+            and assessment.reversal_direction_followed is True
+            and assessment.confidence >= 0.35
+            and final_hypothesis.causal_status == "replicated_reversible"
+            and restored.context_causal_stability_assessments
+            == engine.context_causal_stability_assessments
+            and restored.latent_context_hypotheses
+            == engine.latent_context_hypotheses
+            and narrative.unsupported_claims == 0
+            and bool(narrative.evidence_refs)
+        ),
+        "status": assessment.status,
+        "independent_forward_batches": (
+            assessment.independent_forward_batches
+        ),
+        "independent_reverse_batches": (
+            assessment.independent_reverse_batches
+        ),
+        "forward_replication_rate": assessment.forward_replication_rate,
+        "reverse_replication_rate": assessment.reverse_replication_rate,
+        "reversal_direction_followed": (
+            assessment.reversal_direction_followed
+        ),
+        "confidence": assessment.confidence,
+        "final_hypothesis_status": final_hypothesis.causal_status,
+        "restart_preserved": (
+            restored.context_causal_stability_assessments
+            == engine.context_causal_stability_assessments
+            and restored.latent_context_hypotheses
+            == engine.latent_context_hypotheses
+        ),
+    }
+
+
 def run_unarchi_ablation_benchmark() -> dict[str, Any]:
     scenarios = [
         _failure_sensitization(),
@@ -1385,6 +1516,7 @@ def run_unarchi_ablation_benchmark() -> dict[str, Any]:
         _context_transfer_boundary_learning(),
         _latent_context_hypothesis_discovery(),
         _context_causality_intervention_support(),
+        _replicated_reversible_context_causality(),
     ]
     passed = sum(bool(item["passed"]) for item in scenarios)
     return {

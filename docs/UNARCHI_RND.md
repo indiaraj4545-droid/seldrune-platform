@@ -980,12 +980,48 @@ real-world causation beyond the tested protocol, and it does not establish
 subjective identity, self-awareness, sentience, phenomenal consciousness, or
 qualia.
 
-## Next checkpoint: v0.18 replicated and reversible context causality
+## v0.18 replicated and reversible context-causality checkpoint
 
-The next research step should require intervention support to replicate across
-multiple independent batches and, where safe, reverse the context manipulation
-to test whether the outcome shift reverses as predicted.
+UNARCHI v0.18 adds a second causal-evidence gate above single-trial
+`intervention_supported` status.
 
-The measurable target is causal stability: replicated forward intervention plus
-a successful reversal test should strengthen confidence, while inconsistent
-replication should prevent escalation beyond intervention-supported status.
+A context hypothesis now reaches `replicated_reversible` only when:
+
+- at least two supported forward intervention batches are independently evidenced;
+- the batches keep competing variables controlled and follow the predicted direction;
+- reused evidence references are rejected as independent replication;
+- at least one clean reverse intervention swaps the source and target contexts;
+- the reverse outcome moves in the predicted opposite direction;
+- all required replication batches remain above the existing causal-strength floor.
+
+The stability assessment records the forward and reverse trial IDs, independent
+batch counts, replication rates, mean causal strength, reversal result,
+confidence, status, and exact evidence references. It persists through
+export/restore and can be reconstructed by the deterministic metacognitive
+narrative.
+
+If the evidence is duplicated or there are too few independent batches, the
+assessment is `insufficient_replication`. If enough batches exist but they are
+inconsistent, the assessment is `unstable`. Neither state escalates the
+hypothesis beyond intervention-supported evidence.
+
+The deterministic v0.18 benchmark requires:
+
+selected context hypothesis -> two independent supported production-to-sandbox
+trials -> one supported sandbox-to-production reversal -> stability assessment
+-> replicated_reversible status -> export/restore -> identical stability record
+and evidence-grounded narrative.
+
+This remains bounded functional causal research. Replicated reversible evidence
+within this protocol does not prove general real-world causation, subjective
+identity, sentience, phenomenal consciousness, or qualia.
+
+## Next checkpoint: v0.19 causal invariance across environments
+
+The next research step should test whether a replicated-reversible context
+relationship remains stable across multiple controlled environment signatures
+without assuming that one environment generalizes to another.
+
+The measurable target is bounded causal invariance: preserve the causal relation
+only when effect direction and minimum strength survive predefined environment
+changes; otherwise learn an explicit boundary instead of over-generalizing.
