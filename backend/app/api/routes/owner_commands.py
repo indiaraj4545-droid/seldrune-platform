@@ -12,6 +12,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from backend.app.api.dependencies import CurrentUserDep, SessionDep, require_org_permission
 from backend.app.api.routes.orchestrations import _get_run, _to_public
+from backend.app.core.config import settings
 from backend.app.core.rbac import Permission, Role
 from backend.app.core.tools import ToolStatus
 from backend.app.models.audit import AuditLog
@@ -27,6 +28,10 @@ from backend.app.schemas.orchestration import (
     OrchestrationRunPublic,
 )
 from backend.app.services.adaptive_planning import build_adaptive_planning_guidance
+from backend.app.services.ai_spend_guard import (
+    AISpendBudgetExceeded,
+    enforce_ai_spend_budget,
+)
 from backend.app.services.audit import record_audit
 from backend.app.services.command_recovery import CommandRecoveryError, create_recovery_command
 from backend.app.services.command_promotion import (
@@ -388,11 +393,44 @@ def create_owner_command(
                 "input_defaults": input_defaults,
             }
         )
+    planner_model_allowed = True
+    try:
+        enforce_ai_spend_budget(
+            session,
+            organization_id=organization_id,
+            settings=settings,
+            projected_usd=min(settings.ai_request_max_usd, 0.05),
+        )
+    except AISpendBudgetExceeded:
+        planner_model_allowed = False
     planned = build_live_plan(
         payload.objective,
         adaptive_guidance=adaptive_guidance,
         available_tools=tool_catalog,
+        allow_model=planner_model_allowed,
     )
+    planner_usage = planned.metadata.get("usage") or {}
+    planner_cost = planner_usage.get("estimated_cost_usd")
+    if isinstance(planner_cost, (int, float)) and planner_cost > 0:
+        record_audit(
+            session,
+            organization_id=organization_id,
+            actor_user_id=current_user.id,
+            action="ai.cost_recorded",
+            resource_type="ai_planner",
+            resource_id=str(organization_id),
+            details={
+                "purpose": "owner_command_planning",
+                "provider": planned.metadata.get("provider"),
+                "model": planned.metadata.get("model"),
+                "response_id": planned.metadata.get("response_id"),
+                "input_tokens": planner_usage.get("input_tokens", 0),
+                "output_tokens": planner_usage.get("output_tokens", 0),
+                "cached_input_tokens": planner_usage.get("cached_input_tokens", 0),
+                "estimated_cost_usd": float(planner_cost),
+                "cost_tier": planner_usage.get("cost_tier"),
+            },
+        )
     compiled_steps, action_compiler = compile_required_external_action_steps(
         payload.objective,
         available_tools=tool_catalog,
