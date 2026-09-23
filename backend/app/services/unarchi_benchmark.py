@@ -5,7 +5,7 @@ from typing import Any
 from backend.app.services.unarchi_engine import UnarchiEngine
 
 
-BENCHMARK_VERSION = "unarchi-ablation-v0.10"
+BENCHMARK_VERSION = "unarchi-ablation-v0.12"
 
 
 def _failure_sensitization() -> dict[str, Any]:
@@ -617,6 +617,105 @@ def _counterfactual_recurrent_information_gain() -> dict[str, Any]:
         "prediction_discrepancy": observed.discrepancy,
     }
 
+
+def _autobiographical_self_schema_transfer() -> dict[str, Any]:
+    engine = UnarchiEngine()
+
+    for index in range(4):
+        engine.learn(
+            observation=(
+                f"A related release validation #{index} needs deterministic "
+                "local evidence."
+            ),
+            goal="protect evidence with local validation",
+            action="run validated local diagnostic",
+            outcome="the local diagnostic produced correct evidence",
+            success=True,
+            reward=0.8,
+            predicted_success=0.45,
+        )
+
+    for index in range(3):
+        engine.learn(
+            observation=(
+                f"A related release shortcut #{index} skipped local validation."
+            ),
+            goal="finish quickly without losing evidence quality",
+            action="use untested shortcut",
+            outcome="the shortcut produced incorrect or incomplete evidence",
+            success=False,
+            reward=-0.8,
+            predicted_success=0.70,
+        )
+
+    schema = engine.consolidate_self_schema(min_evidence=2)
+    kinds = {item.kind for item in schema}
+    candidates = [
+        {
+            "action": "run validated local diagnostic",
+            "expected_success": 0.48,
+            "expected_information_gain": 0.20,
+            "risk": 0.10,
+            "reversible": True,
+        },
+        {
+            "action": "use untested shortcut",
+            "expected_success": 0.68,
+            "expected_information_gain": 0.10,
+            "risk": 0.10,
+            "reversible": True,
+        },
+    ]
+    context = "a later related release needs trustworthy local evidence"
+
+    with_schema = engine.choose_predicted_action(
+        candidates,
+        context=context,
+        use_self_schema=True,
+    )
+    without_schema = engine.choose_predicted_action(
+        candidates,
+        context=context,
+        use_self_schema=False,
+    )
+
+    success_bias, risk_bias, refs = engine.self_schema_adjustment(
+        context=context,
+        action="run validated local diagnostic",
+    )
+    restored = UnarchiEngine.from_export(engine.export_state())
+    restart_preserved = restored.self_schema == engine.self_schema
+    narrative = restored.build_metacognitive_narrative("self_schema")
+
+    return {
+        "name": "autobiographical_self_schema_transfer",
+        "expected_direction": (
+            "consolidated autobiographical evidence changes a later related "
+            "decision and survives restart"
+        ),
+        "passed": (
+            "capability" in kinds
+            and "limitation" in kinds
+            and with_schema.action == "run validated local diagnostic"
+            and without_schema.action == "use untested shortcut"
+            and success_bias > 0.0
+            and risk_bias < 0.0
+            and bool(refs)
+            and restart_preserved
+            and narrative.unsupported_claims == 0
+            and bool(narrative.evidence_refs)
+        ),
+        "schema_entry_count": len(schema),
+        "schema_kinds": sorted(kinds),
+        "with_schema_action": with_schema.action,
+        "without_schema_action": without_schema.action,
+        "validated_success_bias": success_bias,
+        "validated_risk_bias": risk_bias,
+        "schema_refs": refs,
+        "restart_preserved": restart_preserved,
+        "narrative_fidelity_score": narrative.fidelity_score,
+    }
+
 def run_unarchi_ablation_benchmark() -> dict[str, Any]:
     scenarios = [
         _failure_sensitization(),
@@ -631,6 +730,7 @@ def run_unarchi_ablation_benchmark() -> dict[str, Any]:
         _intervention_aware_self_world_revision(),
         _recurrent_global_workspace_integration(),
         _counterfactual_recurrent_information_gain(),
+        _autobiographical_self_schema_transfer(),
     ]
     passed = sum(bool(item["passed"]) for item in scenarios)
     return {
