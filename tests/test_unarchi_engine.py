@@ -167,7 +167,7 @@ def test_snapshot_never_claims_phenomenal_consciousness() -> None:
     snapshot = engine.snapshot()
 
     assert snapshot["claims_phenomenal_consciousness"] is False
-    assert snapshot["version"] == "unarchi-v0.3"
+    assert snapshot["version"] == "unarchi-v0.4"
 
 
 def test_export_restore_preserves_identity_state_and_memory() -> None:
@@ -352,4 +352,123 @@ def test_export_restore_preserves_endogenous_goal_queue() -> None:
 
     assert restored.internal_goals == engine.internal_goals
     assert restored.next_internal_goal_id == engine.next_internal_goal_id
+    assert restored.snapshot() == engine.snapshot()
+
+
+def test_predict_action_forecasts_internal_consequences() -> None:
+    engine = UnarchiEngine()
+
+    prediction = engine.predict_action(
+        action="run reversible local experiment",
+        expected_success=0.7,
+        expected_information_gain=0.8,
+        risk=0.1,
+        reversible=True,
+    )
+
+    assert prediction.predicted_success == 0.7
+    assert prediction.predicted_information_gain == 0.8
+    assert prediction.predicted_uncertainty < engine.state.uncertainty
+    assert prediction.reversible is True
+    assert prediction.utility > 0.0
+
+
+def test_predictive_self_model_prefers_reversible_high_information_action() -> None:
+    engine = UnarchiEngine()
+
+    selected = engine.choose_predicted_action(
+        [
+            {
+                "action": "irreversible production experiment",
+                "expected_success": 0.9,
+                "expected_information_gain": 0.7,
+                "risk": 0.4,
+                "reversible": False,
+            },
+            {
+                "action": "reversible local simulation",
+                "expected_success": 0.72,
+                "expected_information_gain": 0.8,
+                "risk": 0.1,
+                "reversible": True,
+            },
+        ]
+    )
+
+    assert selected.action == "reversible local simulation"
+    assert selected.reversible is True
+
+
+def test_self_prediction_calibrates_after_repeated_outcomes() -> None:
+    engine = UnarchiEngine()
+
+    first = engine.predict_action(
+        action="run known-safe local check",
+        expected_success=0.4,
+        expected_information_gain=0.3,
+        risk=0.1,
+    )
+    first_error = abs(1.0 - first.predicted_success)
+    engine.record_prediction_outcome(
+        first.id,
+        actual_success=True,
+        actual_information_gain=0.3,
+    )
+
+    second = engine.predict_action(
+        action="run known-safe local check",
+        expected_success=0.4,
+        expected_information_gain=0.3,
+        risk=0.1,
+    )
+    second_error = abs(1.0 - second.predicted_success)
+
+    assert second.predicted_success > first.predicted_success
+    assert second_error < first_error
+    assert engine.success_prediction_bias > 0.0
+    assert len(engine.calibration_history) == 1
+
+
+def test_calibration_record_measures_prediction_error() -> None:
+    engine = UnarchiEngine()
+    prediction = engine.predict_action(
+        action="probe uncertain mechanism",
+        expected_success=0.8,
+        expected_information_gain=0.6,
+        risk=0.2,
+    )
+
+    record = engine.record_prediction_outcome(
+        prediction.id,
+        actual_success=False,
+        actual_information_gain=0.2,
+    )
+
+    assert record.success_error == 0.8
+    assert record.information_gain_error == 0.4
+    assert 0.0 <= record.calibration_score <= 1.0
+    assert engine.success_prediction_bias < 0.0
+
+
+def test_export_restore_preserves_predictive_self_model() -> None:
+    engine = UnarchiEngine()
+    prediction = engine.predict_action(
+        action="reversible self-model test",
+        expected_success=0.5,
+        expected_information_gain=0.4,
+        risk=0.1,
+    )
+    engine.record_prediction_outcome(
+        prediction.id,
+        actual_success=True,
+        actual_information_gain=0.5,
+    )
+
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    assert restored.predictions == engine.predictions
+    assert restored.calibration_history == engine.calibration_history
+    assert restored.next_prediction_id == engine.next_prediction_id
+    assert restored.success_prediction_bias == engine.success_prediction_bias
+    assert restored.self_calibration_score == engine.self_calibration_score
     assert restored.snapshot() == engine.snapshot()
