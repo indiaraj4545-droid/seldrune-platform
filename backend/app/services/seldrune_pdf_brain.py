@@ -21,7 +21,7 @@ from backend.app.services.pdf_editor import (
     validate_pdf_edit_plan,
 )
 
-MODEL_VERSION = "seldrune-pdf-brain-v0.2"
+MODEL_VERSION = "seldrune-pdf-brain-v0.3"
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 _QUOTE = r'(?:"([^"]+)"|\'([^\']+)\'|“([^”]+)”|‘([^’]+)’)'
 _PAGE_RE = re.compile(r"\bpage\s+(\d+)\b", re.IGNORECASE)
@@ -231,6 +231,19 @@ def _predict_intent(instruction: str) -> tuple[str, float]:
     return label, probabilities[label]
 
 
+_FIELD_VALUE_PREFIX_RE = re.compile(
+    r"^(?:the\s+)?(?:"
+    r"joining\s+date|last\s+working\s+date|date\s+of\s+birth|dob|date|"
+    r"annual\s+salary|monthly\s+salary|basic\s+salary|basic\s+pay|salary|"
+    r"total\s+ctc|ctc|hra|amount|total|"
+    r"employee\s+name|candidate\s+name|name|"
+    r"employee\s+id|employee\s+number|id|"
+    r"designation|department|location|address|phone|email|notice\s+period"
+    r")\s*(?::|-)?\s+(.+)$",
+    re.IGNORECASE,
+)
+
+
 def _clean_slot(value: str | None) -> str | None:
     if value is None:
         return None
@@ -241,7 +254,31 @@ def _clean_slot(value: str | None) -> str | None:
         cleaned,
         flags=re.IGNORECASE,
     ).strip()
+    cleaned = re.sub(
+        r"\s+(?:on|in)\s+page\s+\d+\s*$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    ).strip()
+    cleaned = re.sub(
+        r"\s+(?:please|thanks?|thank\s+you)\s*$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    ).strip(" ,;")
     return cleaned or None
+
+
+def _strip_field_value_prefix(value: str | None) -> str | None:
+    cleaned = _clean_slot(value)
+    if not cleaned:
+        return None
+    match = _FIELD_VALUE_PREFIX_RE.match(cleaned)
+    if match:
+        candidate = _clean_slot(match.group(1))
+        if candidate:
+            return candidate
+    return cleaned
 
 
 def _page(instruction: str) -> int | None:
@@ -293,18 +330,29 @@ def _replace_operation(instruction: str) -> dict[str, Any] | None:
     if len(quoted) >= 2:
         target, replacement = quoted[0], quoted[1]
     else:
-        patterns = (
-            r"\b(?:replace|change|update|correct|modify)\s+(.+?)\s+(?:with|to|into)\s+(.+)$",
-            r"\bswap\s+(.+?)\s+for\s+(.+)$",
-            r"\bmake\s+(.+?)\s+read\s+(.+)$",
-            r"\bedit\s+(.+?)\s+and\s+make\s+it\s+(.+)$",
+        from_match = re.search(
+            r"\b(?:replace|change|update|correct|modify|set|edit)\b"
+            r".*?\bfrom\s+(.+?)\s+(?:to|with|into|as)\s+(.+?)"
+            r"(?=\s+(?:on|in)\s+page\s+\d+\b|$)",
+            instruction,
+            re.IGNORECASE,
         )
-        for pattern in patterns:
-            match = re.search(pattern, instruction, re.IGNORECASE)
-            if match:
-                target = _clean_slot(match.group(1))
-                replacement = _clean_slot(match.group(2))
-                break
+        if from_match:
+            target = _clean_slot(from_match.group(1))
+            replacement = _clean_slot(from_match.group(2))
+        else:
+            patterns = (
+                r"\b(?:replace|change|update|correct|modify|set)\s+(.+?)\s+(?:with|to|into|as)\s+(.+)$",
+                r"\bswap\s+(.+?)\s+for\s+(.+)$",
+                r"\bmake\s+(.+?)\s+read\s+(.+)$",
+                r"\bedit\s+(.+?)\s+and\s+make\s+it\s+(.+)$",
+            )
+            for pattern in patterns:
+                match = re.search(pattern, instruction, re.IGNORECASE)
+                if match:
+                    target = _strip_field_value_prefix(match.group(1))
+                    replacement = _clean_slot(match.group(2))
+                    break
     target, replacement = _clean_slot(target), _clean_slot(replacement)
     if not target or replacement is None:
         return None
@@ -438,7 +486,7 @@ _DETERMINISTIC_HINTS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "replace_text",
         re.compile(
-            r"\b(?:replace|change|update|correct|modify|swap|make|edit)\b",
+            r"\b(?:replace|change|update|correct|modify|swap|make|edit|set)\b",
             re.IGNORECASE,
         ),
     ),
