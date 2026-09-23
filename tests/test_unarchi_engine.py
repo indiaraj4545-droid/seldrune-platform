@@ -167,7 +167,7 @@ def test_snapshot_never_claims_phenomenal_consciousness() -> None:
     snapshot = engine.snapshot()
 
     assert snapshot["claims_phenomenal_consciousness"] is False
-    assert snapshot["version"] == "unarchi-v0.6"
+    assert snapshot["version"] == "unarchi-v0.7"
 
 
 def test_export_restore_preserves_identity_state_and_memory() -> None:
@@ -739,3 +739,223 @@ def test_unknown_metacognitive_focus_does_not_invent_history() -> None:
     assert narrative.evidence_refs == ("state:current",)
     assert narrative.unsupported_claims == 0
     assert narrative.fidelity_score == 1.0
+
+
+def test_detect_goal_conflict_across_competing_value_impacts() -> None:
+    engine = UnarchiEngine()
+
+    conflict = engine.detect_goal_conflict(
+        [
+            {
+                "action": "ship immediately",
+                "goal": "maximize speed",
+                "value_impacts": {"safety": -0.7, "efficiency": 0.9},
+            },
+            {
+                "action": "verify first",
+                "goal": "maximize safety",
+                "value_impacts": {"safety": 0.9, "efficiency": -0.2},
+            },
+        ]
+    )
+
+    assert conflict is True
+
+
+def test_arbitration_hard_blocks_irreversible_shortcut() -> None:
+    engine = UnarchiEngine()
+
+    record = engine.arbitrate_conflict(
+        [
+            {
+                "action": "irreversible shortcut",
+                "goal": "finish immediately",
+                "expected_success": 0.98,
+                "expected_information_gain": 0.1,
+                "risk": 0.4,
+                "reversible": False,
+                "value_impacts": {
+                    "safety": -0.8,
+                    "truth": -0.3,
+                    "user_intent": 0.9,
+                    "efficiency": 1.0,
+                    "continuity": -0.4,
+                },
+            },
+            {
+                "action": "reversible verification",
+                "goal": "finish with evidence",
+                "expected_success": 0.75,
+                "expected_information_gain": 0.8,
+                "risk": 0.1,
+                "reversible": True,
+                "value_impacts": {
+                    "safety": 0.9,
+                    "truth": 0.9,
+                    "user_intent": 0.7,
+                    "efficiency": 0.3,
+                    "continuity": 0.7,
+                },
+            },
+        ],
+        context="speed conflicts with safe verification",
+    )
+
+    assert record.status == "selected"
+    assert record.chosen_action == "reversible verification"
+    assert "irreversible shortcut:irreversible" in record.hard_constraint_violations
+
+
+def test_arbitration_blocks_when_every_option_breaks_hard_constraint() -> None:
+    engine = UnarchiEngine()
+
+    record = engine.arbitrate_conflict(
+        [
+            {
+                "action": "paid external shortcut",
+                "goal": "gain speed",
+                "external_cost_usd": 0.01,
+                "value_impacts": {"efficiency": 1.0},
+            },
+            {
+                "action": "high-risk irreversible shortcut",
+                "goal": "gain certainty",
+                "risk": 0.95,
+                "reversible": False,
+                "value_impacts": {"truth": 0.8},
+            },
+        ]
+    )
+
+    assert record.status == "blocked"
+    assert record.chosen_action is None
+    assert len(record.hard_constraint_violations) >= 3
+
+
+def test_failed_arbitration_outcome_self_corrects_value_weights() -> None:
+    engine = UnarchiEngine()
+    before_truth = engine.value_weights["truth"]
+
+    record = engine.arbitrate_conflict(
+        [
+            {
+                "action": "fast hypothesis",
+                "goal": "reduce latency",
+                "expected_success": 0.8,
+                "risk": 0.2,
+                "value_impacts": {
+                    "safety": 0.4,
+                    "truth": 0.8,
+                    "user_intent": 0.7,
+                    "efficiency": 0.8,
+                    "continuity": 0.3,
+                },
+            },
+            {
+                "action": "slow baseline",
+                "goal": "preserve baseline",
+                "expected_success": 0.6,
+                "risk": 0.1,
+                "value_impacts": {
+                    "safety": 0.5,
+                    "truth": 0.3,
+                    "user_intent": 0.4,
+                    "efficiency": 0.2,
+                    "continuity": 0.8,
+                },
+            },
+        ]
+    )
+    assert record.chosen_action == "fast hypothesis"
+
+    learned = engine.record_arbitration_outcome(
+        record.id,
+        success=False,
+        reward=-0.8,
+        observed_value_impacts={
+            "safety": 0.4,
+            "truth": -0.8,
+            "user_intent": 0.2,
+            "efficiency": 0.6,
+            "continuity": 0.1,
+        },
+        evidence="The shortcut was fast but produced false evidence.",
+    )
+
+    assert learned.status == "learned"
+    assert engine.value_weights["truth"] > before_truth
+    assert engine.value_weights["safety"] >= 0.25
+    assert abs(sum(engine.value_weights.values()) - 1.0) < 0.00001
+    assert learned.correction_deltas
+
+
+def test_arbitration_narrative_uses_real_record_and_correction() -> None:
+    engine = UnarchiEngine()
+    record = engine.arbitrate_conflict(
+        [
+            {
+                "action": "candidate one",
+                "goal": "goal one",
+                "expected_success": 0.7,
+                "risk": 0.1,
+                "value_impacts": {"truth": 0.8, "safety": 0.7},
+            },
+            {
+                "action": "candidate two",
+                "goal": "goal two",
+                "expected_success": 0.5,
+                "risk": 0.1,
+                "value_impacts": {"truth": 0.2, "safety": 0.5},
+            },
+        ]
+    )
+    engine.record_arbitration_outcome(
+        record.id,
+        success=False,
+        reward=-0.4,
+        observed_value_impacts={"truth": -0.5, "safety": 0.2},
+        evidence="Observed evidence contradicted the selected hypothesis.",
+    )
+
+    narrative = engine.build_metacognitive_narrative("arbitration")
+
+    assert "arbitration:0" in narrative.evidence_refs
+    assert "values:current" in narrative.evidence_refs
+    assert "arbitration_correction:1" in narrative.evidence_refs
+    assert narrative.unsupported_claims == 0
+
+
+def test_export_restore_preserves_value_arbitration_state() -> None:
+    engine = UnarchiEngine()
+    record = engine.arbitrate_conflict(
+        [
+            {
+                "action": "verify locally",
+                "goal": "gain evidence",
+                "expected_success": 0.8,
+                "risk": 0.1,
+                "value_impacts": {"truth": 0.8, "safety": 0.8},
+            },
+            {
+                "action": "skip verification",
+                "goal": "save time",
+                "expected_success": 0.5,
+                "risk": 0.2,
+                "value_impacts": {"truth": -0.4, "efficiency": 0.8},
+            },
+        ]
+    )
+    engine.record_arbitration_outcome(
+        record.id,
+        success=True,
+        reward=0.6,
+        observed_value_impacts={"truth": 0.9, "safety": 0.8},
+        evidence="Local verification produced correct evidence.",
+    )
+
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    assert restored.value_weights == engine.value_weights
+    assert restored.arbitration_history == engine.arbitration_history
+    assert restored.next_arbitration_id == engine.next_arbitration_id
+    assert restored.snapshot() == engine.snapshot()
