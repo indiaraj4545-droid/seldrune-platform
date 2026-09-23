@@ -3567,7 +3567,6 @@ class UnarchiEngine:
         *,
         context: str,
         action: str,
-        use_context_transfer: bool = True,
     ) -> tuple[float, float, tuple[str, ...]]:
         context_terms = _terms(context)
         if not context_terms:
@@ -3676,6 +3675,7 @@ class UnarchiEngine:
         *,
         context: str,
         action: str,
+        use_context_transfer: bool = True,
     ) -> tuple[float, float, tuple[str, ...]]:
         context_terms = _terms(context)
         if not context_terms:
