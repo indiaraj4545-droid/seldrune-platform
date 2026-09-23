@@ -167,7 +167,7 @@ def test_snapshot_never_claims_phenomenal_consciousness() -> None:
     snapshot = engine.snapshot()
 
     assert snapshot["claims_phenomenal_consciousness"] is False
-    assert snapshot["version"] == "unarchi-v0.23"
+    assert snapshot["version"] == "unarchi-v0.24"
 
 
 def test_export_restore_preserves_identity_state_and_memory() -> None:
@@ -3798,5 +3798,170 @@ def test_gate_calibration_persists_and_is_explainable() -> None:
     assert narrative.unsupported_claims == 0
     assert any(
         ref.startswith("context_validity_region_calibration:")
+        for ref in narrative.evidence_refs
+    )
+
+
+
+def _calibrate_validity_signature(
+    engine: UnarchiEngine,
+    validity_map_id: int,
+    signature: str,
+    *,
+    causal_path_should_win: bool,
+    prefix: str,
+):
+    for index in range(3):
+        gate = engine.evaluate_context_validity_gated_decision(
+            validity_map_id,
+            environment_signature=signature,
+            candidates=_validity_gate_candidates(),
+            context="production release",
+        )
+        engine.record_context_validity_gate_outcome(
+            gate.id,
+            actual_success_by_action={
+                "run automated release check": not causal_path_should_win,
+                "request independent review": causal_path_should_win,
+            },
+            evidence_refs=(f"{prefix}:{index}",),
+        )
+    return engine.calibrate_context_validity_region(
+        validity_map_id,
+        environment_signature=signature,
+    )
+
+
+def test_validity_map_revision_freezes_calibrated_expansion_and_contraction() -> None:
+    engine, base_map = _build_validity_calibration_engine()
+    good_signature = "code=v1;load=normal;data=shifted"
+    bad_signature = "code=v2;load=normal;data=fixed"
+
+    good = _calibrate_validity_signature(
+        engine,
+        base_map.id,
+        good_signature,
+        causal_path_should_win=True,
+        prefix="revision:good",
+    )
+    bad = _calibrate_validity_signature(
+        engine,
+        base_map.id,
+        bad_signature,
+        causal_path_should_win=False,
+        prefix="revision:bad",
+    )
+
+    revised = engine.revise_context_causal_validity_map(
+        base_map.id,
+        calibration_ids=(good.id, bad.id),
+    )
+    good_status = engine.classify_context_causal_validity(
+        revised.id,
+        environment_signature=good_signature,
+    )
+    bad_status = engine.classify_context_causal_validity(
+        revised.id,
+        environment_signature=bad_signature,
+    )
+
+    assert revised.parent_map_id == base_map.id
+    assert revised.revision_number == 2
+    assert revised.tested_valid_signatures == base_map.tested_valid_signatures
+    assert revised.tested_invalid_signatures == base_map.tested_invalid_signatures
+    assert good_signature in revised.calibrated_supported_signatures
+    assert bad_signature in revised.revoked_inferred_signatures
+    assert good_status.status == "supported_nearby"
+    assert bad_status.status == "unknown"
+    assert any(
+        reason.startswith("expand inferred support")
+        for reason in revised.revision_reasons
+    )
+    assert any(
+        reason.startswith("contract inferred support")
+        for reason in revised.revision_reasons
+    )
+
+
+def test_validity_map_revision_is_immutable_until_child_revision() -> None:
+    engine, base_map = _build_validity_calibration_engine()
+    signature = "code=v1;load=normal;data=shifted"
+
+    positive = _calibrate_validity_signature(
+        engine,
+        base_map.id,
+        signature,
+        causal_path_should_win=True,
+        prefix="revision:positive",
+    )
+    revision_two = engine.revise_context_causal_validity_map(
+        base_map.id,
+        calibration_ids=(positive.id,),
+    )
+    before = engine.classify_context_causal_validity(
+        revision_two.id,
+        environment_signature=signature,
+    )
+
+    reversal = _calibrate_validity_signature(
+        engine,
+        revision_two.id,
+        signature,
+        causal_path_should_win=False,
+        prefix="revision:reversal",
+    )
+    unchanged = engine.classify_context_causal_validity(
+        revision_two.id,
+        environment_signature=signature,
+    )
+    revision_three = engine.revise_context_causal_validity_map(
+        revision_two.id,
+        calibration_ids=(reversal.id,),
+    )
+    changed = engine.classify_context_causal_validity(
+        revision_three.id,
+        environment_signature=signature,
+    )
+
+    assert before.status == "supported_nearby"
+    assert reversal.status == "nearby_support_revoked"
+    assert unchanged.status == "supported_nearby"
+    assert revision_three.parent_map_id == revision_two.id
+    assert revision_three.revision_number == 3
+    assert signature in revision_three.revoked_inferred_signatures
+    assert signature not in revision_three.calibrated_supported_signatures
+    assert changed.status == "unknown"
+
+
+def test_validity_map_revision_persists_and_preserves_exact_evidence() -> None:
+    engine, base_map = _build_validity_calibration_engine()
+    signature = "code=v1;load=normal;data=shifted"
+    calibration = _calibrate_validity_signature(
+        engine,
+        base_map.id,
+        signature,
+        causal_path_should_win=True,
+        prefix="revision:persist",
+    )
+    revised = engine.revise_context_causal_validity_map(
+        base_map.id,
+        calibration_ids=(calibration.id,),
+    )
+    narrative = engine.build_metacognitive_narrative(
+        "context_validity_revision"
+    )
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    assert revised.tested_valid_signatures == base_map.tested_valid_signatures
+    assert revised.tested_invalid_signatures == base_map.tested_invalid_signatures
+    assert restored.context_causal_validity_maps == engine.context_causal_validity_maps
+    assert restored.next_context_causal_validity_map_id == (
+        engine.next_context_causal_validity_map_id
+    )
+    assert restored.snapshot() == engine.snapshot()
+    assert engine.snapshot()["context_causal_validity_map_revision_count"] == 1
+    assert narrative.unsupported_claims == 0
+    assert any(
+        ref == f"context_causal_validity_map:{revised.id}"
         for ref in narrative.evidence_refs
     )

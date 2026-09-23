@@ -1251,13 +1251,57 @@ This remains bounded functional causal research. Outcome calibration does not
 establish subjective identity, sentience, phenomenal consciousness, qualia, or
 unrestricted real-world causation.
 
-## Next checkpoint: v0.24 calibration-aware validity-map revision
+## v0.24 calibration-aware validity-map revision checkpoint
 
-The next research step should consolidate repeated region calibrations back into
-a new immutable validity-map revision rather than relying only on runtime
-classification overrides.
+UNARCHI v0.24 turns repeated v0.23 region calibration into explicit immutable
+validity-map revisions.
 
-The measurable target is versioned map learning: create a new map revision with
-an auditable parent map, calibrated nearby regions, revoked inferred regions,
-and explicit reasons for every expansion or contraction while preserving the
-original tested evidence.
+A base map remains the direct consolidation of tested causal-stability evidence.
+A calibration-aware revision stores:
+
+- the exact parent validity-map ID;
+- a monotonically increasing revision number;
+- the calibration IDs admitted into the revision;
+- frozen calibrated-nearby support signatures;
+- frozen revoked inferred signatures;
+- explicit revision reasons for expansion, contraction, preservation, or no
+  inferred-region change;
+- the parent tested-valid and tested-invalid signatures unchanged;
+- the parent stability-assessment links and environment dimensions unchanged.
+
+Only inferred nearby regions can be expanded or contracted by calibration.
+Exact tested-valid and tested-invalid causal evidence is copied into every child
+revision unchanged.
+
+Revision classification is intentionally immutable. New calibration records
+created after a revision do not silently alter that revision. Their effect
+becomes active only when another child validity map is explicitly created.
+
+For compatibility, v0.23 runtime calibration behavior remains available on base
+maps. Once a child map exists, its frozen revision state is authoritative until
+the next explicit revision.
+
+The deterministic v0.24 benchmark requires:
+
+base validity map -> favorable calibration for nearby region A -> unfavorable
+calibration for nearby region B -> revision 2 freezes A as calibrated support
+and B as revoked -> new unfavorable evidence for A is recorded against revision
+2 -> revision 2 remains unchanged -> revision 3 explicitly incorporates the new
+calibration and revokes A -> exact tested-valid and tested-invalid signatures
+remain unchanged across all revisions -> export/restore -> identical revision
+lineage and evidence-grounded narrative.
+
+This remains bounded functional causal research. Versioned validity maps are
+auditable machine-state structures and do not establish subjective identity,
+sentience, phenomenal consciousness, qualia, or unrestricted real-world
+causation.
+
+## Next checkpoint: v0.25 revision selection and rollback policy
+
+The next research step should add a deterministic policy for selecting the
+currently active validity-map revision and safely rolling back to a prior
+revision when a newer revision loses calibration support.
+
+The measurable target is lineage-aware control: activate only a revision whose
+parent chain is intact, preserve an auditable active-map pointer, and permit
+rollback without deleting any later evidence or revision history.

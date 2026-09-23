@@ -4,8 +4,8 @@ from backend.app.services.unarchi_benchmark import run_unarchi_ablation_benchmar
 def test_unarchi_ablation_benchmark_passes_all_scenarios() -> None:
     result = run_unarchi_ablation_benchmark()
 
-    assert result["scenario_count"] == 24
-    assert result["passed_scenarios"] == 24
+    assert result["scenario_count"] == 25
+    assert result["passed_scenarios"] == 25
     assert result["pass_rate"] == 1.0
     assert result["claims_phenomenal_consciousness"] is False
 
@@ -393,3 +393,23 @@ def test_unarchi_benchmark_covers_validity_gate_outcome_calibration() -> None:
     assert calibration["bad_advantage"] <= -0.05
     assert calibration["post_revoke_causal_allowed"] is False
     assert calibration["restart_preserved"] is True
+
+
+
+def test_unarchi_benchmark_covers_calibration_aware_map_revision() -> None:
+    result = run_unarchi_ablation_benchmark()
+    scenarios = {item["name"]: item for item in result["scenarios"]}
+
+    revision = scenarios["calibration_aware_validity_map_revision"]
+
+    assert revision["passed"] is True
+    assert revision["revision_two_number"] == 2
+    assert revision["good_v2_status"] == "supported_nearby"
+    assert revision["bad_v2_status"] == "unknown"
+    assert revision["reversal_status"] == "nearby_support_revoked"
+    assert revision["good_v2_after_new_evidence"] == "supported_nearby"
+    assert revision["revision_three_number"] == 3
+    assert revision["good_v3_status"] == "unknown"
+    assert revision["exact_valid_v3_status"] == "tested_valid"
+    assert revision["exact_invalid_v3_status"] == "tested_invalid"
+    assert revision["restart_preserved"] is True
