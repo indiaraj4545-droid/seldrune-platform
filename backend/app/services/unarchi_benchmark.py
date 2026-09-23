@@ -5,7 +5,7 @@ from typing import Any
 from backend.app.services.unarchi_engine import UnarchiEngine
 
 
-BENCHMARK_VERSION = "unarchi-ablation-v0.8"
+BENCHMARK_VERSION = "unarchi-ablation-v0.9"
 
 
 def _failure_sensitization() -> dict[str, Any]:
@@ -469,6 +469,61 @@ def _intervention_aware_self_world_revision() -> dict[str, Any]:
         "leader_is_self": leader is self_hypothesis,
     }
 
+
+
+def _recurrent_global_workspace_integration() -> dict[str, Any]:
+    engine = UnarchiEngine()
+    for source, content, evidence in (
+        ("memory", "Past failure warns against the same assumption.", "experience:0"),
+        ("goal", "Resolve the active uncertainty.", "internal_goal:0"),
+        (
+            "world_model",
+            "The leading causal model predicts a mismatch.",
+            "hypothesis:0",
+        ),
+    ):
+        engine.stage_global_workspace_item(
+            source=source,
+            content=content,
+            salience=0.85,
+            evidence_refs=(evidence,),
+        )
+
+    comparison = engine.compare_global_workspace_ablation(
+        max_items=3,
+        seed_from_engine=False,
+    )
+    first = engine.run_global_workspace_cycle(
+        max_items=3,
+        seed_from_engine=False,
+    )
+    second = engine.run_global_workspace_cycle(
+        max_items=3,
+        seed_from_engine=False,
+    )
+
+    return {
+        "name": "recurrent_global_workspace_integration",
+        "expected_direction": (
+            "broadcast_and_recurrence_integrate_cross_module_evidence"
+        ),
+        "passed": (
+            comparison.workspace_causally_active
+            and comparison.full.decision_mode == "integrated"
+            and comparison.ablated.decision_mode == "local"
+            and comparison.target_delta > 0
+            and first.recurrence_depth == 1
+            and second.recurrence_depth == 2
+            and len(first.integrated_sources) == 3
+        ),
+        "workspace_causally_active": comparison.workspace_causally_active,
+        "broadcast_target_delta": comparison.target_delta,
+        "full_mode": comparison.full.decision_mode,
+        "ablated_mode": comparison.ablated.decision_mode,
+        "first_recurrence_depth": first.recurrence_depth,
+        "second_recurrence_depth": second.recurrence_depth,
+    }
+
 def run_unarchi_ablation_benchmark() -> dict[str, Any]:
     scenarios = [
         _failure_sensitization(),
@@ -481,6 +536,7 @@ def run_unarchi_ablation_benchmark() -> dict[str, Any]:
         _conflict_arbitration_self_correction(),
         _causal_hypothesis_revision(),
         _intervention_aware_self_world_revision(),
+        _recurrent_global_workspace_integration(),
     ]
     passed = sum(bool(item["passed"]) for item in scenarios)
     return {
