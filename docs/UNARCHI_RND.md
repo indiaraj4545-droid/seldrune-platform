@@ -723,3 +723,67 @@ multiple context-specific schemas.
 The measurable target is contextual calibration: splitting a mixed schema only when
 a reproducible context distinction improves held-out prediction relative to the
 unsplit schema, with an ablation that preserves the global schema for comparison.
+
+
+## v0.14 context-sensitive self-schema decomposition checkpoint
+
+UNARCHI v0.14 prevents a genuinely context-dependent capability from being
+collapsed into one misleading global average.
+
+The kernel accepts an explicit candidate context partition, such as sandbox
+versus production, represented by small deterministic term rules. These context
+labels are hypotheses to test; UNARCHI does not invent identity categories or
+treat arbitrary correlations as meaningful contexts.
+
+For each candidate partition, UNARCHI:
+
+- retrieves autobiographical experiences matching the parent self-schema;
+- assigns an experience only when exactly one candidate context rule matches;
+- requires a bounded minimum evidence count in every context;
+- holds out the most recent matching outcome from each context;
+- trains a global success estimate from the remaining evidence;
+- trains one success estimate per candidate context from the same training set;
+- compares global versus contextual mean absolute error on the held-out outcomes;
+- requires both a minimum held-out improvement and a meaningful spread between
+  context success rates before accepting decomposition.
+
+If the split fails those tests, no contextual self-schema is created. If it
+passes, each accepted contextual entry stores:
+
+- the parent self-schema identifier;
+- context label and deterministic matching terms;
+- capability, limitation, or mixed classification;
+- evidence count and observed success rate;
+- bounded success/risk transfer biases;
+- confidence;
+- exact autobiographical evidence references.
+
+At prediction time a matching validated contextual self-schema takes precedence
+over the broader global schema. If no validated context applies, prediction
+falls back to the global autobiographical self-schema.
+
+v0.14 also includes a global-schema ablation. Both paths receive the same
+history and candidate action set, but the ablated path ignores contextual
+schemas. This makes the behavioral contribution of context decomposition
+measurable.
+
+The deterministic benchmark requires:
+
+mixed global history -> explicit candidate contexts -> held-out validation ->
+accepted sandbox/production decomposition -> later production decision ->
+global-schema ablation -> measurable choice difference -> export/restore ->
+identical contextual schema evidence.
+
+This is functional context-sensitive autobiographical calibration. It does not
+establish a subjective identity, self-awareness, sentience, phenomenal
+consciousness, or qualia.
+
+## Next checkpoint: v0.15 transfer-boundary learning
+
+The next research step should test when a validated contextual self-schema can
+safely transfer to a new but related context and when the system should abstain
+from transfer because evidence is insufficient.
+
+The measurable target is calibrated generalization: context transfer should
+improve held-out prediction on supported neighboring contexts while an
+over-generalization ablation should make larger errors on unsupported contexts.
