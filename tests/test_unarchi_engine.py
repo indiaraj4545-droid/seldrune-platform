@@ -167,7 +167,7 @@ def test_snapshot_never_claims_phenomenal_consciousness() -> None:
     snapshot = engine.snapshot()
 
     assert snapshot["claims_phenomenal_consciousness"] is False
-    assert snapshot["version"] == "unarchi-v0.14"
+    assert snapshot["version"] == "unarchi-v0.15"
 
 
 def test_export_restore_preserves_identity_state_and_memory() -> None:
@@ -2420,6 +2420,207 @@ def test_contextual_schema_survives_restart_and_is_explainable() -> None:
     assert narrative.unsupported_claims == 0
     assert any(
         ref.startswith("self_schema_decomposition:")
+        for ref in narrative.evidence_refs
+    )
+    assert any(
+        ref.startswith("contextual_self_schema:")
+        for ref in narrative.evidence_refs
+    )
+
+
+
+def _build_context_transfer_test_engine() -> tuple[
+    UnarchiEngine,
+    int,
+    int,
+]:
+    engine = UnarchiEngine()
+    goal = "validate release evidence"
+    action = "run automated release check"
+
+    for index in range(4):
+        engine.learn(
+            observation=f"Sandbox release {index}.",
+            goal=goal,
+            action=action,
+            outcome="correct evidence",
+            success=True,
+            reward=0.8,
+            predicted_success=0.5,
+        )
+        engine.learn(
+            observation=f"Production release {index}.",
+            goal=goal,
+            action=action,
+            outcome="invalid evidence escaped",
+            success=False,
+            reward=-0.8,
+            predicted_success=0.7,
+        )
+
+    parent = next(
+        item
+        for item in engine.consolidate_self_schema()
+        if item.kind == "mixed"
+    )
+    engine.decompose_self_schema_context(
+        parent.id,
+        context_rules={
+            "sandbox": ("sandbox",),
+            "production": ("production",),
+        },
+    )
+    source = next(
+        item
+        for item in engine.active_contextual_self_schema(
+            parent_schema_id=parent.id
+        )
+        if item.context_label == "sandbox"
+    )
+    return engine, parent.id, source.id
+
+
+def test_context_transfer_accepts_out_of_sample_supported_context() -> None:
+    engine, _, source_id = _build_context_transfer_test_engine()
+
+    for index in range(3):
+        engine.learn(
+            observation=f"Staging release {index}.",
+            goal="validate release evidence",
+            action="run automated release check",
+            outcome="correct evidence",
+            success=True,
+            reward=0.7,
+            predicted_success=0.5,
+        )
+
+    boundary = engine.evaluate_context_transfer(
+        source_id,
+        target_label="staging",
+        target_terms=("staging",),
+        min_target_evidence=3,
+    )
+
+    assert boundary.status == "accepted"
+    assert boundary.evidence_count == 3
+    assert boundary.source_holdout_mae == 0.0
+    assert boundary.global_holdout_mae == 0.5
+    assert boundary.improvement == 0.5
+    assert boundary.transfer_strength > 0.0
+    assert boundary.evidence_refs
+    assert all(
+        ref not in engine.contextual_self_schema[0].evidence_refs
+        or ref.startswith("experience:")
+        for ref in boundary.evidence_refs
+    )
+
+
+def test_context_transfer_abstains_when_source_generalizes_badly() -> None:
+    engine, _, source_id = _build_context_transfer_test_engine()
+
+    for index in range(3):
+        engine.learn(
+            observation=f"Emergency release {index}.",
+            goal="validate release evidence",
+            action="run automated release check",
+            outcome="invalid evidence escaped",
+            success=False,
+            reward=-0.8,
+            predicted_success=0.7,
+        )
+
+    boundary = engine.evaluate_context_transfer(
+        source_id,
+        target_label="emergency",
+        target_terms=("emergency",),
+        min_target_evidence=3,
+    )
+
+    assert boundary.status == "abstained_no_gain"
+    assert boundary.source_holdout_mae == 1.0
+    assert boundary.global_holdout_mae == 0.5
+    assert boundary.improvement == -0.5
+    assert boundary.transfer_strength == 0.0
+    assert engine.active_context_transfer_boundaries() == ()
+
+
+def test_context_transfer_ablation_changes_supported_target_choice() -> None:
+    engine, _, source_id = _build_context_transfer_test_engine()
+
+    for index in range(3):
+        engine.learn(
+            observation=f"Staging release {index}.",
+            goal="validate release evidence",
+            action="run automated release check",
+            outcome="correct evidence",
+            success=True,
+            reward=0.7,
+            predicted_success=0.5,
+        )
+    engine.evaluate_context_transfer(
+        source_id,
+        target_label="staging",
+        target_terms=("staging",),
+    )
+
+    comparison = engine.compare_context_transfer_ablation(
+        candidates=[
+            {
+                "action": "run automated release check",
+                "expected_success": 0.50,
+                "expected_information_gain": 0.10,
+                "risk": 0.10,
+            },
+            {
+                "action": "request independent review",
+                "expected_success": 0.58,
+                "expected_information_gain": 0.15,
+                "risk": 0.10,
+            },
+        ],
+        context="staging release",
+    )
+
+    assert comparison.transfer_action == "run automated release check"
+    assert comparison.no_transfer_action == "request independent review"
+    assert comparison.choice_changed is True
+    assert comparison.transfer_causally_active is True
+
+
+def test_context_transfer_persists_and_has_grounded_narrative() -> None:
+    engine, _, source_id = _build_context_transfer_test_engine()
+
+    for index in range(3):
+        engine.learn(
+            observation=f"Staging release {index}.",
+            goal="validate release evidence",
+            action="run automated release check",
+            outcome="correct evidence",
+            success=True,
+            reward=0.7,
+            predicted_success=0.5,
+        )
+    boundary = engine.evaluate_context_transfer(
+        source_id,
+        target_label="staging",
+        target_terms=("staging",),
+    )
+    narrative = engine.build_metacognitive_narrative(
+        "context_transfer"
+    )
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    assert boundary.status == "accepted"
+    assert restored.context_transfer_boundaries == (
+        engine.context_transfer_boundaries
+    )
+    assert restored.next_context_transfer_boundary_id == (
+        engine.next_context_transfer_boundary_id
+    )
+    assert restored.snapshot() == engine.snapshot()
+    assert narrative.unsupported_claims == 0
+    assert any(
+        ref.startswith("context_transfer:")
         for ref in narrative.evidence_refs
     )
     assert any(
