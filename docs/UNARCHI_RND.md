@@ -1016,12 +1016,57 @@ This remains bounded functional causal research. Replicated reversible evidence
 within this protocol does not prove general real-world causation, subjective
 identity, sentience, phenomenal consciousness, or qualia.
 
-## Next checkpoint: v0.19 causal invariance across environments
+## v0.19 causal invariance across environments checkpoint
 
-The next research step should test whether a replicated-reversible context
-relationship remains stable across multiple controlled environment signatures
-without assuming that one environment generalizes to another.
+UNARCHI v0.19 tests whether replicated-reversible context causality survives
+predefined changes in the controlled environment.
 
-The measurable target is bounded causal invariance: preserve the causal relation
-only when effect direction and minimum strength survive predefined environment
-changes; otherwise learn an explicit boundary instead of over-generalizing.
+Each v0.18 stability assessment is treated as evidence from exactly one
+controlled environment signature. v0.19 compares multiple such assessments and
+requires:
+
+- at least two distinct controlled environment signatures;
+- replicated-reversible evidence inside every environment being generalized;
+- the same predicted causal direction across environments;
+- a minimum causal-strength floor in every environment;
+- bounded variation in causal strength across environments;
+- no duplicate environment signature being counted as independent coverage.
+
+If all gates pass, the hypothesis reaches `environment_invariant` within the
+tested environment set. The invariance record stores environment signatures,
+stable environment count, direction consistency, minimum/maximum strength,
+strength spread, confidence, exact evidence references, and any learned
+boundary signatures.
+
+If a new environment fails replication, reversibility, strength, or direction,
+v0.19 records `environment_bounded`. It preserves valid replicated evidence
+from environments that passed instead of pretending that one failure erases all
+local causal evidence. An insufficient number of distinct environments produces
+`insufficient_environments`.
+
+The deterministic v0.19 benchmark requires:
+
+replicated reversible evidence in controlled environment A -> replicated
+reversible evidence in distinct controlled environment B -> same causal
+direction -> causal strength survives the floor -> bounded strength spread ->
+environment_invariant -> export/restore -> identical invariance record and
+evidence-grounded narrative.
+
+A separate focused test requires a valid environment A plus a failed
+environment B to produce an explicit environment boundary without promoting the
+hypothesis to environment-invariant status.
+
+This remains bounded functional causal research. `environment_invariant`
+means invariant only across the explicitly tested controlled signatures. It
+does not prove unrestricted real-world causation, subjective identity,
+sentience, phenomenal consciousness, or qualia.
+
+## Next checkpoint: v0.20 active boundary discovery
+
+The next research step should choose low-risk environment variations that are
+maximally informative about where an invariant relation stops holding, while
+remaining deterministic, reversible, and externally non-executing by default.
+
+The measurable target is efficient boundary discovery: prioritize environment
+tests that reduce uncertainty about the causal validity region without
+requiring brute-force search, paid model calls, or unsafe autonomous action.

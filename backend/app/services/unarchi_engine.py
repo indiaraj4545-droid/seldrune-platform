@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 
-UNARCHI_VERSION = "unarchi-v0.18"
+UNARCHI_VERSION = "unarchi-v0.19"
 _STOPWORDS = {
     "a",
     "an",
@@ -556,6 +556,27 @@ class ContextCausalStabilityAssessment:
 
 
 @dataclass(frozen=True)
+class ContextCausalInvarianceAssessment:
+    id: int
+    hypothesis_id: int
+    stability_assessment_ids: tuple[int, ...]
+    environment_signatures: tuple[str, ...]
+    distinct_environment_count: int
+    stable_environment_count: int
+    effect_direction_consistent: bool
+    minimum_causal_strength: float
+    maximum_causal_strength: float
+    strength_spread: float
+    status: str
+    confidence: float
+    boundary_signatures: tuple[str, ...]
+    evidence_refs: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class LatentContextDiscovery:
     id: int
     parent_schema_id: int
@@ -624,15 +645,16 @@ class UnarchiEngine:
     """
     CPU-only experimental cognitive kernel.
 
-    v0.18 includes causal internal dynamics, bounded endogenous goals, a
+    v0.19 includes causal internal dynamics, bounded endogenous goals, a
     calibrated predictive self-model, prospective memory, evidence-grounded
     metacognition, explicit value arbitration, competing causal hypotheses,
     controlled self-intervention trials, a bounded recurrent global workspace,
     counterfactual future simulation with prediction-error feedback, a compact
     autobiographical self-schema, contradiction-driven revision, validated
     context decomposition, transfer boundaries, conservative latent context
-    discovery, intervention-supported context causality evidence, and replicated
-    reversible context-causality stability checks.
+    discovery, intervention-supported context causality evidence, replicated
+    reversible context-causality stability checks, and bounded causal-invariance
+    tests across distinct controlled environments.
     """
 
     state: UnarchiState = field(default_factory=UnarchiState)
@@ -697,6 +719,10 @@ class UnarchiEngine:
         ContextCausalStabilityAssessment
     ] = field(default_factory=list)
     next_context_causal_stability_assessment_id: int = 1
+    context_causal_invariance_assessments: list[
+        ContextCausalInvarianceAssessment
+    ] = field(default_factory=list)
+    next_context_causal_invariance_assessment_id: int = 1
     success_prediction_bias: float = 0.0
     uncertainty_prediction_bias: float = 0.0
     stress_prediction_bias: float = 0.0
@@ -3683,14 +3709,13 @@ class UnarchiEngine:
                     evidence_refs=item.evidence_refs,
                     causal_status=(
                         item.causal_status
-                        if supported
-                        and item.causal_status == "replicated_reversible"
+                        if item.causal_status in {
+                            "replicated_reversible",
+                            "environment_invariant",
+                        }
                         else "intervention_supported"
                         if supported
-                        or item.causal_status in {
-                            "intervention_supported",
-                            "replicated_reversible",
-                        }
+                        or item.causal_status == "intervention_supported"
                         else "intervention_not_supported"
                     ),
                     causal_evidence_refs=causal_refs,
@@ -3890,13 +3915,10 @@ class UnarchiEngine:
                 updated.append(item)
                 continue
             next_status = (
-                "replicated_reversible"
+                item.causal_status
+                if item.causal_status == "environment_invariant"
+                else "replicated_reversible"
                 if stable
-                else "intervention_supported"
-                if item.causal_status in {
-                    "intervention_supported",
-                    "replicated_reversible",
-                }
                 else item.causal_status
             )
             updated.append(
@@ -3946,6 +3968,271 @@ class UnarchiEngine:
                 ),
             )
         return assessment
+
+    def assess_context_causal_invariance(
+        self,
+        hypothesis_id: int,
+        *,
+        stability_assessment_ids: tuple[int, ...] | list[int],
+        min_environments: int = 2,
+        min_causal_strength: float = 0.35,
+        max_strength_spread: float = 0.30,
+    ) -> ContextCausalInvarianceAssessment:
+        """
+        Test whether replicated reversible causality survives environment change.
+
+        Each supplied stability assessment must describe one controlled
+        environment signature. Distinct signatures count as distinct
+        environments. A failed environment becomes an explicit boundary instead
+        of being silently generalized away.
+        """
+        hypothesis = next(
+            (
+                item
+                for item in self.latent_context_hypotheses
+                if item.id == hypothesis_id
+            ),
+            None,
+        )
+        if hypothesis is None:
+            raise ValueError("unknown latent context hypothesis")
+
+        assessment_ids = tuple(
+            dict.fromkeys(int(item) for item in stability_assessment_ids)
+        )
+        if not assessment_ids:
+            raise ValueError("at least one causal stability assessment is required")
+
+        stability_map = {
+            item.id: item for item in self.context_causal_stability_assessments
+        }
+        if any(item_id not in stability_map for item_id in assessment_ids):
+            raise ValueError("unknown causal stability assessment")
+
+        assessments = [stability_map[item_id] for item_id in assessment_ids]
+        if any(item.hypothesis_id != hypothesis_id for item in assessments):
+            raise ValueError("all invariance assessments must test one hypothesis")
+
+        trial_map = {item.id: item for item in self.context_causality_trials}
+        environment_rows: list[
+            tuple[str, ContextCausalStabilityAssessment, float]
+        ] = []
+        boundary_signatures: list[str] = []
+        evidence_refs: list[str] = []
+        direction_signs: list[int] = []
+
+        for item in assessments:
+            trial_ids = item.forward_trial_ids + item.reverse_trial_ids
+            trials = [trial_map.get(trial_id) for trial_id in trial_ids]
+            if any(trial is None for trial in trials):
+                raise ValueError("stability assessment references unknown trial")
+            concrete_trials = [
+                trial for trial in trials if trial is not None
+            ]
+            signatures = {
+                trial.controlled_signature for trial in concrete_trials
+            }
+            if len(signatures) != 1:
+                raise ValueError(
+                    "one stability assessment must use one environment signature"
+                )
+            signature = next(iter(signatures))
+            forward_trials = [
+                trial_map[trial_id] for trial_id in item.forward_trial_ids
+            ]
+            if not forward_trials:
+                raise ValueError("stability assessment has no forward trial")
+
+            source = forward_trials[0].from_context
+            target = forward_trials[0].to_context
+            if any(
+                trial.from_context != source or trial.to_context != target
+                for trial in forward_trials
+            ):
+                raise ValueError("forward directions differ inside environment")
+
+            expected_delta = (
+                forward_trials[0].predicted_target_success_rate
+                - forward_trials[0].baseline_success_rate
+            )
+            direction_signs.append(1 if expected_delta > 0.0 else -1)
+            environment_rows.append(
+                (signature, item, item.mean_causal_strength)
+            )
+            evidence_refs.append(
+                f"context_causal_stability_assessment:{item.id}"
+            )
+            evidence_refs.extend(item.evidence_refs)
+            if item.status != "replicated_reversible":
+                boundary_signatures.append(signature)
+
+        by_signature: dict[
+            str,
+            tuple[ContextCausalStabilityAssessment, float],
+        ] = {}
+        duplicated_signatures: set[str] = set()
+        for signature, assessment, strength in environment_rows:
+            if signature in by_signature:
+                duplicated_signatures.add(signature)
+                previous = by_signature[signature][0]
+                if assessment.confidence > previous.confidence:
+                    by_signature[signature] = (assessment, strength)
+            else:
+                by_signature[signature] = (assessment, strength)
+
+        distinct_rows = [
+            (signature, value[0], value[1])
+            for signature, value in sorted(by_signature.items())
+        ]
+        distinct_count = len(distinct_rows)
+        min_environments = max(2, min(int(min_environments), 8))
+        strength_floor = _clamp(min_causal_strength, 0.0, 1.0)
+        spread_limit = _clamp(max_strength_spread, 0.0, 1.0)
+
+        stable_rows = [
+            row
+            for row in distinct_rows
+            if row[1].status == "replicated_reversible"
+            and row[2] >= strength_floor
+        ]
+        stable_count = len(stable_rows)
+        strengths = [row[2] for row in distinct_rows]
+        minimum_strength = min(strengths) if strengths else 0.0
+        maximum_strength = max(strengths) if strengths else 0.0
+        strength_spread = maximum_strength - minimum_strength
+        direction_consistent = len(set(direction_signs)) <= 1
+
+        for signature, assessment, strength in distinct_rows:
+            if (
+                assessment.status != "replicated_reversible"
+                or strength < strength_floor
+            ):
+                boundary_signatures.append(signature)
+
+        enough_environments = distinct_count >= min_environments
+        invariant = (
+            enough_environments
+            and stable_count == distinct_count
+            and direction_consistent
+            and strength_spread <= spread_limit
+            and not duplicated_signatures
+        )
+        status = (
+            "environment_invariant"
+            if invariant
+            else "insufficient_environments"
+            if not enough_environments
+            else "environment_bounded"
+        )
+        if enough_environments and (
+            not direction_consistent or strength_spread > spread_limit
+        ):
+            boundary_signatures.extend(
+                signature for signature, _, _ in distinct_rows
+            )
+
+        coverage = min(1.0, distinct_count / min_environments)
+        stability_rate = stable_count / max(1, distinct_count)
+        spread_factor = max(
+            0.0,
+            1.0 - (strength_spread / max(spread_limit, 1e-9)),
+        )
+        confidence = _clamp(
+            minimum_strength
+            * coverage
+            * stability_rate
+            * spread_factor
+            * (1.0 if direction_consistent else 0.0)
+        )
+
+        record = ContextCausalInvarianceAssessment(
+            id=self.next_context_causal_invariance_assessment_id,
+            hypothesis_id=hypothesis_id,
+            stability_assessment_ids=assessment_ids,
+            environment_signatures=tuple(
+                signature for signature, _, _ in distinct_rows
+            ),
+            distinct_environment_count=distinct_count,
+            stable_environment_count=stable_count,
+            effect_direction_consistent=direction_consistent,
+            minimum_causal_strength=round(minimum_strength, 6),
+            maximum_causal_strength=round(maximum_strength, 6),
+            strength_spread=round(strength_spread, 6),
+            status=status,
+            confidence=round(confidence, 6),
+            boundary_signatures=tuple(
+                sorted(set(boundary_signatures) | duplicated_signatures)
+            ),
+            evidence_refs=tuple(dict.fromkeys(evidence_refs)),
+        )
+        self.next_context_causal_invariance_assessment_id += 1
+        self.context_causal_invariance_assessments.append(record)
+        if len(self.context_causal_invariance_assessments) > self.max_memory:
+            self.context_causal_invariance_assessments = (
+                self.context_causal_invariance_assessments[-self.max_memory:]
+            )
+
+        updated: list[LatentContextHypothesis] = []
+        for item in self.latent_context_hypotheses:
+            if item.id != hypothesis_id:
+                updated.append(item)
+                continue
+            next_status = (
+                "environment_invariant"
+                if invariant
+                else "replicated_reversible"
+                if item.causal_status in {
+                    "replicated_reversible",
+                    "environment_invariant",
+                }
+                else item.causal_status
+            )
+            updated.append(
+                LatentContextHypothesis(
+                    id=item.id,
+                    parent_schema_id=item.parent_schema_id,
+                    positive_term=item.positive_term,
+                    negative_term=item.negative_term,
+                    positive_support=item.positive_support,
+                    negative_support=item.negative_support,
+                    positive_success_rate=item.positive_success_rate,
+                    negative_success_rate=item.negative_success_rate,
+                    rate_contrast=item.rate_contrast,
+                    validation_status=item.validation_status,
+                    holdout_improvement=item.holdout_improvement,
+                    decomposition_id=item.decomposition_id,
+                    evidence_refs=item.evidence_refs,
+                    causal_status=next_status,
+                    causal_evidence_refs=tuple(
+                        dict.fromkeys(
+                            item.causal_evidence_refs
+                            + (
+                                "context_causal_invariance_assessment:"
+                                f"{record.id}",
+                            )
+                            + record.evidence_refs
+                        )
+                    ),
+                )
+            )
+        self.latent_context_hypotheses = updated
+
+        self.stage_global_workspace_item(
+            source="intervention",
+            content=(
+                f"context causal invariance assessment={record.id}; "
+                f"hypothesis={hypothesis_id}; "
+                f"environments={record.distinct_environment_count}; "
+                f"status={record.status}; "
+                f"confidence={record.confidence:.3f}"
+            ),
+            salience=max(0.55, record.confidence),
+            evidence_refs=(
+                f"context_causal_invariance_assessment:{record.id}",
+                *record.evidence_refs[-4:],
+            ),
+        )
+        return record
 
     def discover_latent_context_hypotheses(
         self,
@@ -4676,6 +4963,37 @@ class UnarchiEngine:
             details.append(detail)
 
         if focus in {
+            "context_causal_invariance",
+            "causal_invariance",
+            "environment_invariance",
+        }:
+            if self.context_causal_invariance_assessments:
+                assessment = self.context_causal_invariance_assessments[-1]
+                add(
+                    f"context_causal_invariance_assessment:{assessment.id}",
+                    (
+                        f"hypothesis={assessment.hypothesis_id}; "
+                        f"status={assessment.status}; "
+                        f"environments={assessment.distinct_environment_count}; "
+                        f"stable={assessment.stable_environment_count}; "
+                        f"direction_consistent="
+                        f"{assessment.effect_direction_consistent}; "
+                        f"strength_spread={assessment.strength_spread}; "
+                        f"confidence={assessment.confidence}"
+                    ),
+                )
+                for ref in assessment.evidence_refs[-6:]:
+                    add(ref, "environment-specific causal stability evidence")
+                summary = (
+                    "The latest causal-invariance assessment tests whether a "
+                    "replicated reversible context relation survives predefined "
+                    "environment changes and records boundaries instead of "
+                    "assuming cross-environment generalization."
+                )
+            else:
+                summary = "No cross-environment causal-invariance assessment exists."
+
+        elif focus in {
             "context_causal_stability",
             "causal_stability",
             "replicated_context_causality",
@@ -5607,6 +5925,13 @@ class UnarchiEngine:
             "next_context_causal_stability_assessment_id": (
                 self.next_context_causal_stability_assessment_id
             ),
+            "context_causal_invariance_assessments": [
+                item.to_dict()
+                for item in self.context_causal_invariance_assessments
+            ],
+            "next_context_causal_invariance_assessment_id": (
+                self.next_context_causal_invariance_assessment_id
+            ),
             "success_prediction_bias": self.success_prediction_bias,
             "uncertainty_prediction_bias": self.uncertainty_prediction_bias,
             "stress_prediction_bias": self.stress_prediction_bias,
@@ -5664,6 +5989,10 @@ class UnarchiEngine:
             "context_causal_stability_assessments",
             [],
         )
+        context_causal_invariance_assessments_payload = payload.get(
+            "context_causal_invariance_assessments",
+            [],
+        )
         value_weights_payload = payload.get("value_weights", _default_value_weights())
         if not isinstance(state_payload, dict):
             raise ValueError("invalid UNARCHI state")
@@ -5713,6 +6042,8 @@ class UnarchiEngine:
             raise ValueError("invalid UNARCHI context causality trials")
         if not isinstance(context_causal_stability_assessments_payload, list):
             raise ValueError("invalid UNARCHI context causal stability assessments")
+        if not isinstance(context_causal_invariance_assessments_payload, list):
+            raise ValueError("invalid UNARCHI context causal invariance assessments")
 
         memory: list[Experience] = []
         for item in memory_payload:
@@ -5977,6 +6308,31 @@ class UnarchiEngine:
                 ContextCausalStabilityAssessment(**restored_item)
             )
 
+        context_causal_invariance_assessments: list[
+            ContextCausalInvarianceAssessment
+        ] = []
+        for item in context_causal_invariance_assessments_payload:
+            if not isinstance(item, dict):
+                raise ValueError(
+                    "invalid UNARCHI context causal invariance assessment"
+                )
+            restored_item = dict(item)
+            restored_item["stability_assessment_ids"] = tuple(
+                restored_item.get("stability_assessment_ids", ())
+            )
+            restored_item["environment_signatures"] = tuple(
+                restored_item.get("environment_signatures", ())
+            )
+            restored_item["boundary_signatures"] = tuple(
+                restored_item.get("boundary_signatures", ())
+            )
+            restored_item["evidence_refs"] = tuple(
+                restored_item.get("evidence_refs", ())
+            )
+            context_causal_invariance_assessments.append(
+                ContextCausalInvarianceAssessment(**restored_item)
+            )
+
         max_memory = max(16, min(int(payload.get("max_memory") or 256), 4096))
         max_active = max(
             1,
@@ -6146,6 +6502,25 @@ class UnarchiEngine:
                 )
                 + 1,
             ),
+            context_causal_invariance_assessments=(
+                context_causal_invariance_assessments[-max_memory:]
+            ),
+            next_context_causal_invariance_assessment_id=max(
+                int(
+                    payload.get(
+                        "next_context_causal_invariance_assessment_id"
+                    )
+                    or 1
+                ),
+                max(
+                    (
+                        item.id
+                        for item in context_causal_invariance_assessments
+                    ),
+                    default=0,
+                )
+                + 1,
+            ),
             success_prediction_bias=float(
                 payload.get("success_prediction_bias") or 0.0
             ),
@@ -6241,7 +6616,20 @@ class UnarchiEngine:
                 [
                     item
                     for item in self.latent_context_hypotheses
-                    if item.causal_status == "replicated_reversible"
+                    if item.causal_status in {
+                        "replicated_reversible",
+                        "environment_invariant",
+                    }
+                ]
+            ),
+            "context_causal_invariance_assessment_count": len(
+                self.context_causal_invariance_assessments
+            ),
+            "environment_invariant_context_count": len(
+                [
+                    item
+                    for item in self.latent_context_hypotheses
+                    if item.causal_status == "environment_invariant"
                 ]
             ),
             "observed_counterfactual_count": len(
