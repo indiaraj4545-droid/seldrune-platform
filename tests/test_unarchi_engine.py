@@ -167,7 +167,7 @@ def test_snapshot_never_claims_phenomenal_consciousness() -> None:
     snapshot = engine.snapshot()
 
     assert snapshot["claims_phenomenal_consciousness"] is False
-    assert snapshot["version"] == "unarchi-v0.2"
+    assert snapshot["version"] == "unarchi-v0.3"
 
 
 def test_export_restore_preserves_identity_state_and_memory() -> None:
@@ -222,3 +222,134 @@ def test_restore_rejects_unknown_state_version() -> None:
         assert "unsupported UNARCHI state version" in str(exc)
     else:
         raise AssertionError("unknown state versions must not be restored")
+
+
+def test_information_gap_creates_bounded_internal_goal() -> None:
+    engine = UnarchiEngine()
+
+    frame = engine.cycle(
+        observation="An unfamiliar mechanism produces inconsistent results.",
+        goal="understand why the mechanism behaves differently",
+        expected_success=0.25,
+        risk=0.1,
+    )
+
+    internal_goal = engine.next_internal_goal()
+
+    assert frame.information_gap >= 0.60
+    assert internal_goal is not None
+    assert internal_goal.status == "active"
+    assert internal_goal.trigger in {"information_gap", "uncertainty"}
+    assert internal_goal.max_steps == 3
+    assert internal_goal.reversible_only is True
+    assert internal_goal.paid_actions_allowed is False
+
+
+def test_repeated_same_uncertainty_does_not_duplicate_internal_goal() -> None:
+    engine = UnarchiEngine()
+    kwargs = {
+        "observation": "An unfamiliar mechanism produces inconsistent results.",
+        "goal": "understand why the mechanism behaves differently",
+        "expected_success": 0.25,
+        "risk": 0.1,
+    }
+
+    engine.cycle(**kwargs)
+    engine.cycle(**kwargs)
+
+    assert len(engine.active_internal_goals()) == 1
+
+
+def test_internal_goal_resolves_when_information_gap_falls() -> None:
+    engine = UnarchiEngine()
+    engine.cycle(
+        observation="A new sensor output has no known explanation.",
+        goal="determine what causes the sensor output",
+        expected_success=0.2,
+        risk=0.1,
+    )
+    internal_goal = engine.next_internal_goal()
+    assert internal_goal is not None
+
+    updated = engine.advance_internal_goal(
+        internal_goal.id,
+        new_information_gap=0.22,
+        evidence="A reversible local test isolated the responsible input.",
+    )
+
+    assert updated.status == "resolved"
+    assert engine.next_internal_goal() is None
+
+
+def test_internal_goal_exhausts_after_bounded_steps() -> None:
+    engine = UnarchiEngine()
+    engine.cycle(
+        observation="A new pattern remains unexplained.",
+        goal="find the cause of the pattern",
+        expected_success=0.2,
+        risk=0.1,
+    )
+    internal_goal = engine.next_internal_goal()
+    assert internal_goal is not None
+
+    for step in range(internal_goal.max_steps):
+        engine.advance_internal_goal(
+            internal_goal.id,
+            new_information_gap=0.8,
+            evidence=f"Reversible test {step + 1} did not resolve the question.",
+        )
+
+    assert internal_goal.status == "exhausted"
+    assert engine.next_internal_goal() is None
+
+
+def test_internal_goal_refuses_paid_or_irreversible_steps() -> None:
+    engine = UnarchiEngine()
+    engine.cycle(
+        observation="A new low-risk question is unresolved.",
+        goal="understand the question",
+        expected_success=0.2,
+        risk=0.1,
+    )
+    internal_goal = engine.next_internal_goal()
+    assert internal_goal is not None
+
+    try:
+        engine.advance_internal_goal(
+            internal_goal.id,
+            new_information_gap=0.5,
+            evidence="Would require a paid external service.",
+            external_cost_usd=0.01,
+        )
+    except ValueError as exc:
+        assert "zero-cost" in str(exc)
+    else:
+        raise AssertionError("paid endogenous investigations must be rejected")
+
+    try:
+        engine.advance_internal_goal(
+            internal_goal.id,
+            new_information_gap=0.5,
+            evidence="Would require an irreversible action.",
+            reversible=False,
+        )
+    except ValueError as exc:
+        assert "reversible" in str(exc)
+    else:
+        raise AssertionError("irreversible endogenous investigations must be rejected")
+
+
+def test_export_restore_preserves_endogenous_goal_queue() -> None:
+    engine = UnarchiEngine()
+    engine.cycle(
+        observation="An unresolved anomaly appears in a local simulation.",
+        goal="explain the anomaly",
+        expected_success=0.2,
+        risk=0.1,
+    )
+
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    assert restored.internal_goals == engine.internal_goals
+    assert restored.next_internal_goal_id == engine.next_internal_goal_id
+    assert restored.snapshot() == engine.snapshot()
