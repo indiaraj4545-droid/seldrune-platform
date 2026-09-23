@@ -61,26 +61,66 @@ def _sum_direct_gpt_spend(
     return float(value or 0.0)
 
 
-def recorded_auxiliary_ai_spend(
+def recorded_auxiliary_ai_usage(
     session: Session,
     *,
     organization_id: UUID,
     since: datetime | None = None,
-) -> float:
+) -> dict[str, int | float]:
     query = select(AuditLog).where(
         AuditLog.organization_id == organization_id,
         AuditLog.action == "ai.cost_recorded",
     )
     if since is not None:
         query = query.where(AuditLog.occurred_at >= since)
-    total = 0.0
+    calls = 0
+    input_tokens = 0
+    output_tokens = 0
+    cached_input_tokens = 0
+    total_cost = 0.0
     for event in session.scalars(query):
-        value = (event.details or {}).get("estimated_cost_usd")
+        details = event.details or {}
+        calls += 1
+        for key, target in (
+            ("input_tokens", "input"),
+            ("output_tokens", "output"),
+            ("cached_input_tokens", "cached"),
+        ):
+            try:
+                value = max(int(details.get(key) or 0), 0)
+            except (TypeError, ValueError):
+                value = 0
+            if target == "input":
+                input_tokens += value
+            elif target == "output":
+                output_tokens += value
+            else:
+                cached_input_tokens += value
         try:
-            total += max(float(value or 0.0), 0.0)
+            total_cost += max(float(details.get("estimated_cost_usd") or 0.0), 0.0)
         except (TypeError, ValueError):
             continue
-    return round(total, 8)
+    return {
+        "model_calls": calls,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cached_input_tokens": cached_input_tokens,
+        "estimated_cost_usd": round(total_cost, 8),
+    }
+
+
+def recorded_auxiliary_ai_spend(
+    session: Session,
+    *,
+    organization_id: UUID,
+    since: datetime | None = None,
+) -> float:
+    usage = recorded_auxiliary_ai_usage(
+        session,
+        organization_id=organization_id,
+        since=since,
+    )
+    return float(usage["estimated_cost_usd"])
 
 
 def current_ai_spend(
