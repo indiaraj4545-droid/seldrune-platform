@@ -28,6 +28,10 @@ from backend.app.models.task import Task
 from backend.app.models.tool_definition import ToolDefinition
 from backend.app.schemas.orchestration import AutonomousExecutionRequest, OrchestrationCreate
 from backend.app.services.ai_cost_governor import choose_cost_route
+from backend.app.services.ai_spend_guard import (
+    AISpendBudgetExceeded,
+    enforce_ai_spend_budget,
+)
 from backend.app.services.audit import record_audit
 from backend.app.services.external_actions import default_external_action_catalog
 from backend.app.services.model_gateway import ModelGateway, ModelGatewayError
@@ -531,6 +535,15 @@ def seldrune_gpt(
         has_images=bool(input_images),
         has_files=bool(input_files),
     )
+    try:
+        enforce_ai_spend_budget(
+            session,
+            organization_id=organization_id,
+            settings=settings,
+            projected_usd=route.request_budget_usd,
+        )
+    except AISpendBudgetExceeded as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
     request = ModelRequest(
         provider=ModelProvider.OPENAI,
         model=route.model,
@@ -689,6 +702,15 @@ def edit_seldrune_gpt_pdf(
         has_images=bool(initial_images),
         has_files=True,
     )
+    try:
+        enforce_ai_spend_budget(
+            session,
+            organization_id=organization_id,
+            settings=settings,
+            projected_usd=settings.ai_pdf_max_total_usd,
+        )
+    except AISpendBudgetExceeded as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
     request = ModelRequest(
         provider=ModelProvider.OPENAI,
         model=pdf_route.model,
