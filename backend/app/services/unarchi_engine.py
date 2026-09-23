@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 
-UNARCHI_VERSION = "unarchi-v0.4"
+UNARCHI_VERSION = "unarchi-v0.5"
 _STOPWORDS = {
     "a",
     "an",
@@ -145,6 +145,34 @@ class CalibrationRecord:
         return asdict(self)
 
 
+@dataclass
+class ProspectiveIntention:
+    id: int
+    condition: str
+    intended_action: str
+    reason: str
+    created_experience_count: int
+    created_continuity: float
+    expected_uncertainty: float
+    expected_stress: float
+    expected_agency: float
+    expected_coherence: float
+    linked_prediction_id: int | None = None
+    due_after_experiences: int = 0
+    max_age_experiences: int = 50
+    match_threshold: float = 0.35
+    status: str = "pending"
+    triggered_experience_count: int | None = None
+    trigger_observation: str | None = None
+    temporal_alignment_score: float | None = None
+    evidence: str | None = None
+    reversible_only: bool = True
+    paid_actions_allowed: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 @dataclass(frozen=True)
 class UnarchiFrame:
     mode: str
@@ -183,9 +211,9 @@ class UnarchiEngine:
     """
     CPU-only experimental cognitive kernel.
 
-    v0.4 includes causal internal dynamics, bounded endogenous goals and a
-    calibrated predictive self-model that forecasts internal consequences of
-    candidate actions and learns from prediction residuals.
+    v0.5 includes causal internal dynamics, bounded endogenous goals, a
+    calibrated predictive self-model and prospective memory that links past
+    intentions to future observed conditions across process restarts.
     """
 
     state: UnarchiState = field(default_factory=UnarchiState)
@@ -196,6 +224,8 @@ class UnarchiEngine:
     predictions: list[SelfPrediction] = field(default_factory=list)
     calibration_history: list[CalibrationRecord] = field(default_factory=list)
     next_prediction_id: int = 1
+    prospective_intentions: list[ProspectiveIntention] = field(default_factory=list)
+    next_intention_id: int = 1
     success_prediction_bias: float = 0.0
     uncertainty_prediction_bias: float = 0.0
     stress_prediction_bias: float = 0.0
@@ -840,6 +870,182 @@ class UnarchiEngine:
             self.calibration_history = self.calibration_history[-self.max_memory:]
         return record
 
+    def remember_future_intention(
+        self,
+        *,
+        condition: str,
+        intended_action: str,
+        reason: str,
+        linked_prediction_id: int | None = None,
+        due_after_experiences: int = 0,
+        max_age_experiences: int = 50,
+        match_threshold: float = 0.35,
+        reversible: bool = True,
+        external_cost_usd: float = 0.0,
+    ) -> ProspectiveIntention:
+        """
+        Store a bounded future intention without executing the intended action.
+        """
+        condition = condition.strip()
+        intended_action = intended_action.strip()
+        reason = reason.strip()
+        if not condition or not intended_action:
+            raise ValueError("condition and intended action are required")
+        if not reversible:
+            raise ValueError("prospective intentions must be reversible")
+        if external_cost_usd > 0.0:
+            raise ValueError("prospective intentions must be zero-cost")
+
+        prediction: SelfPrediction | None = None
+        if linked_prediction_id is not None:
+            prediction = next(
+                (
+                    item
+                    for item in self.predictions
+                    if item.id == linked_prediction_id
+                ),
+                None,
+            )
+            if prediction is None:
+                raise ValueError("unknown linked self prediction")
+
+        due_after_experiences = max(0, min(int(due_after_experiences), 10000))
+        max_age_experiences = max(
+            due_after_experiences + 1,
+            min(int(max_age_experiences), 100000),
+        )
+        match_threshold = _clamp(match_threshold, 0.05, 1.0)
+
+        intention = ProspectiveIntention(
+            id=self.next_intention_id,
+            condition=condition[:300],
+            intended_action=intended_action[:300],
+            reason=reason[:400],
+            created_experience_count=self.state.experience_count,
+            created_continuity=round(self.state.continuity, 6),
+            expected_uncertainty=(
+                prediction.predicted_uncertainty
+                if prediction is not None
+                else round(self.state.uncertainty, 6)
+            ),
+            expected_stress=(
+                prediction.predicted_stress
+                if prediction is not None
+                else round(self.state.stress, 6)
+            ),
+            expected_agency=(
+                prediction.predicted_agency
+                if prediction is not None
+                else round(self.state.agency, 6)
+            ),
+            expected_coherence=(
+                prediction.predicted_coherence
+                if prediction is not None
+                else round(self.state.coherence, 6)
+            ),
+            linked_prediction_id=linked_prediction_id,
+            due_after_experiences=due_after_experiences,
+            max_age_experiences=max_age_experiences,
+            match_threshold=round(match_threshold, 6),
+        )
+        self.next_intention_id += 1
+        self.prospective_intentions.append(intention)
+        if len(self.prospective_intentions) > self.max_memory:
+            self.prospective_intentions = self.prospective_intentions[
+                -self.max_memory:
+            ]
+        return intention
+
+    def pending_prospective_intentions(self) -> tuple[ProspectiveIntention, ...]:
+        return tuple(
+            item
+            for item in self.prospective_intentions
+            if item.status == "pending"
+        )
+
+    def ready_prospective_intentions(self) -> tuple[ProspectiveIntention, ...]:
+        return tuple(
+            item
+            for item in self.prospective_intentions
+            if item.status == "ready"
+        )
+
+    def observe_future_condition(
+        self,
+        observation: str,
+    ) -> tuple[ProspectiveIntention, ...]:
+        """
+        Surface past intentions whose future condition is now observable.
+
+        This method only changes intention status to ready. It does not execute
+        the intended action.
+        """
+        observation = observation.strip()
+        current_experience = self.state.experience_count
+        newly_ready: list[ProspectiveIntention] = []
+
+        for item in self.prospective_intentions:
+            if item.status != "pending":
+                continue
+
+            age = current_experience - item.created_experience_count
+            if age > item.max_age_experiences:
+                item.status = "expired"
+                continue
+            if age < item.due_after_experiences:
+                continue
+
+            condition_terms = _terms(item.condition)
+            observation_terms = _terms(observation)
+            contains_condition = bool(
+                condition_terms
+                and condition_terms.issubset(observation_terms)
+            )
+            similarity = _similarity(item.condition, observation)
+            if not contains_condition and similarity < item.match_threshold:
+                continue
+
+            temporal_error = (
+                abs(self.state.uncertainty - item.expected_uncertainty)
+                + abs(self.state.stress - item.expected_stress)
+                + abs(self.state.agency - item.expected_agency)
+                + abs(self.state.coherence - item.expected_coherence)
+            ) / 4.0
+            item.status = "ready"
+            item.triggered_experience_count = current_experience
+            item.trigger_observation = observation[:500]
+            item.temporal_alignment_score = round(
+                _clamp(1.0 - temporal_error),
+                6,
+            )
+            newly_ready.append(item)
+
+        return tuple(newly_ready)
+
+    def resolve_prospective_intention(
+        self,
+        intention_id: int,
+        *,
+        evidence: str,
+        completed: bool,
+    ) -> ProspectiveIntention:
+        target = next(
+            (
+                item
+                for item in self.prospective_intentions
+                if item.id == intention_id
+            ),
+            None,
+        )
+        if target is None:
+            raise ValueError("unknown prospective intention")
+        if target.status != "ready":
+            raise ValueError("prospective intention is not ready")
+
+        target.status = "completed" if completed else "dismissed"
+        target.evidence = evidence.strip()[:600] or None
+        return target
+
     def compare_ablation(
         self,
         *,
@@ -1007,6 +1213,10 @@ class UnarchiEngine:
                 item.to_dict() for item in self.calibration_history
             ],
             "next_prediction_id": self.next_prediction_id,
+            "prospective_intentions": [
+                item.to_dict() for item in self.prospective_intentions
+            ],
+            "next_intention_id": self.next_intention_id,
             "success_prediction_bias": self.success_prediction_bias,
             "uncertainty_prediction_bias": self.uncertainty_prediction_bias,
             "stress_prediction_bias": self.stress_prediction_bias,
@@ -1029,6 +1239,7 @@ class UnarchiEngine:
         goals_payload = payload.get("internal_goals", [])
         predictions_payload = payload.get("predictions", [])
         calibration_payload = payload.get("calibration_history", [])
+        intentions_payload = payload.get("prospective_intentions", [])
         if not isinstance(state_payload, dict):
             raise ValueError("invalid UNARCHI state")
         if not isinstance(memory_payload, list):
@@ -1041,6 +1252,8 @@ class UnarchiEngine:
             raise ValueError("invalid UNARCHI predictions")
         if not isinstance(calibration_payload, list):
             raise ValueError("invalid UNARCHI calibration history")
+        if not isinstance(intentions_payload, list):
+            raise ValueError("invalid UNARCHI prospective intentions")
 
         memory: list[Experience] = []
         for item in memory_payload:
@@ -1066,6 +1279,12 @@ class UnarchiEngine:
                 raise ValueError("invalid UNARCHI calibration record")
             calibration_history.append(CalibrationRecord(**item))
 
+        prospective_intentions: list[ProspectiveIntention] = []
+        for item in intentions_payload:
+            if not isinstance(item, dict):
+                raise ValueError("invalid UNARCHI prospective intention")
+            prospective_intentions.append(ProspectiveIntention(**item))
+
         max_memory = max(16, min(int(payload.get("max_memory") or 256), 4096))
         max_active = max(
             1,
@@ -1085,6 +1304,15 @@ class UnarchiEngine:
             next_prediction_id=max(
                 int(payload.get("next_prediction_id") or 1),
                 max((item.id for item in predictions), default=0) + 1,
+            ),
+            prospective_intentions=prospective_intentions[-max_memory:],
+            next_intention_id=max(
+                int(payload.get("next_intention_id") or 1),
+                max(
+                    (item.id for item in prospective_intentions),
+                    default=0,
+                )
+                + 1,
             ),
             success_prediction_bias=float(
                 payload.get("success_prediction_bias") or 0.0
@@ -1116,5 +1344,12 @@ class UnarchiEngine:
             "prediction_count": len(self.predictions),
             "calibration_count": len(self.calibration_history),
             "self_calibration_score": round(self.self_calibration_score, 6),
+            "pending_prospective_intentions": len(
+                self.pending_prospective_intentions()
+            ),
+            "ready_prospective_intentions": len(
+                self.ready_prospective_intentions()
+            ),
+            "total_prospective_intentions": len(self.prospective_intentions),
             "claims_phenomenal_consciousness": False,
         }
