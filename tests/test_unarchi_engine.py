@@ -167,7 +167,7 @@ def test_snapshot_never_claims_phenomenal_consciousness() -> None:
     snapshot = engine.snapshot()
 
     assert snapshot["claims_phenomenal_consciousness"] is False
-    assert snapshot["version"] == "unarchi-v0.29"
+    assert snapshot["version"] == "unarchi-v0.30"
 
 
 def test_export_restore_preserves_identity_state_and_memory() -> None:
@@ -5027,5 +5027,217 @@ def test_reactivation_drift_watch_persists_and_is_explainable() -> None:
     assert narrative.unsupported_claims == 0
     assert any(
         ref.startswith("context_validity_reactivation_drift_watch:")
+        for ref in narrative.evidence_refs
+    )
+
+
+
+def _build_renewed_degradation_resolution_engine():
+    (
+        engine,
+        base_map,
+        revision_two,
+        signature,
+        recovery,
+        holdout,
+        _,
+    ) = _build_reactivated_holdout_engine()
+
+    for index in range(3):
+        gate = engine.evaluate_active_context_validity_gated_decision(
+            base_map.hypothesis_id,
+            environment_signature=signature,
+            candidates=_validity_gate_candidates(),
+            context="production release",
+        )
+        engine.record_context_validity_gate_outcome(
+            gate.id,
+            actual_success_by_action={
+                "run automated release check": True,
+                "request independent review": False,
+            },
+            evidence_refs=(f"resolution30:test:negative:{index}",),
+        )
+
+    drift = engine.watch_reactivated_context_validity_drift(
+        base_map.hypothesis_id
+    )
+    assert drift.status == "renewed_degradation_detected"
+    return (
+        engine,
+        base_map,
+        revision_two,
+        recovery,
+        holdout,
+        drift,
+    )
+
+
+def test_renewed_degradation_defer_and_dismiss_keep_active_pointer() -> None:
+    (
+        defer_engine,
+        defer_base,
+        defer_revision,
+        _,
+        _,
+        defer_drift,
+    ) = _build_renewed_degradation_resolution_engine()
+    deferred = defer_engine.resolve_reactivated_context_validity_drift(
+        defer_drift.id,
+        decision="defer",
+        reason="collect more post-reactivation evidence",
+    )
+    deferred_active = defer_engine.active_context_causal_validity_map(
+        defer_base.hypothesis_id
+    )
+
+    (
+        dismiss_engine,
+        dismiss_base,
+        dismiss_revision,
+        _,
+        _,
+        dismiss_drift,
+    ) = _build_renewed_degradation_resolution_engine()
+    dismissed = dismiss_engine.resolve_reactivated_context_validity_drift(
+        dismiss_drift.id,
+        decision="dismiss",
+        reason="operator rejects drift recommendation",
+    )
+    dismissed_active = dismiss_engine.active_context_causal_validity_map(
+        dismiss_base.hypothesis_id
+    )
+
+    assert deferred.decision == "defer"
+    assert deferred.rollback_selection_id is None
+    assert deferred.requires_new_evidence_cycle is False
+    assert deferred_active is not None
+    assert deferred_active.id == defer_revision.id
+
+    assert dismissed.decision == "dismiss"
+    assert dismissed.rollback_selection_id is None
+    assert dismissed.requires_new_evidence_cycle is False
+    assert dismissed_active is not None
+    assert dismissed_active.id == dismiss_revision.id
+
+
+def test_renewed_degradation_rollback_invalidates_old_holdout() -> None:
+    (
+        engine,
+        base_map,
+        revision_two,
+        _,
+        holdout,
+        drift,
+    ) = _build_renewed_degradation_resolution_engine()
+
+    resolution = engine.resolve_reactivated_context_validity_drift(
+        drift.id,
+        decision="rollback_review",
+        reason="renewed degradation requires ancestor review",
+        evidence_refs=("resolution30:test:owner_review",),
+    )
+    active = engine.active_context_causal_validity_map(
+        base_map.hypothesis_id
+    )
+
+    assert resolution.decision == "rollback_review"
+    assert resolution.rollback_target_map_id == base_map.id
+    assert resolution.rollback_selection_id is not None
+    assert resolution.blocked_descendant_map_id == revision_two.id
+    assert resolution.requires_new_evidence_cycle is True
+    assert active is not None
+    assert active.id == base_map.id
+    assert any(
+        item.id == revision_two.id
+        for item in engine.context_causal_validity_maps
+    )
+
+    try:
+        engine.select_context_validity_map_revision(
+            base_map.hypothesis_id,
+            map_id=revision_two.id,
+            reason="stale holdout must not authorize second advance",
+            evidence_refs=(
+                f"context_validity_rollback_holdout_validation:{holdout.id}",
+            ),
+        )
+    except ValueError as exc:
+        assert "new evidence cycle" in str(exc)
+    else:
+        raise AssertionError("stale holdout must not authorize re-advance")
+
+
+def test_renewed_degradation_resolution_terminal_rules() -> None:
+    (
+        engine,
+        _,
+        _,
+        _,
+        _,
+        drift,
+    ) = _build_renewed_degradation_resolution_engine()
+
+    engine.resolve_reactivated_context_validity_drift(
+        drift.id,
+        decision="defer",
+        reason="defer once",
+    )
+    rollback = engine.resolve_reactivated_context_validity_drift(
+        drift.id,
+        decision="rollback_review",
+        reason="later review accepts rollback",
+    )
+    assert rollback.decision == "rollback_review"
+
+    try:
+        engine.resolve_reactivated_context_validity_drift(
+            drift.id,
+            decision="dismiss",
+            reason="should not reopen terminal resolution",
+        )
+    except ValueError as exc:
+        assert "terminally resolved" in str(exc)
+    else:
+        raise AssertionError("terminal drift resolution must remain terminal")
+
+
+def test_renewed_degradation_resolution_persists_and_is_explainable() -> None:
+    (
+        engine,
+        base_map,
+        _,
+        _,
+        _,
+        drift,
+    ) = _build_renewed_degradation_resolution_engine()
+    resolution = engine.resolve_reactivated_context_validity_drift(
+        drift.id,
+        decision="rollback_review",
+        reason="persist renewed-degradation rollback review",
+    )
+    narrative = engine.build_metacognitive_narrative(
+        "context_validity_reactivation_resolution"
+    )
+    restored = UnarchiEngine.from_export(engine.export_state())
+    restored_active = restored.active_context_causal_validity_map(
+        base_map.hypothesis_id
+    )
+
+    assert resolution.requires_new_evidence_cycle is True
+    assert restored.context_validity_reactivation_drift_resolutions == (
+        engine.context_validity_reactivation_drift_resolutions
+    )
+    assert restored.next_context_validity_reactivation_drift_resolution_id == (
+        engine.next_context_validity_reactivation_drift_resolution_id
+    )
+    assert restored.snapshot() == engine.snapshot()
+    assert restored_active is not None
+    assert restored_active.id == base_map.id
+    assert engine.snapshot()["reactivation_drift_resolution_count"] == 1
+    assert engine.snapshot()["reactivation_drift_rollback_review_count"] == 1
+    assert narrative.unsupported_claims == 0
+    assert any(
+        ref.startswith("context_validity_reactivation_drift_resolution:")
         for ref in narrative.evidence_refs
     )

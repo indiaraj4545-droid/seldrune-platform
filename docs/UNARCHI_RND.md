@@ -1588,12 +1588,66 @@ monitoring is an evidence-governance mechanism and does not establish subjective
 identity, sentience, phenomenal consciousness, qualia, or unrestricted
 real-world causation.
 
-## Next checkpoint: v0.30 renewed-degradation resolution
+## v0.30 renewed-degradation resolution checkpoint
 
-The next research step should add an explicit resolution workflow for v0.29
-renewed-degradation recommendations.
+UNARCHI v0.30 adds explicit governance for a v0.29
+`renewed_degradation_detected` watch.
 
-The measurable target is closed-loop post-reactivation governance: permit
-defer, dismiss, or explicit rollback review decisions; keep all prior recovery,
-holdout, reactivation, and drift evidence immutable; and require a new evidence
-cycle before any later descendant reactivation.
+A drift recommendation can now be resolved as:
+
+- `defer`: retain the current descendant and allow later resolution after
+  more review;
+- `dismiss`: retain the current descendant and terminally close that watch;
+- `rollback_review`: explicitly return to the rollback map whose recovery and
+  holdout previously justified reactivation.
+
+Only a watch with `renewed_degradation_detected` and
+`review_for_rollback` can use `rollback_review`. The active map must still
+match the map recorded by the drift watch, so stale recommendations cannot move
+a newer active pointer.
+
+A rollback-review resolution records the prior active descendant, confirmed
+holdout ID, rollback target, new rollback-selection ID, blocked descendant,
+reason, and evidence references. It preserves every prior map revision,
+recovery result, holdout result, reactivation record, drift record, and outcome.
+
+The important v0.30 safety property is stale-authorization invalidation. After a
+renewed-degradation rollback, the earlier `holdout_confirmed` result no longer
+authorizes immediate re-advance. Normal validity-map selection detects the new
+rollback-review resolution and blocks the descendant with:
+
+`re-advance blocked until renewed-degradation rollback completes a new evidence
+cycle`.
+
+v0.30 intentionally does not fabricate that new cycle. It records
+`requires_new_evidence_cycle=true` and leaves the rollback map active until a
+later checkpoint defines and validates fresh recovery evidence.
+
+`defer` remains non-terminal. `dismiss` and `rollback_review` are terminal
+for a drift watch. None of these operations delete evidence or revision
+history.
+
+The deterministic v0.30 benchmark requires:
+
+confirmed recovery and holdout -> explicit descendant reactivation -> fresh
+negative post-reactivation outcomes -> renewed degradation -> defer branch keeps
+descendant active -> dismiss branch keeps descendant active -> rollback-review
+branch returns to the prior rollback map -> descendant revision remains stored
+-> immediate re-advance with the old holdout is rejected -> terminal resolution
+cannot be reopened -> export/restore preserves the resolution and active map.
+
+This remains bounded functional causal research. Resolution governance is an
+auditable machine-control mechanism and does not establish subjective identity,
+sentience, phenomenal consciousness, qualia, or unrestricted real-world
+causation.
+
+## Next checkpoint: v0.31 renewed-degradation recovery cycle
+
+The next research step should define the fresh evidence cycle required after a
+v0.30 rollback review.
+
+The measurable target is non-reuse across repeated failures: start a new
+post-rollback watermark after renewed degradation, require a fresh recovery
+batch plus a fresh independent holdout batch, and permit another descendant
+reactivation only when neither batch reuses evidence from any earlier recovery,
+holdout, reactivation, or drift episode.
