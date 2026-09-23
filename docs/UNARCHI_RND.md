@@ -1110,13 +1110,62 @@ controlled environment would be informative to test; it does not execute that
 test and does not establish unrestricted real-world causation, subjective
 identity, sentience, phenomenal consciousness, or qualia.
 
-## Next checkpoint: v0.21 causal validity-map consolidation
+## v0.21 causal validity-map consolidation checkpoint
 
-The next research step should consolidate stable environments, confirmed
-boundaries, and resolved active probes into a compact causal validity map that
-can distinguish tested-valid, tested-invalid, and unknown environment regions.
+UNARCHI v0.21 consolidates the latest causal-stability evidence for one latent
+context hypothesis into a compact boundary-aware validity map.
 
-The measurable target is boundary-aware generalization: use the map to support
-only nearby evidence-backed environments, abstain in unknown regions, and
-shrink or expand the valid region as new replicated evidence arrives without
-brute-force enumeration.
+The map stores:
+
+- exact tested-valid controlled-environment signatures;
+- exact tested-invalid boundary signatures;
+- the latest stability-assessment ID for each tested signature;
+- causal-invariance assessments that contributed to the map;
+- resolved active-boundary discovery plans that contributed evidence;
+- the observed environment dimensions;
+- a bounded generalization distance and evidence-linked confidence.
+
+The map is intentionally sparse. It does not enumerate the combinatorial space
+of possible environments.
+
+For a requested environment, classification follows conservative precedence:
+
+1. an exact tested-valid signature returns `tested_valid`;
+2. an exact tested-invalid signature returns `tested_invalid`;
+3. an untested signature can return `supported_nearby` only when it is within
+   the bounded distance of tested-valid evidence and strictly farther from every
+   tested-invalid boundary;
+4. ties near a boundary, distant environments, or regions with no valid support
+   return `unknown`.
+
+Nearby support receives lower confidence than the source tested-valid
+environment. Unknown regions receive zero causal-support confidence.
+
+Consolidation always uses the latest stability assessment for each exact
+environment signature. Therefore later replicated evidence can expand a valid
+region, while later failed reversibility or replication evidence can shrink it
+without deleting the prior audit trail.
+
+The deterministic v0.21 benchmark requires:
+
+tested stable environment + tested failed boundary environment -> bounded
+invariance record -> compact validity map -> exact valid classification -> exact
+invalid classification -> one nearby environment supported because it is
+closer to valid evidence than the boundary -> one boundary-equidistant
+environment classified unknown -> export/restore -> identical map and
+evidence-grounded narrative.
+
+This remains bounded functional causal research. A validity-map classification
+does not establish unrestricted real-world causation, subjective identity,
+sentience, phenomenal consciousness, or qualia.
+
+## Next checkpoint: v0.22 validity-gated decision use
+
+The next research step should connect the causal validity map to downstream
+prediction and planning so causal context evidence is used only in
+`tested_valid` or sufficiently supported nearby environments.
+
+The measurable target is decision gating: preserve the causal contribution in
+supported regions, automatically abstain from causal transfer in
+`tested_invalid` and `unknown` regions, and measure the behavioral difference
+with an explicit ablation.

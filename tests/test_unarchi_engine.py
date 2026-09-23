@@ -167,7 +167,7 @@ def test_snapshot_never_claims_phenomenal_consciousness() -> None:
     snapshot = engine.snapshot()
 
     assert snapshot["claims_phenomenal_consciousness"] is False
-    assert snapshot["version"] == "unarchi-v0.20"
+    assert snapshot["version"] == "unarchi-v0.21"
 
 
 def test_export_restore_preserves_identity_state_and_memory() -> None:
@@ -3344,3 +3344,122 @@ def test_active_boundary_discovery_resolves_from_supplied_stability_evidence() -
         ref.startswith("context_boundary_discovery_plan:")
         for ref in narrative.evidence_refs
     )
+
+
+
+def test_context_causal_validity_map_is_boundary_aware_and_persistent() -> None:
+    engine, hypothesis_id = _build_context_causality_test_engine()
+
+    normal_signature = "code=v1;load=normal;data=fixed"
+    extreme_signature = "code=v1;load=extreme;data=fixed"
+    normal = _build_environment_stability(
+        engine,
+        hypothesis_id,
+        signature=normal_signature,
+        prefix="map:normal",
+    )
+    extreme = _build_environment_stability(
+        engine,
+        hypothesis_id,
+        signature=extreme_signature,
+        prefix="map:extreme",
+        reverse_supported=False,
+    )
+    bounded = engine.assess_context_causal_invariance(
+        hypothesis_id,
+        stability_assessment_ids=(normal.id, extreme.id),
+    )
+
+    validity_map = engine.consolidate_context_causal_validity_map(
+        hypothesis_id,
+        max_generalization_distance=1,
+    )
+    exact_valid = engine.classify_context_causal_validity(
+        validity_map.id,
+        environment_signature=normal_signature,
+    )
+    exact_invalid = engine.classify_context_causal_validity(
+        validity_map.id,
+        environment_signature=extreme_signature,
+    )
+    nearby = engine.classify_context_causal_validity(
+        validity_map.id,
+        environment_signature="code=v1;load=normal;data=shifted",
+    )
+    ambiguous = engine.classify_context_causal_validity(
+        validity_map.id,
+        environment_signature="code=v1;load=high;data=fixed",
+    )
+    narrative = engine.build_metacognitive_narrative("context_validity_map")
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    assert bounded.status == "environment_bounded"
+    assert validity_map.tested_valid_signatures == (normal_signature,)
+    assert validity_map.tested_invalid_signatures == (extreme_signature,)
+    assert validity_map.source_invariance_assessment_ids == (bounded.id,)
+    assert exact_valid.status == "tested_valid"
+    assert exact_invalid.status == "tested_invalid"
+    assert nearby.status == "supported_nearby"
+    assert nearby.nearest_valid_distance == 1
+    assert nearby.nearest_invalid_distance == 2
+    assert ambiguous.status == "unknown"
+    assert ambiguous.nearest_valid_distance == 1
+    assert ambiguous.nearest_invalid_distance == 1
+    assert restored.context_causal_validity_maps == (
+        engine.context_causal_validity_maps
+    )
+    assert restored.next_context_causal_validity_map_id == (
+        engine.next_context_causal_validity_map_id
+    )
+    assert restored.snapshot() == engine.snapshot()
+    assert narrative.unsupported_claims == 0
+    assert any(
+        ref.startswith("context_causal_validity_map:")
+        for ref in narrative.evidence_refs
+    )
+
+
+def test_context_causal_validity_map_reconsolidates_latest_evidence() -> None:
+    engine, hypothesis_id = _build_context_causality_test_engine()
+
+    normal_signature = "code=v1;load=normal;data=fixed"
+    extreme_signature = "code=v1;load=extreme;data=fixed"
+    _build_environment_stability(
+        engine,
+        hypothesis_id,
+        signature=normal_signature,
+        prefix="map:update:normal:stable",
+    )
+    _build_environment_stability(
+        engine,
+        hypothesis_id,
+        signature=extreme_signature,
+        prefix="map:update:extreme:failed",
+        reverse_supported=False,
+    )
+    first = engine.consolidate_context_causal_validity_map(hypothesis_id)
+
+    _build_environment_stability(
+        engine,
+        hypothesis_id,
+        signature=extreme_signature,
+        prefix="map:update:extreme:recovered",
+    )
+    second = engine.consolidate_context_causal_validity_map(hypothesis_id)
+
+    _build_environment_stability(
+        engine,
+        hypothesis_id,
+        signature=normal_signature,
+        prefix="map:update:normal:failed",
+        reverse_supported=False,
+    )
+    third = engine.consolidate_context_causal_validity_map(hypothesis_id)
+
+    assert normal_signature in first.tested_valid_signatures
+    assert extreme_signature in first.tested_invalid_signatures
+    assert extreme_signature in second.tested_valid_signatures
+    assert extreme_signature not in second.tested_invalid_signatures
+    assert normal_signature in third.tested_invalid_signatures
+    assert normal_signature not in third.tested_valid_signatures
+    assert engine.snapshot()["context_causal_validity_map_count"] == 3

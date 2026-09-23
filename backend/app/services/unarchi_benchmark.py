@@ -5,7 +5,7 @@ from typing import Any
 from backend.app.services.unarchi_engine import UnarchiEngine
 
 
-BENCHMARK_VERSION = "unarchi-ablation-v0.20"
+BENCHMARK_VERSION = "unarchi-ablation-v0.21"
 
 
 def _failure_sensitization() -> dict[str, Any]:
@@ -1849,6 +1849,169 @@ def _active_context_boundary_discovery() -> dict[str, Any]:
     }
 
 
+def _causal_validity_map_consolidation() -> dict[str, Any]:
+    engine = UnarchiEngine()
+    goal = "validate release evidence"
+    action = "run automated release check"
+
+    for index in range(6):
+        engine.learn(
+            observation=f"Sandbox release validation {index}.",
+            goal=goal,
+            action=action,
+            outcome="correct evidence",
+            success=True,
+            reward=0.8,
+            predicted_success=0.55,
+        )
+        engine.learn(
+            observation=f"Production release validation {index}.",
+            goal=goal,
+            action=action,
+            outcome="invalid evidence escaped",
+            success=False,
+            reward=-0.8,
+            predicted_success=0.70,
+        )
+
+    parent = next(
+        item
+        for item in engine.consolidate_self_schema()
+        if item.kind == "mixed" and action in item.pattern
+    )
+    discovery = engine.discover_latent_context_hypotheses(parent.id)
+    hypothesis = next(
+        item
+        for item in engine.latent_context_hypotheses
+        if item.id == discovery.selected_hypothesis_id
+    )
+
+    def build_stability(
+        signature: str,
+        prefix: str,
+        *,
+        reverse_supported: bool,
+    ):
+        forward_ids: list[int] = []
+        for batch in ("a", "b"):
+            trial = engine.propose_context_causality_intervention(
+                hypothesis.id,
+                from_context="production",
+                to_context="sandbox",
+                controlled_signature=signature,
+                min_samples=4,
+            )
+            trial = engine.observe_context_causality_intervention(
+                trial.id,
+                observed_target_success_rate=1.0,
+                observed_signature=signature,
+                sample_count=4,
+                evidence_refs=(f"{prefix}:forward:{batch}",),
+            )
+            forward_ids.append(trial.id)
+
+        reverse = engine.propose_context_causality_intervention(
+            hypothesis.id,
+            from_context="sandbox",
+            to_context="production",
+            controlled_signature=signature,
+            min_samples=4,
+        )
+        reverse = engine.observe_context_causality_intervention(
+            reverse.id,
+            observed_target_success_rate=0.0 if reverse_supported else 1.0,
+            observed_signature=signature,
+            sample_count=4,
+            evidence_refs=(f"{prefix}:reverse:a",),
+        )
+        return engine.assess_context_causal_stability(
+            hypothesis.id,
+            forward_trial_ids=forward_ids,
+            reverse_trial_ids=(reverse.id,),
+        )
+
+    normal_signature = "code=v1;load=normal;data=fixed"
+    extreme_signature = "code=v1;load=extreme;data=fixed"
+    normal = build_stability(
+        normal_signature,
+        "validity:normal",
+        reverse_supported=True,
+    )
+    extreme = build_stability(
+        extreme_signature,
+        "validity:extreme",
+        reverse_supported=False,
+    )
+    bounded = engine.assess_context_causal_invariance(
+        hypothesis.id,
+        stability_assessment_ids=(normal.id, extreme.id),
+    )
+    validity_map = engine.consolidate_context_causal_validity_map(
+        hypothesis.id,
+        max_generalization_distance=1,
+    )
+
+    exact_valid = engine.classify_context_causal_validity(
+        validity_map.id,
+        environment_signature=normal_signature,
+    )
+    exact_invalid = engine.classify_context_causal_validity(
+        validity_map.id,
+        environment_signature=extreme_signature,
+    )
+    nearby = engine.classify_context_causal_validity(
+        validity_map.id,
+        environment_signature="code=v1;load=normal;data=shifted",
+    )
+    ambiguous = engine.classify_context_causal_validity(
+        validity_map.id,
+        environment_signature="code=v1;load=high;data=fixed",
+    )
+    narrative = engine.build_metacognitive_narrative(
+        "context_validity_map"
+    )
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    return {
+        "name": "causal_validity_map_consolidation",
+        "expected_direction": (
+            "latest tested stable and failed environments consolidate into a "
+            "compact map that supports exact evidence, cautiously generalizes "
+            "only toward a nearer valid region, and abstains near a boundary"
+        ),
+        "passed": (
+            bounded.status == "environment_bounded"
+            and validity_map.tested_valid_signatures == (normal_signature,)
+            and validity_map.tested_invalid_signatures == (extreme_signature,)
+            and validity_map.source_invariance_assessment_ids == (bounded.id,)
+            and exact_valid.status == "tested_valid"
+            and exact_invalid.status == "tested_invalid"
+            and nearby.status == "supported_nearby"
+            and nearby.nearest_valid_distance == 1
+            and nearby.nearest_invalid_distance == 2
+            and ambiguous.status == "unknown"
+            and ambiguous.nearest_valid_distance == 1
+            and ambiguous.nearest_invalid_distance == 1
+            and restored.context_causal_validity_maps
+            == engine.context_causal_validity_maps
+            and narrative.unsupported_claims == 0
+            and bool(narrative.evidence_refs)
+        ),
+        "bounded_status": bounded.status,
+        "valid_signatures": validity_map.tested_valid_signatures,
+        "invalid_signatures": validity_map.tested_invalid_signatures,
+        "exact_valid_status": exact_valid.status,
+        "exact_invalid_status": exact_invalid.status,
+        "nearby_status": nearby.status,
+        "ambiguous_status": ambiguous.status,
+        "map_confidence": validity_map.confidence,
+        "restart_preserved": (
+            restored.context_causal_validity_maps
+            == engine.context_causal_validity_maps
+        ),
+    }
+
+
 def run_unarchi_ablation_benchmark() -> dict[str, Any]:
     scenarios = [
         _failure_sensitization(),
@@ -1872,6 +2035,7 @@ def run_unarchi_ablation_benchmark() -> dict[str, Any]:
         _replicated_reversible_context_causality(),
         _cross_environment_causal_invariance(),
         _active_context_boundary_discovery(),
+        _causal_validity_map_consolidation(),
     ]
     passed = sum(bool(item["passed"]) for item in scenarios)
     return {
