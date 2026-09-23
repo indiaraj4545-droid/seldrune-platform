@@ -15,9 +15,10 @@ from backend.app.core.tasking import AgentStatus, TaskStatus
 from backend.app.models.agent import Agent
 from backend.app.models.model_invocation import ModelInvocation
 from backend.app.models.task import Task, TaskEvent
-from backend.app.services.ai_cost_governor import choose_cost_route
+from backend.app.services.ai_cost_governor import apply_budget_pressure, choose_cost_route
 from backend.app.services.ai_spend_guard import (
     AISpendBudgetExceeded,
+    ai_spend_budget_status,
     enforce_ai_spend_budget,
 )
 from backend.app.services.audit import record_audit
@@ -116,12 +117,21 @@ def execute_agent_task(
         and str(agent.runtime_config.get("model")).strip()
         else None
     )
-    route = choose_cost_route(
+    spend_status = ai_spend_budget_status(
+        session,
+        organization_id=task.organization_id,
+        settings=settings,
+    )
+    route = apply_budget_pressure(
         settings,
-        purpose="agent",
-        text=task.objective,
-        capabilities=agent.capabilities,
-        explicit_model=explicit_model,
+        choose_cost_route(
+            settings,
+            purpose="agent",
+            text=task.objective,
+            capabilities=agent.capabilities,
+            explicit_model=explicit_model,
+        ),
+        monthly_utilization=float(spend_status["monthly_utilization"]),
     )
     model = route.model
     if agent.allowed_models is not None and model not in agent.allowed_models:
@@ -140,12 +150,16 @@ def execute_agent_task(
                 "No cost-governed model is allowed for this agent version"
             )
         model = permitted[0]
-        route = choose_cost_route(
+        route = apply_budget_pressure(
             settings,
-            purpose="agent",
-            text=task.objective,
-            capabilities=agent.capabilities,
-            explicit_model=model,
+            choose_cost_route(
+                settings,
+                purpose="agent",
+                text=task.objective,
+                capabilities=agent.capabilities,
+                explicit_model=model,
+            ),
+            monthly_utilization=float(spend_status["monthly_utilization"]),
         )
     configured_max_output = int(
         agent.runtime_config.get("max_output_tokens", settings.model_max_output_tokens)
