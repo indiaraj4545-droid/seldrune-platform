@@ -134,3 +134,32 @@ UNARCHI itself should require no paid GPU and no OpenAI call. Paid models are
 treated as optional cognitive tools. Every external call should be recorded
 with cost, reason, result quality and whether the result was converted into a
 local reusable capability.
+
+
+## v0.2 causal-dynamics checkpoint
+
+UNARCHI v0.2 introduces a required causal test. The same observation and goal
+can be evaluated twice: once with autobiographical/internal-state influence and
+once with those influences ablated. The full system must show a measurable
+change in risk, uncertainty or action mode for the internal state to count as
+causally active.
+
+v0.2 also adds:
+
+- sensitization after surprising failures;
+- reduced learned caution after similar successes;
+- stress and fatigue as transient internal variables;
+- homeostatic settling toward baseline without erasing learned memory;
+- exact JSON-safe export/restore of state and autobiographical traces;
+- restart continuity without an OpenAI or GPU dependency.
+
+This does not establish phenomenal consciousness. It does establish a stronger
+experimental requirement: the proposed inner-state mechanism has to change
+future cognition and action in a reproducible way.
+
+## Next checkpoint: v0.3 endogenous goals
+
+The next experiment should test whether UNARCHI can create a bounded internal
+sub-goal from unresolved prediction error or information need, pursue a small
+reversible experiment, and retire that sub-goal when the information gap is
+reduced. Externally imposed safety and resource constraints remain authoritative.
