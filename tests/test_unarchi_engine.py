@@ -41,7 +41,7 @@ def test_high_risk_forces_verification_mode() -> None:
     )
 
     assert frame.mode == "verify"
-    assert frame.appraisal_label == "protective_tension"
+    assert frame.effective_risk >= 0.70
     assert "highest-risk" in frame.next_experiments[0]
 
 
@@ -67,10 +67,104 @@ def test_learning_updates_prediction_error_and_continuity() -> None:
     assert len(engine.memory) == 1
 
 
+def test_similar_failure_sensitizes_future_decision() -> None:
+    engine = UnarchiEngine()
+    observation = "A database migration may overwrite customer records."
+    goal = "migrate the database safely"
+
+    engine.learn(
+        observation=observation,
+        goal=goal,
+        action="run migration",
+        outcome="records were corrupted",
+        success=False,
+        reward=-1.0,
+        predicted_success=0.9,
+    )
+
+    frame = engine.cycle(
+        observation=observation,
+        goal=goal,
+        expected_success=0.8,
+        risk=0.2,
+    )
+
+    assert frame.memory_bias > 0.25
+    assert frame.state.stress > 0.0
+    assert frame.effective_risk >= 0.70
+    assert frame.mode == "verify"
+    assert frame.appraisal_label == "learned_caution"
+
+
+def test_ablation_proves_internal_state_can_change_mode() -> None:
+    engine = UnarchiEngine()
+    observation = "A database migration may overwrite customer records."
+    goal = "migrate the database safely"
+
+    engine.learn(
+        observation=observation,
+        goal=goal,
+        action="run migration",
+        outcome="records were corrupted",
+        success=False,
+        reward=-1.0,
+        predicted_success=0.9,
+    )
+
+    comparison = engine.compare_ablation(
+        observation=observation,
+        goal=goal,
+        expected_success=0.8,
+        risk=0.2,
+    )
+
+    assert comparison.full.mode == "verify"
+    assert comparison.ablated.mode != "verify"
+    assert comparison.mode_changed is True
+    assert comparison.risk_delta >= 0.30
+    assert comparison.state_causally_active is True
+
+
+def test_homeostatic_settling_reduces_transient_stress() -> None:
+    engine = UnarchiEngine()
+    engine.learn(
+        observation="An unexpected deployment failure occurred.",
+        goal="restore service",
+        action="deploy",
+        outcome="deployment failed",
+        success=False,
+        reward=-0.8,
+        predicted_success=0.95,
+    )
+    before = engine.state
+
+    after = engine.settle(steps=8)
+
+    assert after.stress < before.stress
+    assert after.fatigue < before.fatigue
+    assert abs(after.valence) < abs(before.valence)
+    assert after.experience_count == before.experience_count
+    assert len(engine.memory) == 1
+
+
+def test_ablation_comparison_does_not_mutate_live_engine() -> None:
+    engine = UnarchiEngine()
+    before = engine.snapshot()
+
+    engine.compare_ablation(
+        observation="A novel observation appears.",
+        goal="understand it",
+        expected_success=0.4,
+        risk=0.1,
+    )
+
+    assert engine.snapshot() == before
+
+
 def test_snapshot_never_claims_phenomenal_consciousness() -> None:
     engine = UnarchiEngine()
 
     snapshot = engine.snapshot()
 
     assert snapshot["claims_phenomenal_consciousness"] is False
-    assert snapshot["version"] == "unarchi-v0.1"
+    assert snapshot["version"] == "unarchi-v0.2"
