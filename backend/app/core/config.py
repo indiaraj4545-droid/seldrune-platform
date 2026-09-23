@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     model_max_output_tokens: int = 1200
     ai_cost_governor_enabled: bool = True
     ai_request_max_usd: float = 0.15
+    ai_daily_max_usd: float = 2.0
+    ai_monthly_max_usd: float = 30.0
+    ai_spend_warning_ratio: float = 0.8
     ai_pdf_request_max_usd: float = 0.10
     ai_pdf_max_total_usd: float = 0.25
     ai_pdf_max_attempts: int = 3
@@ -92,6 +95,16 @@ class Settings(BaseSettings):
             raise ValueError("SELDRUNE_MODEL_MAX_OUTPUT_TOKENS must be positive")
         if self.ai_request_max_usd <= 0:
             raise ValueError("SELDRUNE_AI_REQUEST_MAX_USD must be positive")
+        if self.ai_daily_max_usd <= 0:
+            raise ValueError("SELDRUNE_AI_DAILY_MAX_USD must be positive")
+        if self.ai_monthly_max_usd <= 0:
+            raise ValueError("SELDRUNE_AI_MONTHLY_MAX_USD must be positive")
+        if self.ai_monthly_max_usd < self.ai_daily_max_usd:
+            raise ValueError(
+                "SELDRUNE_AI_MONTHLY_MAX_USD must be greater than or equal to the daily limit"
+            )
+        if not 0 < self.ai_spend_warning_ratio < 1:
+            raise ValueError("SELDRUNE_AI_SPEND_WARNING_RATIO must be between 0 and 1")
         if self.ai_pdf_request_max_usd <= 0:
             raise ValueError("SELDRUNE_AI_PDF_REQUEST_MAX_USD must be positive")
         if self.ai_pdf_max_total_usd <= 0:
