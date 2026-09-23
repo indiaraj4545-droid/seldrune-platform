@@ -557,3 +557,61 @@ an ablation that acts without recurrent counterfactual simulation.
 
 The measurable target is improved decision calibration or information gain from
 counterfactual recurrence, not merely the production of hypothetical text.
+
+
+## v0.11 counterfactual recurrent simulation checkpoint
+
+UNARCHI v0.11 connects the recurrent global workspace to bounded
+counterfactual future simulation.
+
+A counterfactual future records:
+
+- a candidate reversible action;
+- an explicit predicted outcome;
+- predicted success;
+- predicted information gain;
+- predicted next uncertainty;
+- bounded risk and utility;
+- the workspace cycle that supplied recurrent context;
+- the number of bounded recurrence rounds;
+- the later observed outcome and measured information gain;
+- prediction discrepancy;
+- the workspace item created from that discrepancy.
+
+Simulation is constrained to reversible, zero-cost actions with bounded risk.
+No simulated future is automatically executed.
+
+The recurrent simulator can compare several futures before action. Its
+ablation removes that simulation and chooses from immediate expected success
+and risk only. This makes the contribution of counterfactual recurrence
+measurable instead of assuming that hypothetical reasoning is useful.
+
+When a simulated future is later observed, error is calculated from success,
+information gain and predicted-versus-observed outcome. That discrepancy is
+staged back into the global workspace as self-model evidence, closing the
+recurrent loop:
+
+workspace evidence -> possible futures -> selected prediction -> reality ->
+prediction discrepancy -> workspace feedback.
+
+The v0.11 deterministic benchmark uses a synthetic decision where immediate
+action has higher apparent success but very low measured information gain,
+while a reversible diagnostic has lower apparent success and much higher
+measured information gain. The recurrent simulator must select the diagnostic,
+the direct-act ablation must select immediate action, and the measured
+information gain of the recurrent choice must be higher.
+
+This is functional bounded counterfactual reasoning with recurrent
+prediction-error feedback. It does not establish imagination as subjective
+experience, consciousness, sentience or qualia.
+
+## Next checkpoint: v0.12 autobiographical self-schema consolidation
+
+The next research step should consolidate repeated experiences, calibrated
+predictions, causal interventions, workspace broadcasts and counterfactual
+outcomes into a compact revisable self-schema describing demonstrated
+capabilities, limitations and recurring failure modes.
+
+The measurable target is longitudinal transfer: a learned self-schema should
+improve decisions on a later related task, and ablating that schema should
+remove the improvement.
