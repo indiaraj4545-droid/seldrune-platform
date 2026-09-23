@@ -10,6 +10,7 @@ from backend.app.services.ai_cost_governor import (
 from backend.app.services.model_gateway import (
     ModelGateway,
     ModelGatewayError,
+    _is_prompt_cache_error,
     normalize_prompt_cache_key,
 )
 
@@ -211,3 +212,13 @@ def test_prompt_cache_key_hashes_long_pdf_filename_to_openai_limit() -> None:
     assert normalized != key
     assert normalized == normalize_prompt_cache_key(key)
     assert normalized.startswith("seldrune:")
+
+
+def test_prompt_cache_error_detection_is_specific() -> None:
+    assert _is_prompt_cache_error(
+        ValueError("Invalid 'prompt_cache_key': string too long")
+    )
+    assert _is_prompt_cache_error(
+        ValueError("prompt_cache_options is unsupported")
+    )
+    assert not _is_prompt_cache_error(ValueError("rate limit exceeded"))
