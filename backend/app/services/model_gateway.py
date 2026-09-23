@@ -31,6 +31,16 @@ def normalize_prompt_cache_key(value: str) -> str:
     return f"{prefix}:{digest}"
 
 
+def _is_prompt_cache_error(exc: Exception) -> bool:
+    message = " ".join(str(exc).casefold().split())
+    return (
+        "prompt_cache_key" in message
+        or "prompt cache key" in message
+        or "prompt_cache_options" in message
+        or "prompt cache options" in message
+    )
+
+
 class ModelGateway:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -211,7 +221,19 @@ class ModelGateway:
                     input_tokens=preflight_tokens,
                 )
 
-            response = client.responses.create(**response_args)
+            try:
+                response = client.responses.create(**response_args)
+            except Exception as exc:
+                if (
+                    "prompt_cache_key" in response_args
+                    and _is_prompt_cache_error(exc)
+                ):
+                    retry_args = dict(response_args)
+                    retry_args.pop("prompt_cache_key", None)
+                    retry_args.pop("prompt_cache_options", None)
+                    response = client.responses.create(**retry_args)
+                else:
+                    raise
         except ModelGatewayError:
             raise
         except Exception as exc:
