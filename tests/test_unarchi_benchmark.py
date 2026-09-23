@@ -4,8 +4,8 @@ from backend.app.services.unarchi_benchmark import run_unarchi_ablation_benchmar
 def test_unarchi_ablation_benchmark_passes_all_scenarios() -> None:
     result = run_unarchi_ablation_benchmark()
 
-    assert result["scenario_count"] == 23
-    assert result["passed_scenarios"] == 23
+    assert result["scenario_count"] == 24
+    assert result["passed_scenarios"] == 24
     assert result["pass_rate"] == 1.0
     assert result["claims_phenomenal_consciousness"] is False
 
@@ -372,3 +372,24 @@ def test_unarchi_benchmark_covers_validity_gated_decision_use() -> None:
     assert gate["unknown_causal_allowed"] is False
     assert gate["unknown_action"] == "run automated release check"
     assert gate["restart_preserved"] is True
+
+
+
+def test_unarchi_benchmark_covers_validity_gate_outcome_calibration() -> None:
+    result = run_unarchi_ablation_benchmark()
+    scenarios = {item["name"]: item for item in result["scenarios"]}
+
+    calibration = scenarios["validity_gate_outcome_calibration"]
+
+    assert calibration["passed"] is True
+    assert calibration["good_before_status"] == "supported_nearby"
+    assert calibration["good_after_status"] == "supported_nearby"
+    assert calibration["good_confidence_delta"] > 0.0
+    assert calibration["good_calibration_status"] == "nearby_support_calibrated"
+    assert calibration["good_advantage"] >= 0.05
+    assert calibration["bad_before_status"] == "supported_nearby"
+    assert calibration["bad_after_status"] == "unknown"
+    assert calibration["bad_calibration_status"] == "nearby_support_revoked"
+    assert calibration["bad_advantage"] <= -0.05
+    assert calibration["post_revoke_causal_allowed"] is False
+    assert calibration["restart_preserved"] is True
