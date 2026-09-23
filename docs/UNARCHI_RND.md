@@ -290,3 +290,46 @@ The measurable target is retrospective fidelity: when asked why its current
 state or intention exists, the reconstructed explanation should point to the
 actual earlier observations, prediction errors, internal goals and prospective
 memories that causally produced it.
+
+
+## v0.6 metacognitive narrative checkpoint
+
+UNARCHI v0.6 adds deterministic self-explanation grounded only in stored causal
+records. It does not ask a language model to invent a retrospective story.
+
+The kernel can reconstruct focused narratives for:
+
+- current self-state;
+- caution and protective behavior;
+- predictive self-model calibration;
+- internally generated goals;
+- prospective intentions and their trigger conditions.
+
+Every explanation includes explicit evidence references such as stored
+experiences, predictions, calibration records, internal-goal sources, current
+state, or prospective-intention records.
+
+The v0.6 fidelity rule is strict:
+
+same stored causal state -> same metacognitive narrative.
+
+Restarting the process and restoring the same UNARCHI state must reproduce the
+same evidence references and explanation. Unknown narrative topics fall back to
+the current recorded state instead of fabricating history.
+
+The benchmark now tests retrospective fidelity across restart and requires zero
+unsupported claims from the deterministic narrative builder.
+
+This establishes evidence-grounded functional metacognition. It does not prove
+subjective introspection or phenomenal consciousness.
+
+## Next checkpoint: v0.7 conflict, value arbitration and self-correction
+
+The next research step should model competing goals and internal pressures in a
+small explicit arbitration layer. UNARCHI should be able to detect when two
+goals conflict, predict the consequences of alternative compromises, explain
+which stored values or constraints affected the choice, and revise that
+arbitration after outcome evidence.
+
+The measurable target is consistent, revisable value arbitration rather than
+simple priority ordering.
