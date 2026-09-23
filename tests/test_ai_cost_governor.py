@@ -7,7 +7,11 @@ from backend.app.services.ai_cost_governor import (
     choose_cost_route,
     estimate_model_cost,
 )
-from backend.app.services.model_gateway import ModelGateway, ModelGatewayError
+from backend.app.services.model_gateway import (
+    ModelGateway,
+    ModelGatewayError,
+    normalize_prompt_cache_key,
+)
 
 
 def _settings(**overrides) -> Settings:
@@ -187,3 +191,23 @@ def test_budget_pressure_forces_conservation_to_luna() -> None:
     assert route.tier == "conservation"
     assert route.request_budget_usd <= 0.02
     assert route.max_output_tokens <= 600
+
+
+def test_prompt_cache_key_keeps_short_key_unchanged() -> None:
+    key = "seldrune:org:gpt"
+
+    assert normalize_prompt_cache_key(key) == key
+
+
+def test_prompt_cache_key_hashes_long_pdf_filename_to_openai_limit() -> None:
+    key = (
+        "seldrune:12345678-1234-1234-1234-123456789012:pdf:"
+        "an-extremely-long-offer-letter-and-annexure-final-version-2026.pdf"
+    )
+
+    normalized = normalize_prompt_cache_key(key)
+
+    assert len(normalized) <= 64
+    assert normalized != key
+    assert normalized == normalize_prompt_cache_key(key)
+    assert normalized.startswith("seldrune:")
