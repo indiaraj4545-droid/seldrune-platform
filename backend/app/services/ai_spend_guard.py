@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.app.core.config import Settings
+from backend.app.models.audit import AuditLog
 from backend.app.models.model_invocation import ModelInvocation
 from backend.app.models.seldrune_gpt_message import SeldruneGPTMessage
 
@@ -60,6 +61,28 @@ def _sum_direct_gpt_spend(
     return float(value or 0.0)
 
 
+def recorded_auxiliary_ai_spend(
+    session: Session,
+    *,
+    organization_id: UUID,
+    since: datetime | None = None,
+) -> float:
+    query = select(AuditLog).where(
+        AuditLog.organization_id == organization_id,
+        AuditLog.action == "ai.cost_recorded",
+    )
+    if since is not None:
+        query = query.where(AuditLog.occurred_at >= since)
+    total = 0.0
+    for event in session.scalars(query):
+        value = (event.details or {}).get("estimated_cost_usd")
+        try:
+            total += max(float(value or 0.0), 0.0)
+        except (TypeError, ValueError):
+            continue
+    return round(total, 8)
+
+
 def current_ai_spend(
     session: Session,
     *,
@@ -70,23 +93,39 @@ def current_ai_spend(
     day_started_at = current.replace(hour=0, minute=0, second=0, microsecond=0)
     month_started_at = day_started_at.replace(day=1)
 
-    daily_usd = _sum_agent_spend(
-        session,
-        organization_id=organization_id,
-        since=day_started_at,
-    ) + _sum_direct_gpt_spend(
-        session,
-        organization_id=organization_id,
-        since=day_started_at,
+    daily_usd = (
+        _sum_agent_spend(
+            session,
+            organization_id=organization_id,
+            since=day_started_at,
+        )
+        + _sum_direct_gpt_spend(
+            session,
+            organization_id=organization_id,
+            since=day_started_at,
+        )
+        + recorded_auxiliary_ai_spend(
+            session,
+            organization_id=organization_id,
+            since=day_started_at,
+        )
     )
-    monthly_usd = _sum_agent_spend(
-        session,
-        organization_id=organization_id,
-        since=month_started_at,
-    ) + _sum_direct_gpt_spend(
-        session,
-        organization_id=organization_id,
-        since=month_started_at,
+    monthly_usd = (
+        _sum_agent_spend(
+            session,
+            organization_id=organization_id,
+            since=month_started_at,
+        )
+        + _sum_direct_gpt_spend(
+            session,
+            organization_id=organization_id,
+            since=month_started_at,
+        )
+        + recorded_auxiliary_ai_spend(
+            session,
+            organization_id=organization_id,
+            since=month_started_at,
+        )
     )
 
     return AISpendSnapshot(
