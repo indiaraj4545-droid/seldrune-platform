@@ -2508,11 +2508,16 @@ def test_context_transfer_accepts_out_of_sample_supported_context() -> None:
     assert boundary.improvement == 0.5
     assert boundary.transfer_strength > 0.0
     assert boundary.evidence_refs
-    assert all(
-        ref not in engine.contextual_self_schema[0].evidence_refs
-        or ref.startswith("experience:")
-        for ref in boundary.evidence_refs
+    source = next(
+        item for item in engine.contextual_self_schema if item.id == source_id
     )
+    parent = next(
+        item
+        for item in engine.self_schema
+        if item.id == source.parent_schema_id
+    )
+    already_used = set(source.evidence_refs) | set(parent.evidence_refs)
+    assert not already_used.intersection(boundary.evidence_refs)
 
 
 def test_context_transfer_abstains_when_source_generalizes_badly() -> None:
