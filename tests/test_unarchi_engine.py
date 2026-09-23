@@ -167,7 +167,7 @@ def test_snapshot_never_claims_phenomenal_consciousness() -> None:
     snapshot = engine.snapshot()
 
     assert snapshot["claims_phenomenal_consciousness"] is False
-    assert snapshot["version"] == "unarchi-v0.26"
+    assert snapshot["version"] == "unarchi-v0.27"
 
 
 def test_export_restore_preserves_identity_state_and_memory() -> None:
@@ -4308,5 +4308,262 @@ def test_degradation_watch_persists_and_is_explainable() -> None:
     assert narrative.unsupported_claims == 0
     assert any(
         ref.startswith("context_validity_degradation_watch:")
+        for ref in narrative.evidence_refs
+    )
+
+
+
+def _build_resolution_recommendation_engine():
+    (
+        engine,
+        base_map,
+        revision_two,
+        _,
+        positive,
+        signature,
+    ) = _build_active_degradation_watch_engine()
+    negative = _calibrate_validity_signature(
+        engine,
+        revision_two.id,
+        signature,
+        causal_path_should_win=False,
+        prefix="resolution:active:negative",
+    )
+    watch = engine.watch_active_context_validity_degradation(
+        base_map.hypothesis_id
+    )
+    assert watch.status == "rollback_recommended"
+    return (
+        engine,
+        base_map,
+        revision_two,
+        positive,
+        negative,
+        watch,
+        signature,
+    )
+
+
+def test_recommendation_defer_and_dismiss_do_not_move_active_pointer() -> None:
+    (
+        deferred_engine,
+        deferred_base,
+        deferred_revision,
+        _,
+        _,
+        deferred_watch,
+        _,
+    ) = _build_resolution_recommendation_engine()
+    deferred = deferred_engine.resolve_context_validity_degradation_watch(
+        deferred_watch.id,
+        decision="defer",
+        reason="collect more evidence",
+    )
+    deferred_active = deferred_engine.active_context_causal_validity_map(
+        deferred_base.hypothesis_id
+    )
+
+    (
+        dismissed_engine,
+        dismissed_base,
+        dismissed_revision,
+        _,
+        _,
+        dismissed_watch,
+        _,
+    ) = _build_resolution_recommendation_engine()
+    dismissed = dismissed_engine.resolve_context_validity_degradation_watch(
+        dismissed_watch.id,
+        decision="dismiss",
+        reason="operator rejects recommendation",
+    )
+    dismissed_active = dismissed_engine.active_context_causal_validity_map(
+        dismissed_base.hypothesis_id
+    )
+
+    assert deferred.decision == "defer"
+    assert deferred.rollback_selection_id is None
+    assert deferred_active is not None
+    assert deferred_active.id == deferred_revision.id
+    assert dismissed.decision == "dismiss"
+    assert dismissed.rollback_selection_id is None
+    assert dismissed_active is not None
+    assert dismissed_active.id == dismissed_revision.id
+
+
+def test_accepted_recommendation_blocks_readvance_until_rollback_improves() -> None:
+    (
+        engine,
+        base_map,
+        revision_two,
+        _,
+        _,
+        watch,
+        signature,
+    ) = _build_resolution_recommendation_engine()
+    accepted = engine.resolve_context_validity_degradation_watch(
+        watch.id,
+        decision="accept",
+        reason="accept evidence-backed rollback",
+    )
+    active = engine.active_context_causal_validity_map(
+        base_map.hypothesis_id
+    )
+
+    assert active is not None
+    assert active.id == base_map.id
+    assert accepted.rollback_selection_id is not None
+
+    try:
+        engine.select_context_validity_map_revision(
+            base_map.hypothesis_id,
+            map_id=revision_two.id,
+            reason="premature re-advance",
+        )
+    except ValueError as exc:
+        assert "re-advance blocked" in str(exc)
+    else:
+        raise AssertionError("descendant re-advance must be blocked")
+
+    initial = engine.validate_context_validity_rollback(accepted.id)
+    assert initial.status == "insufficient_post_rollback_evidence"
+    assert initial.reactivation_allowed is False
+
+    for index in range(3):
+        gate = engine.evaluate_active_context_validity_gated_decision(
+            base_map.hypothesis_id,
+            environment_signature=signature,
+            candidates=_validity_gate_candidates(),
+            context="production release",
+        )
+        engine.record_context_validity_gate_outcome(
+            gate.id,
+            actual_success_by_action={
+                "run automated release check": False,
+                "request independent review": True,
+            },
+            evidence_refs=(f"resolution:rollback:positive:{index}",),
+        )
+
+    improved = engine.validate_context_validity_rollback(accepted.id)
+    readvance = engine.select_context_validity_map_revision(
+        base_map.hypothesis_id,
+        map_id=revision_two.id,
+        reason="post-rollback validation permits re-advance",
+        evidence_refs=(
+            f"context_validity_rollback_validation:{improved.id}",
+        ),
+    )
+
+    assert improved.status == "rollback_improved"
+    assert improved.reactivation_allowed is True
+    assert improved.mean_rollback_advantage >= 0.05
+    assert improved.improvement_delta >= 0.05
+    assert len(improved.observed_outcome_ids) >= 3
+    assert readvance.action == "advance"
+    assert readvance.selected_map_id == revision_two.id
+
+
+def test_dismiss_is_terminal_but_defer_can_be_superseded() -> None:
+    (
+        defer_engine,
+        _,
+        _,
+        _,
+        _,
+        defer_watch,
+        _,
+    ) = _build_resolution_recommendation_engine()
+    defer_engine.resolve_context_validity_degradation_watch(
+        defer_watch.id,
+        decision="defer",
+        reason="defer first",
+    )
+    accepted = defer_engine.resolve_context_validity_degradation_watch(
+        defer_watch.id,
+        decision="accept",
+        reason="later evidence review accepts rollback",
+    )
+    assert accepted.decision == "accept"
+
+    (
+        dismiss_engine,
+        _,
+        _,
+        _,
+        _,
+        dismiss_watch,
+        _,
+    ) = _build_resolution_recommendation_engine()
+    dismiss_engine.resolve_context_validity_degradation_watch(
+        dismiss_watch.id,
+        decision="dismiss",
+        reason="terminal dismissal",
+    )
+    try:
+        dismiss_engine.resolve_context_validity_degradation_watch(
+            dismiss_watch.id,
+            decision="accept",
+            reason="should not reopen dismissal",
+        )
+    except ValueError as exc:
+        assert "terminally resolved" in str(exc)
+    else:
+        raise AssertionError("dismissed recommendation must remain terminal")
+
+
+def test_rollback_resolution_and_validation_persist() -> None:
+    (
+        engine,
+        base_map,
+        _,
+        _,
+        _,
+        watch,
+        signature,
+    ) = _build_resolution_recommendation_engine()
+    accepted = engine.resolve_context_validity_degradation_watch(
+        watch.id,
+        decision="accept",
+        reason="accept rollback for persistence test",
+    )
+    for index in range(3):
+        gate = engine.evaluate_active_context_validity_gated_decision(
+            base_map.hypothesis_id,
+            environment_signature=signature,
+            candidates=_validity_gate_candidates(),
+            context="production release",
+        )
+        engine.record_context_validity_gate_outcome(
+            gate.id,
+            actual_success_by_action={
+                "run automated release check": False,
+                "request independent review": True,
+            },
+            evidence_refs=(f"resolution:persist:{index}",),
+        )
+    validation = engine.validate_context_validity_rollback(accepted.id)
+    narrative = engine.build_metacognitive_narrative(
+        "context_validity_resolution"
+    )
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    assert validation.status == "rollback_improved"
+    assert restored.context_validity_recommendation_resolutions == (
+        engine.context_validity_recommendation_resolutions
+    )
+    assert restored.context_validity_rollback_validations == (
+        engine.context_validity_rollback_validations
+    )
+    assert restored.next_context_validity_recommendation_resolution_id == (
+        engine.next_context_validity_recommendation_resolution_id
+    )
+    assert restored.next_context_validity_rollback_validation_id == (
+        engine.next_context_validity_rollback_validation_id
+    )
+    assert restored.snapshot() == engine.snapshot()
+    assert narrative.unsupported_claims == 0
+    assert any(
+        ref.startswith("context_validity_recommendation_resolution:")
         for ref in narrative.evidence_refs
     )

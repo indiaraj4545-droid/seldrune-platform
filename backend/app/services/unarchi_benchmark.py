@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 from backend.app.services.unarchi_engine import UnarchiEngine
 
 
-BENCHMARK_VERSION = "unarchi-ablation-v0.26"
+BENCHMARK_VERSION = "unarchi-ablation-v0.27"
 
 
 def _failure_sensitization() -> dict[str, Any]:
@@ -3237,6 +3238,343 @@ def _active_revision_degradation_watch() -> dict[str, Any]:
     }
 
 
+def _build_v27_recommendation_engine():
+    engine = UnarchiEngine()
+    goal = "validate release evidence"
+    action = "run automated release check"
+
+    for index in range(6):
+        engine.learn(
+            observation=f"Sandbox release validation {index}.",
+            goal=goal,
+            action=action,
+            outcome="correct evidence",
+            success=True,
+            reward=0.8,
+            predicted_success=0.55,
+        )
+        engine.learn(
+            observation=f"Production release validation {index}.",
+            goal=goal,
+            action=action,
+            outcome="invalid evidence escaped",
+            success=False,
+            reward=-0.8,
+            predicted_success=0.70,
+        )
+
+    parent_schema = next(
+        item
+        for item in engine.consolidate_self_schema()
+        if item.kind == "mixed" and action in item.pattern
+    )
+    discovery = engine.discover_latent_context_hypotheses(parent_schema.id)
+    hypothesis = next(
+        item
+        for item in engine.latent_context_hypotheses
+        if item.id == discovery.selected_hypothesis_id
+    )
+
+    def build_stability(
+        signature: str,
+        prefix: str,
+        *,
+        reverse_supported: bool,
+    ):
+        forward_ids: list[int] = []
+        for batch in ("a", "b"):
+            trial = engine.propose_context_causality_intervention(
+                hypothesis.id,
+                from_context="production",
+                to_context="sandbox",
+                controlled_signature=signature,
+                min_samples=4,
+            )
+            trial = engine.observe_context_causality_intervention(
+                trial.id,
+                observed_target_success_rate=1.0,
+                observed_signature=signature,
+                sample_count=4,
+                evidence_refs=(f"{prefix}:forward:{batch}",),
+            )
+            forward_ids.append(trial.id)
+
+        reverse = engine.propose_context_causality_intervention(
+            hypothesis.id,
+            from_context="sandbox",
+            to_context="production",
+            controlled_signature=signature,
+            min_samples=4,
+        )
+        reverse = engine.observe_context_causality_intervention(
+            reverse.id,
+            observed_target_success_rate=0.0 if reverse_supported else 1.0,
+            observed_signature=signature,
+            sample_count=4,
+            evidence_refs=(f"{prefix}:reverse:a",),
+        )
+        return engine.assess_context_causal_stability(
+            hypothesis.id,
+            forward_trial_ids=forward_ids,
+            reverse_trial_ids=(reverse.id,),
+        )
+
+    normal = build_stability(
+        "code=v1;load=normal;data=fixed",
+        "resolution:normal",
+        reverse_supported=True,
+    )
+    extreme = build_stability(
+        "code=v1;load=extreme;data=fixed",
+        "resolution:extreme",
+        reverse_supported=False,
+    )
+    engine.assess_context_causal_invariance(
+        hypothesis.id,
+        stability_assessment_ids=(normal.id, extreme.id),
+    )
+    base_map = engine.consolidate_context_causal_validity_map(
+        hypothesis.id,
+        max_generalization_distance=1,
+    )
+
+    candidates = [
+        {
+            "action": action,
+            "expected_success": 0.62,
+            "expected_information_gain": 0.10,
+            "risk": 0.10,
+            "reversible": True,
+        },
+        {
+            "action": "request independent review",
+            "expected_success": 0.58,
+            "expected_information_gain": 0.15,
+            "risk": 0.10,
+            "reversible": True,
+        },
+    ]
+    signature = "code=v1;load=normal;data=shifted"
+
+    for index in range(3):
+        gate = engine.evaluate_context_validity_gated_decision(
+            base_map.id,
+            environment_signature=signature,
+            candidates=candidates,
+            context="production release",
+        )
+        engine.record_context_validity_gate_outcome(
+            gate.id,
+            actual_success_by_action={
+                action: False,
+                "request independent review": True,
+            },
+            evidence_refs=(f"resolution:base_positive:{index}",),
+        )
+    positive = engine.calibrate_context_validity_region(
+        base_map.id,
+        environment_signature=signature,
+    )
+    revision_two = engine.revise_context_causal_validity_map(
+        base_map.id,
+        calibration_ids=(positive.id,),
+    )
+    engine.select_context_validity_map_revision(
+        hypothesis.id,
+        map_id=revision_two.id,
+        reason="activate revision for recommendation resolution",
+    )
+
+    for index in range(3):
+        gate = engine.evaluate_active_context_validity_gated_decision(
+            hypothesis.id,
+            environment_signature=signature,
+            candidates=candidates,
+            context="production release",
+        )
+        engine.record_context_validity_gate_outcome(
+            gate.id,
+            actual_success_by_action={
+                action: True,
+                "request independent review": False,
+            },
+            evidence_refs=(f"resolution:active_negative:{index}",),
+        )
+    engine.calibrate_context_validity_region(
+        revision_two.id,
+        environment_signature=signature,
+    )
+    watch = engine.watch_active_context_validity_degradation(hypothesis.id)
+    return (
+        engine,
+        hypothesis.id,
+        base_map,
+        revision_two,
+        watch,
+        signature,
+        candidates,
+        action,
+    )
+
+
+def _rollback_recommendation_resolution() -> dict[str, Any]:
+    (
+        engine,
+        hypothesis_id,
+        base_map,
+        revision_two,
+        watch,
+        signature,
+        candidates,
+        action,
+    ) = _build_v27_recommendation_engine()
+
+    deferred_engine = deepcopy(engine)
+    deferred = deferred_engine.resolve_context_validity_degradation_watch(
+        watch.id,
+        decision="defer",
+        reason="collect more operator evidence before changing revision",
+    )
+    deferred_active = deferred_engine.active_context_causal_validity_map(
+        hypothesis_id
+    )
+
+    dismissed_engine = deepcopy(engine)
+    dismissed = dismissed_engine.resolve_context_validity_degradation_watch(
+        watch.id,
+        decision="dismiss",
+        reason="operator rejects this recommendation",
+    )
+    dismissed_active = dismissed_engine.active_context_causal_validity_map(
+        hypothesis_id
+    )
+
+    accepted = engine.resolve_context_validity_degradation_watch(
+        watch.id,
+        decision="accept",
+        reason="degradation evidence justifies ancestor rollback",
+        evidence_refs=("resolution:owner_accept",),
+    )
+    rollback_active = engine.active_context_causal_validity_map(hypothesis_id)
+
+    reactivation_blocked = False
+    try:
+        engine.select_context_validity_map_revision(
+            hypothesis_id,
+            map_id=revision_two.id,
+            reason="premature re-advance",
+        )
+    except ValueError as exc:
+        reactivation_blocked = "re-advance blocked" in str(exc)
+
+    insufficient = engine.validate_context_validity_rollback(accepted.id)
+
+    for index in range(3):
+        gate = engine.evaluate_active_context_validity_gated_decision(
+            hypothesis_id,
+            environment_signature=signature,
+            candidates=candidates,
+            context="production release",
+        )
+        engine.record_context_validity_gate_outcome(
+            gate.id,
+            actual_success_by_action={
+                action: False,
+                "request independent review": True,
+            },
+            evidence_refs=(f"resolution:rollback_positive:{index}",),
+        )
+
+    improved = engine.validate_context_validity_rollback(accepted.id)
+    readvance = engine.select_context_validity_map_revision(
+        hypothesis_id,
+        map_id=revision_two.id,
+        reason="post-rollback outcomes validated improvement",
+        evidence_refs=(
+            f"context_validity_rollback_validation:{improved.id}",
+        ),
+    )
+    active_after_readvance = engine.active_context_causal_validity_map(
+        hypothesis_id
+    )
+    narrative = engine.build_metacognitive_narrative(
+        "context_validity_resolution"
+    )
+    restored = UnarchiEngine.from_export(engine.export_state())
+    restored_active = restored.active_context_causal_validity_map(
+        hypothesis_id
+    )
+
+    return {
+        "name": "rollback_recommendation_resolution",
+        "expected_direction": (
+            "defer and dismiss keep the active revision unchanged; accept "
+            "performs ancestor rollback, blocks descendant re-advance until "
+            "new post-rollback outcomes demonstrate improved calibration, "
+            "then permits an explicit re-advance"
+        ),
+        "passed": (
+            watch.status == "rollback_recommended"
+            and deferred.decision == "defer"
+            and deferred.rollback_selection_id is None
+            and deferred_active is not None
+            and deferred_active.id == revision_two.id
+            and dismissed.decision == "dismiss"
+            and dismissed.rollback_selection_id is None
+            and dismissed_active is not None
+            and dismissed_active.id == revision_two.id
+            and accepted.decision == "accept"
+            and accepted.rollback_selection_id is not None
+            and accepted.recommended_map_id == base_map.id
+            and rollback_active is not None
+            and rollback_active.id == base_map.id
+            and reactivation_blocked
+            and insufficient.status
+            == "insufficient_post_rollback_evidence"
+            and insufficient.reactivation_allowed is False
+            and improved.status == "rollback_improved"
+            and improved.reactivation_allowed is True
+            and improved.mean_rollback_advantage >= 0.05
+            and improved.improvement_delta >= 0.05
+            and len(improved.observed_outcome_ids) >= 3
+            and readvance.action == "advance"
+            and readvance.selected_map_id == revision_two.id
+            and active_after_readvance is not None
+            and active_after_readvance.id == revision_two.id
+            and restored.context_validity_recommendation_resolutions
+            == engine.context_validity_recommendation_resolutions
+            and restored.context_validity_rollback_validations
+            == engine.context_validity_rollback_validations
+            and restored_active is not None
+            and restored_active.id == revision_two.id
+            and narrative.unsupported_claims == 0
+            and bool(narrative.evidence_refs)
+        ),
+        "defer_pointer_unchanged": (
+            deferred_active is not None
+            and deferred_active.id == revision_two.id
+        ),
+        "dismiss_pointer_unchanged": (
+            dismissed_active is not None
+            and dismissed_active.id == revision_two.id
+        ),
+        "accepted_map_id": (
+            rollback_active.id if rollback_active is not None else None
+        ),
+        "reactivation_blocked_before_validation": reactivation_blocked,
+        "initial_validation_status": insufficient.status,
+        "improved_validation_status": improved.status,
+        "improvement_delta": improved.improvement_delta,
+        "readvance_action": readvance.action,
+        "restart_preserved": (
+            restored.context_validity_recommendation_resolutions
+            == engine.context_validity_recommendation_resolutions
+            and restored.context_validity_rollback_validations
+            == engine.context_validity_rollback_validations
+        ),
+    }
+
+
 def run_unarchi_ablation_benchmark() -> dict[str, Any]:
     scenarios = [
         _failure_sensitization(),
@@ -3266,6 +3604,7 @@ def run_unarchi_ablation_benchmark() -> dict[str, Any]:
         _calibration_aware_validity_map_revision(),
         _validity_map_selection_and_rollback(),
         _active_revision_degradation_watch(),
+        _rollback_recommendation_resolution(),
     ]
     passed = sum(bool(item["passed"]) for item in scenarios)
     return {
