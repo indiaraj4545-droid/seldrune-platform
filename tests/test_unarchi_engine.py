@@ -167,7 +167,7 @@ def test_snapshot_never_claims_phenomenal_consciousness() -> None:
     snapshot = engine.snapshot()
 
     assert snapshot["claims_phenomenal_consciousness"] is False
-    assert snapshot["version"] == "unarchi-v0.16"
+    assert snapshot["version"] == "unarchi-v0.17"
 
 
 def test_export_restore_preserves_identity_state_and_memory() -> None:
@@ -2805,6 +2805,153 @@ def test_latent_context_discovery_persists_and_is_explainable() -> None:
     assert narrative.unsupported_claims == 0
     assert any(
         ref.startswith("latent_context_discovery:")
+        for ref in narrative.evidence_refs
+    )
+    assert any(
+        ref.startswith("latent_context_hypothesis:")
+        for ref in narrative.evidence_refs
+    )
+
+
+
+def _build_context_causality_test_engine() -> tuple[
+    UnarchiEngine,
+    int,
+]:
+    engine = UnarchiEngine()
+    goal = "validate release evidence"
+    action = "run automated release check"
+
+    for index in range(4):
+        engine.learn(
+            observation=f"Sandbox release {index}.",
+            goal=goal,
+            action=action,
+            outcome="correct evidence",
+            success=True,
+            reward=0.8,
+            predicted_success=0.5,
+        )
+        engine.learn(
+            observation=f"Production release {index}.",
+            goal=goal,
+            action=action,
+            outcome="invalid evidence escaped",
+            success=False,
+            reward=-0.8,
+            predicted_success=0.7,
+        )
+
+    parent = next(
+        item
+        for item in engine.consolidate_self_schema()
+        if item.kind == "mixed"
+    )
+    discovery = engine.discover_latent_context_hypotheses(parent.id)
+    hypothesis = next(
+        item
+        for item in engine.latent_context_hypotheses
+        if item.id == discovery.selected_hypothesis_id
+    )
+    return engine, hypothesis.id
+
+
+def test_context_causality_confounded_trial_cannot_upgrade_hypothesis() -> None:
+    engine, hypothesis_id = _build_context_causality_test_engine()
+
+    trial = engine.propose_context_causality_intervention(
+        hypothesis_id,
+        from_context="production",
+        to_context="sandbox",
+        controlled_signature="code=v1;load=normal;data=fixed",
+        min_samples=3,
+    )
+    observed = engine.observe_context_causality_intervention(
+        trial.id,
+        observed_target_success_rate=1.0,
+        observed_signature="code=v2;load=normal;data=fixed",
+        sample_count=3,
+        evidence_refs=("test:confounded",),
+    )
+    hypothesis = next(
+        item
+        for item in engine.latent_context_hypotheses
+        if item.id == hypothesis_id
+    )
+
+    assert observed.status == "confounded"
+    assert observed.competing_variables_held_constant is False
+    assert hypothesis.causal_status == "unverified"
+    assert hypothesis.causal_evidence_refs == ()
+
+
+def test_context_causality_clean_intervention_supports_hypothesis() -> None:
+    engine, hypothesis_id = _build_context_causality_test_engine()
+
+    trial = engine.propose_context_causality_intervention(
+        hypothesis_id,
+        from_context="production",
+        to_context="sandbox",
+        controlled_signature="code=v1;load=normal;data=fixed",
+        min_samples=4,
+    )
+    observed = engine.observe_context_causality_intervention(
+        trial.id,
+        observed_target_success_rate=1.0,
+        observed_signature="code=v1;load=normal;data=fixed",
+        sample_count=4,
+        evidence_refs=("test:clean",),
+    )
+    hypothesis = next(
+        item
+        for item in engine.latent_context_hypotheses
+        if item.id == hypothesis_id
+    )
+
+    assert observed.status == "intervention_supported"
+    assert observed.competing_variables_held_constant is True
+    assert observed.predicted_direction_followed is True
+    assert observed.causal_strength is not None
+    assert observed.causal_strength >= 0.35
+    assert hypothesis.causal_status == "intervention_supported"
+    assert f"context_causality_trial:{trial.id}" in (
+        hypothesis.causal_evidence_refs
+    )
+
+
+def test_context_causality_persists_and_is_explainable() -> None:
+    engine, hypothesis_id = _build_context_causality_test_engine()
+
+    trial = engine.propose_context_causality_intervention(
+        hypothesis_id,
+        from_context="production",
+        to_context="sandbox",
+        controlled_signature="code=v1;load=normal;data=fixed",
+        min_samples=3,
+    )
+    engine.observe_context_causality_intervention(
+        trial.id,
+        observed_target_success_rate=1.0,
+        observed_signature="code=v1;load=normal;data=fixed",
+        sample_count=3,
+        evidence_refs=("test:causal",),
+    )
+    narrative = engine.build_metacognitive_narrative(
+        "context_causality"
+    )
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    assert restored.context_causality_trials == engine.context_causality_trials
+    assert restored.latent_context_hypotheses == (
+        engine.latent_context_hypotheses
+    )
+    assert restored.next_context_causality_trial_id == (
+        engine.next_context_causality_trial_id
+    )
+    assert restored.snapshot() == engine.snapshot()
+    assert narrative.unsupported_claims == 0
+    assert any(
+        ref.startswith("context_causality_trial:")
         for ref in narrative.evidence_refs
     )
     assert any(
