@@ -507,3 +507,111 @@ modules, reconsidered after prediction error, and then retired when resolved.
 The measurable target is cross-module causal integration: ablating workspace
 broadcast or recurrence should measurably reduce the system's ability to combine
 memory, self-state, world evidence and goals into one coherent decision cycle.
+
+
+## v0.10 recurrent global workspace checkpoint
+
+UNARCHI v0.10 adds a persistent, bounded global workspace above the existing
+single-cycle attention signals.
+
+Workspace items can originate from current internal state, autobiographical
+memory, internally generated goals, predictive self-model evidence, causal
+world-model hypotheses, prospective intentions, value arbitration and
+self-intervention evidence.
+
+Each item carries source, content, salience and evidence references. The
+workspace selects a small source-diverse set of high-salience items and records
+which cognitive modules received the broadcast.
+
+Unresolved items can recur, but recurrence is strictly bounded. An item that
+reaches its recurrence budget is retired instead of occupying attention
+indefinitely. Explicitly resolved items are not broadcast again.
+
+The workspace supports a causal ablation:
+
+same staged evidence -> broadcast enabled versus broadcast removed.
+
+The measurable v0.10 target is satisfied only when the full workspace combines
+multiple cognitive sources into an integrated cycle while the broadcast
+ablation collapses the same cycle to local processing.
+
+The deterministic benchmark now requires:
+
+memory + goal + world-model evidence -> workspace competition -> cross-module
+broadcast -> recurrent reconsideration -> bounded recurrence -> broadcast
+ablation -> measurable loss of integrated decision context.
+
+Workspace state, recurrence counts and cycle history survive export/restore.
+The metacognitive narrative can reconstruct a workspace cycle from the actual
+selected items and recorded broadcast.
+
+This is functional global-workspace-style integration. It does not demonstrate
+subjective access, awareness, sentience or phenomenal consciousness.
+
+## Next checkpoint: v0.11 counterfactual recurrent simulation
+
+The next research step should let globally broadcast evidence seed several
+bounded counterfactual futures. Each simulated future should make explicit
+predictions, feed discrepancies back into the workspace, and be compared with
+an ablation that acts without recurrent counterfactual simulation.
+
+The measurable target is improved decision calibration or information gain from
+counterfactual recurrence, not merely the production of hypothetical text.
+
+
+## v0.11 counterfactual recurrent simulation checkpoint
+
+UNARCHI v0.11 connects the recurrent global workspace to bounded
+counterfactual future simulation.
+
+A counterfactual future records:
+
+- a candidate reversible action;
+- an explicit predicted outcome;
+- predicted success;
+- predicted information gain;
+- predicted next uncertainty;
+- bounded risk and utility;
+- the workspace cycle that supplied recurrent context;
+- the number of bounded recurrence rounds;
+- the later observed outcome and measured information gain;
+- prediction discrepancy;
+- the workspace item created from that discrepancy.
+
+Simulation is constrained to reversible, zero-cost actions with bounded risk.
+No simulated future is automatically executed.
+
+The recurrent simulator can compare several futures before action. Its
+ablation removes that simulation and chooses from immediate expected success
+and risk only. This makes the contribution of counterfactual recurrence
+measurable instead of assuming that hypothetical reasoning is useful.
+
+When a simulated future is later observed, error is calculated from success,
+information gain and predicted-versus-observed outcome. That discrepancy is
+staged back into the global workspace as self-model evidence, closing the
+recurrent loop:
+
+workspace evidence -> possible futures -> selected prediction -> reality ->
+prediction discrepancy -> workspace feedback.
+
+The v0.11 deterministic benchmark uses a synthetic decision where immediate
+action has higher apparent success but very low measured information gain,
+while a reversible diagnostic has lower apparent success and much higher
+measured information gain. The recurrent simulator must select the diagnostic,
+the direct-act ablation must select immediate action, and the measured
+information gain of the recurrent choice must be higher.
+
+This is functional bounded counterfactual reasoning with recurrent
+prediction-error feedback. It does not establish imagination as subjective
+experience, consciousness, sentience or qualia.
+
+## Next checkpoint: v0.12 autobiographical self-schema consolidation
+
+The next research step should consolidate repeated experiences, calibrated
+predictions, causal interventions, workspace broadcasts and counterfactual
+outcomes into a compact revisable self-schema describing demonstrated
+capabilities, limitations and recurring failure modes.
+
+The measurable target is longitudinal transfer: a learned self-schema should
+improve decisions on a later related task, and ablating that schema should
+remove the improvement.

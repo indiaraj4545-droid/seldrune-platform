@@ -167,7 +167,7 @@ def test_snapshot_never_claims_phenomenal_consciousness() -> None:
     snapshot = engine.snapshot()
 
     assert snapshot["claims_phenomenal_consciousness"] is False
-    assert snapshot["version"] == "unarchi-v0.9"
+    assert snapshot["version"] == "unarchi-v0.11"
 
 
 def test_export_restore_preserves_identity_state_and_memory() -> None:
@@ -1474,4 +1474,402 @@ def test_export_restore_preserves_intervention_aware_self_world_model() -> None:
     assert restored.causal_hypotheses == engine.causal_hypotheses
     assert restored.intervention_trials == engine.intervention_trials
     assert restored.next_intervention_id == engine.next_intervention_id
+    assert restored.snapshot() == engine.snapshot()
+
+
+def test_global_workspace_broadcast_integrates_multiple_sources() -> None:
+    engine = UnarchiEngine()
+    engine.stage_global_workspace_item(
+        source="memory",
+        content="A prior validation failure increased caution.",
+        salience=0.8,
+        evidence_refs=("experience:0",),
+    )
+    engine.stage_global_workspace_item(
+        source="goal",
+        content="Resolve the validation uncertainty.",
+        salience=0.9,
+        evidence_refs=("internal_goal:0",),
+    )
+    engine.stage_global_workspace_item(
+        source="world_model",
+        content="The leading hypothesis predicts a schema mismatch.",
+        salience=0.85,
+        evidence_refs=("hypothesis:0",),
+    )
+
+    cycle = engine.run_global_workspace_cycle(
+        max_items=3,
+        seed_from_engine=False,
+    )
+
+    assert cycle.decision_mode == "integrated"
+    assert set(cycle.integrated_sources) == {"memory", "goal", "world_model"}
+    assert len(cycle.broadcast_targets) == 8
+    assert cycle.coherence_score >= 0.75
+
+
+def test_global_workspace_recurrence_is_bounded_and_retires_item() -> None:
+    engine = UnarchiEngine(workspace_recurrence_limit=3)
+    item = engine.stage_global_workspace_item(
+        source="goal",
+        content="An unresolved causal question remains active.",
+        salience=0.9,
+        evidence_refs=("internal_goal:0",),
+    )
+
+    first = engine.run_global_workspace_cycle(seed_from_engine=False)
+    second = engine.run_global_workspace_cycle(seed_from_engine=False)
+    third = engine.run_global_workspace_cycle(seed_from_engine=False)
+
+    assert first.recurrence_depth == 1
+    assert second.recurrence_depth == 2
+    assert third.recurrence_depth == 3
+    assert item.recurrence_count == 3
+    assert item.status == "retired"
+
+
+def test_resolved_workspace_item_does_not_rebroadcast() -> None:
+    engine = UnarchiEngine()
+    item = engine.stage_global_workspace_item(
+        source="memory",
+        content="A discrepancy needs resolution.",
+        salience=0.9,
+        evidence_refs=("experience:0",),
+    )
+    first = engine.run_global_workspace_cycle(seed_from_engine=False)
+    assert item.id in first.selected_item_ids
+
+    engine.resolve_global_workspace_item(
+        item.id,
+        evidence="A local comparison resolved the discrepancy.",
+    )
+    second = engine.run_global_workspace_cycle(seed_from_engine=False)
+
+    assert item.id not in second.selected_item_ids
+    assert item.status == "resolved"
+
+
+def test_global_workspace_broadcast_ablation_changes_decision_context() -> None:
+    engine = UnarchiEngine()
+    for source, content in (
+        ("memory", "Past failure evidence."),
+        ("goal", "Current unresolved goal."),
+        ("world_model", "Current causal hypothesis."),
+    ):
+        engine.stage_global_workspace_item(
+            source=source,
+            content=content,
+            salience=0.8,
+            evidence_refs=(f"{source}:0",),
+        )
+
+    comparison = engine.compare_global_workspace_ablation(
+        max_items=3,
+        seed_from_engine=False,
+    )
+
+    assert comparison.full.decision_mode == "integrated"
+    assert comparison.ablated.decision_mode == "local"
+    assert comparison.target_delta == 8
+    assert comparison.mode_changed is True
+    assert comparison.workspace_causally_active is True
+
+
+def test_global_workspace_narrative_is_evidence_grounded() -> None:
+    engine = UnarchiEngine()
+    engine.stage_global_workspace_item(
+        source="self_model",
+        content="Self prediction indicates elevated uncertainty.",
+        salience=0.8,
+        evidence_refs=("prediction:0",),
+    )
+    engine.stage_global_workspace_item(
+        source="world_model",
+        content="World hypothesis predicts an external mismatch.",
+        salience=0.8,
+        evidence_refs=("hypothesis:0",),
+    )
+    engine.run_global_workspace_cycle(
+        max_items=2,
+        seed_from_engine=False,
+    )
+
+    narrative = engine.build_metacognitive_narrative("workspace")
+
+    assert "workspace_cycle:0" in narrative.evidence_refs
+    assert "workspace_item:1" in narrative.evidence_refs
+    assert "workspace_item:2" in narrative.evidence_refs
+    assert narrative.unsupported_claims == 0
+
+
+def test_export_restore_preserves_recurrent_global_workspace() -> None:
+    engine = UnarchiEngine()
+    item = engine.stage_global_workspace_item(
+        source="goal",
+        content="Persistent unresolved goal.",
+        salience=0.9,
+        evidence_refs=("internal_goal:0",),
+    )
+    engine.run_global_workspace_cycle(seed_from_engine=False)
+
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    assert restored.global_workspace_items == engine.global_workspace_items
+    assert restored.global_workspace_cycles == engine.global_workspace_cycles
+    assert restored.next_workspace_item_id == engine.next_workspace_item_id
+    assert restored.next_workspace_cycle_id == engine.next_workspace_cycle_id
+    assert restored.snapshot() == engine.snapshot()
+    assert (
+        restored.global_workspace_items[0].recurrence_count
+        == item.recurrence_count
+    )
+
+
+def test_counterfactual_recurrence_prefers_information_rich_future() -> None:
+    engine = UnarchiEngine()
+    for source, content in (
+        ("memory", "Past failures make verification evidence important."),
+        ("goal", "Reduce uncertainty before committing."),
+        ("world_model", "Two explanations remain plausible."),
+    ):
+        engine.stage_global_workspace_item(
+            source=source,
+            content=content,
+            salience=0.85,
+            evidence_refs=(f"{source}:0",),
+        )
+    engine.run_global_workspace_cycle(
+        max_items=3,
+        seed_from_engine=False,
+    )
+
+    futures = engine.simulate_counterfactual_futures(
+        [
+            {
+                "action": "fast direct action",
+                "predicted_outcome": "finish quickly with little new evidence",
+                "expected_success": 0.86,
+                "expected_information_gain": 0.10,
+                "risk": 0.10,
+            },
+            {
+                "action": "reversible diagnostic",
+                "predicted_outcome": "diagnostic isolates the uncertain variable",
+                "expected_success": 0.72,
+                "expected_information_gain": 0.90,
+                "risk": 0.05,
+            },
+        ],
+        recurrence_rounds=2,
+    )
+
+    assert futures[0].action == "reversible diagnostic"
+    assert futures[0].recurrence_rounds == 2
+    assert futures[0].linked_workspace_cycle_id == 1
+    assert futures[0].predicted_information_gain > futures[1].predicted_information_gain
+
+
+def test_counterfactual_ablation_changes_choice_and_information_gain() -> None:
+    engine = UnarchiEngine()
+    for source in ("memory", "goal", "world_model"):
+        engine.stage_global_workspace_item(
+            source=source,
+            content=f"{source} evidence favors information gathering",
+            salience=0.85,
+            evidence_refs=(f"{source}:0",),
+        )
+    engine.run_global_workspace_cycle(
+        max_items=3,
+        seed_from_engine=False,
+    )
+
+    comparison = engine.compare_counterfactual_ablation(
+        [
+            {
+                "action": "act immediately",
+                "predicted_outcome": "task may finish without resolving uncertainty",
+                "expected_success": 0.90,
+                "expected_information_gain": 0.05,
+                "risk": 0.10,
+            },
+            {
+                "action": "run local diagnostic",
+                "predicted_outcome": "diagnostic resolves the main uncertainty",
+                "expected_success": 0.74,
+                "expected_information_gain": 0.88,
+                "risk": 0.05,
+            },
+        ],
+        recurrence_rounds=2,
+    )
+
+    assert comparison.full_action == "run local diagnostic"
+    assert comparison.ablated_action == "act immediately"
+    assert comparison.choice_changed is True
+    assert comparison.information_gain_delta > 0.5
+    assert comparison.simulation_causally_active is True
+
+
+def test_counterfactual_observation_feeds_discrepancy_back_to_workspace() -> None:
+    engine = UnarchiEngine()
+    future = engine.simulate_counterfactual_futures(
+        [
+            {
+                "action": "local probe",
+                "predicted_outcome": "probe confirms hypothesis alpha",
+                "expected_success": 0.85,
+                "expected_information_gain": 0.70,
+                "risk": 0.05,
+            }
+        ],
+        recurrence_rounds=1,
+    )[0]
+
+    observed = engine.observe_counterfactual_future(
+        future.id,
+        observed_outcome="probe contradicts hypothesis alpha",
+        actual_success=False,
+        actual_information_gain=0.40,
+    )
+
+    assert observed.status == "observed"
+    assert observed.discrepancy is not None
+    assert observed.discrepancy > 0.3
+    assert observed.feedback_workspace_item_id is not None
+    feedback = next(
+        item
+        for item in engine.global_workspace_items
+        if item.id == observed.feedback_workspace_item_id
+    )
+    assert feedback.source == "self_model"
+    assert f"counterfactual:{engine.counterfactual_futures.index(observed)}" in (
+        feedback.evidence_refs
+    )
+
+
+def test_counterfactual_simulation_rejects_unsafe_or_paid_futures() -> None:
+    engine = UnarchiEngine()
+
+    try:
+        engine.simulate_counterfactual_futures(
+            [
+                {
+                    "action": "irreversible external action",
+                    "predicted_outcome": "unknown",
+                    "expected_success": 0.9,
+                    "expected_information_gain": 0.9,
+                    "risk": 0.8,
+                    "reversible": False,
+                    "external_cost_usd": 1.0,
+                }
+            ]
+        )
+    except ValueError as exc:
+        assert "no reversible zero-cost bounded counterfactual" in str(exc)
+    else:
+        raise AssertionError("unsafe counterfactual must be rejected")
+
+
+def test_counterfactual_outcome_cannot_be_double_counted() -> None:
+    engine = UnarchiEngine()
+    future = engine.simulate_counterfactual_futures(
+        [
+            {
+                "action": "local probe",
+                "predicted_outcome": "probe returns alpha",
+                "expected_success": 0.7,
+                "expected_information_gain": 0.6,
+                "risk": 0.05,
+            }
+        ]
+    )[0]
+    engine.observe_counterfactual_future(
+        future.id,
+        observed_outcome="probe returns beta",
+        actual_success=False,
+        actual_information_gain=0.5,
+    )
+    before_items = len(engine.global_workspace_items)
+
+    try:
+        engine.observe_counterfactual_future(
+            future.id,
+            observed_outcome="probe returns beta",
+            actual_success=False,
+            actual_information_gain=0.5,
+        )
+    except ValueError as exc:
+        assert "already been observed" in str(exc)
+    else:
+        raise AssertionError("counterfactual evidence must not be counted twice")
+
+    assert len(engine.global_workspace_items) == before_items
+
+
+def test_counterfactual_narrative_links_workspace_and_feedback() -> None:
+    engine = UnarchiEngine()
+    engine.stage_global_workspace_item(
+        source="goal",
+        content="Resolve the uncertain variable.",
+        salience=0.9,
+        evidence_refs=("internal_goal:0",),
+    )
+    engine.run_global_workspace_cycle(seed_from_engine=False)
+    future = engine.simulate_counterfactual_futures(
+        [
+            {
+                "action": "diagnostic",
+                "predicted_outcome": "diagnostic confirms alpha",
+                "expected_success": 0.8,
+                "expected_information_gain": 0.8,
+                "risk": 0.05,
+            }
+        ]
+    )[0]
+    engine.observe_counterfactual_future(
+        future.id,
+        observed_outcome="diagnostic contradicts alpha",
+        actual_success=False,
+        actual_information_gain=0.6,
+    )
+
+    narrative = engine.build_metacognitive_narrative("counterfactual")
+
+    assert "counterfactual:0" in narrative.evidence_refs
+    assert "workspace_cycle:0" in narrative.evidence_refs
+    assert f"workspace_item:{future.feedback_workspace_item_id}" in (
+        narrative.evidence_refs
+    )
+    assert narrative.unsupported_claims == 0
+
+
+def test_export_restore_preserves_counterfactual_recurrent_state() -> None:
+    engine = UnarchiEngine()
+    future = engine.simulate_counterfactual_futures(
+        [
+            {
+                "action": "diagnostic",
+                "predicted_outcome": "diagnostic confirms alpha",
+                "expected_success": 0.8,
+                "expected_information_gain": 0.8,
+                "risk": 0.05,
+            }
+        ]
+    )[0]
+    engine.observe_counterfactual_future(
+        future.id,
+        observed_outcome="diagnostic confirms alpha",
+        actual_success=True,
+        actual_information_gain=0.75,
+    )
+
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    assert restored.counterfactual_futures == engine.counterfactual_futures
+    assert restored.next_counterfactual_id == engine.next_counterfactual_id
+    assert (
+        restored.max_counterfactual_futures
+        == engine.max_counterfactual_futures
+    )
     assert restored.snapshot() == engine.snapshot()

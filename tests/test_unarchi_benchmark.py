@@ -4,8 +4,8 @@ from backend.app.services.unarchi_benchmark import run_unarchi_ablation_benchmar
 def test_unarchi_ablation_benchmark_passes_all_scenarios() -> None:
     result = run_unarchi_ablation_benchmark()
 
-    assert result["scenario_count"] == 10
-    assert result["passed_scenarios"] == 10
+    assert result["scenario_count"] == 12
+    assert result["passed_scenarios"] == 12
     assert result["pass_rate"] == 1.0
     assert result["claims_phenomenal_consciousness"] is False
 
@@ -117,3 +117,36 @@ def test_unarchi_benchmark_covers_intervention_aware_self_world_revision() -> No
         intervention["self_confidence"]
         > intervention["external_confidence"]
     )
+
+
+def test_unarchi_benchmark_covers_recurrent_global_workspace() -> None:
+    result = run_unarchi_ablation_benchmark()
+    scenarios = {item["name"]: item for item in result["scenarios"]}
+
+    workspace = scenarios["recurrent_global_workspace_integration"]
+
+    assert workspace["passed"] is True
+    assert workspace["workspace_causally_active"] is True
+    assert workspace["broadcast_target_delta"] > 0
+    assert workspace["full_mode"] == "integrated"
+    assert workspace["ablated_mode"] == "local"
+    assert workspace["first_recurrence_depth"] == 1
+    assert workspace["second_recurrence_depth"] == 2
+
+
+def test_unarchi_benchmark_covers_counterfactual_recurrent_gain() -> None:
+    result = run_unarchi_ablation_benchmark()
+    scenarios = {item["name"]: item for item in result["scenarios"]}
+
+    counterfactual = scenarios["counterfactual_recurrent_information_gain"]
+
+    assert counterfactual["passed"] is True
+    assert counterfactual["simulation_causally_active"] is True
+    assert counterfactual["full_action"] == "run reversible diagnostic"
+    assert counterfactual["ablated_action"] == "act immediately"
+    assert (
+        counterfactual["full_measured_information_gain"]
+        > counterfactual["ablated_measured_information_gain"]
+    )
+    assert counterfactual["feedback_reentered"] is True
+    assert counterfactual["prediction_discrepancy"] is not None

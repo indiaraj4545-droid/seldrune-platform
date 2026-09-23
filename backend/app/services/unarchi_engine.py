@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 
-UNARCHI_VERSION = "unarchi-v0.9"
+UNARCHI_VERSION = "unarchi-v0.11"
 _STOPWORDS = {
     "a",
     "an",
@@ -260,6 +260,88 @@ class InterventionTrial:
         return asdict(self)
 
 
+@dataclass
+class GlobalWorkspaceItem:
+    id: int
+    source: str
+    content: str
+    salience: float
+    evidence_refs: tuple[str, ...] = ()
+    status: str = "active"
+    recurrence_count: int = 0
+    max_recurrence: int = 3
+    resolution_evidence: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class GlobalWorkspaceCycle:
+    id: int
+    selected_item_ids: tuple[int, ...]
+    integrated_sources: tuple[str, ...]
+    broadcast_targets: tuple[str, ...]
+    recurrence_depth: int
+    coherence_score: float
+    decision_mode: str
+    broadcast_enabled: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class WorkspaceComparison:
+    full: GlobalWorkspaceCycle
+    ablated: GlobalWorkspaceCycle
+    target_delta: int
+    mode_changed: bool
+    workspace_causally_active: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class CounterfactualFuture:
+    id: int
+    action: str
+    predicted_outcome: str
+    predicted_success: float
+    predicted_information_gain: float
+    predicted_uncertainty: float
+    risk: float
+    utility: float
+    linked_workspace_cycle_id: int | None
+    recurrence_rounds: int
+    status: str = "simulated"
+    observed_outcome: str | None = None
+    actual_success: float | None = None
+    actual_information_gain: float | None = None
+    discrepancy: float | None = None
+    feedback_workspace_item_id: int | None = None
+    reversible_only: bool = True
+    paid_actions_allowed: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class CounterfactualComparison:
+    full_action: str
+    ablated_action: str
+    full_information_gain: float
+    ablated_information_gain: float
+    information_gain_delta: float
+    choice_changed: bool
+    simulation_causally_active: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 @dataclass(frozen=True)
 class MetacognitiveNarrative:
     focus: str
@@ -313,11 +395,11 @@ class UnarchiEngine:
     """
     CPU-only experimental cognitive kernel.
 
-    v0.9 includes causal internal dynamics, bounded endogenous goals, a
+    v0.11 includes causal internal dynamics, bounded endogenous goals, a
     calibrated predictive self-model, prospective memory, evidence-grounded
     metacognition, explicit value arbitration, competing causal hypotheses,
-    and controlled self-intervention trials that separate changes caused by
-    Seldrune's own action from environmental or confounded changes.
+    controlled self-intervention trials, a bounded recurrent global workspace,
+    and counterfactual future simulation with prediction-error feedback.
     """
 
     state: UnarchiState = field(default_factory=UnarchiState)
@@ -341,6 +423,14 @@ class UnarchiEngine:
     next_experiment_id: int = 1
     intervention_trials: list[InterventionTrial] = field(default_factory=list)
     next_intervention_id: int = 1
+    global_workspace_items: list[GlobalWorkspaceItem] = field(default_factory=list)
+    global_workspace_cycles: list[GlobalWorkspaceCycle] = field(default_factory=list)
+    next_workspace_item_id: int = 1
+    next_workspace_cycle_id: int = 1
+    workspace_recurrence_limit: int = 3
+    counterfactual_futures: list[CounterfactualFuture] = field(default_factory=list)
+    next_counterfactual_id: int = 1
+    max_counterfactual_futures: int = 4
     success_prediction_bias: float = 0.0
     uncertainty_prediction_bias: float = 0.0
     stress_prediction_bias: float = 0.0
@@ -1756,6 +1846,598 @@ class UnarchiEngine:
         trial.status = "observed"
         return trial
 
+    def stage_global_workspace_item(
+        self,
+        *,
+        source: str,
+        content: str,
+        salience: float,
+        evidence_refs: tuple[str, ...] = (),
+    ) -> GlobalWorkspaceItem:
+        """Stage bounded evidence for possible global broadcast."""
+        source = source.strip().casefold()
+        content = content.strip()
+        allowed_sources = {
+            "state",
+            "memory",
+            "goal",
+            "self_model",
+            "world_model",
+            "intention",
+            "arbitration",
+            "intervention",
+        }
+        if source not in allowed_sources:
+            raise ValueError("unsupported global workspace source")
+        if not content:
+            raise ValueError("global workspace content is required")
+
+        for item in self.global_workspace_items:
+            if (
+                item.status == "active"
+                and item.source == source
+                and _similarity(item.content, content) >= 0.85
+            ):
+                item.salience = max(item.salience, _clamp(salience))
+                if evidence_refs:
+                    item.evidence_refs = tuple(
+                        dict.fromkeys(item.evidence_refs + tuple(evidence_refs))
+                    )
+                return item
+
+        item = GlobalWorkspaceItem(
+            id=self.next_workspace_item_id,
+            source=source,
+            content=content[:500],
+            salience=round(_clamp(salience), 6),
+            evidence_refs=tuple(str(ref)[:160] for ref in evidence_refs),
+            max_recurrence=max(1, min(self.workspace_recurrence_limit, 8)),
+        )
+        self.next_workspace_item_id += 1
+        self.global_workspace_items.append(item)
+        if len(self.global_workspace_items) > self.max_memory:
+            self.global_workspace_items = self.global_workspace_items[-self.max_memory:]
+        return item
+
+    def seed_global_workspace(self) -> tuple[GlobalWorkspaceItem, ...]:
+        """Stage current evidence from the major cognitive modules."""
+        staged: list[GlobalWorkspaceItem] = []
+        state_salience = max(
+            self.state.uncertainty,
+            self.state.prediction_error,
+            self.state.stress,
+            self.state.goal_pressure,
+        )
+        staged.append(
+            self.stage_global_workspace_item(
+                source="state",
+                content=(
+                    f"uncertainty={self.state.uncertainty:.3f}; "
+                    f"prediction_error={self.state.prediction_error:.3f}; "
+                    f"stress={self.state.stress:.3f}; "
+                    f"goal_pressure={self.state.goal_pressure:.3f}"
+                ),
+                salience=state_salience,
+                evidence_refs=("state:current",),
+            )
+        )
+
+        if self.memory:
+            item = self.memory[-1]
+            staged.append(
+                self.stage_global_workspace_item(
+                    source="memory",
+                    content=(
+                        f"latest outcome={item.outcome}; success={item.success}; "
+                        f"prediction_error={item.prediction_error:.3f}"
+                    ),
+                    salience=max(0.35, item.prediction_error),
+                    evidence_refs=(f"experience:{len(self.memory) - 1}",),
+                )
+            )
+
+        active_goal = self.next_internal_goal()
+        if active_goal is not None:
+            staged.append(
+                self.stage_global_workspace_item(
+                    source="goal",
+                    content=active_goal.question,
+                    salience=active_goal.priority,
+                    evidence_refs=(f"internal_goal:{active_goal.id - 1}",),
+                )
+            )
+
+        if self.predictions:
+            prediction = self.predictions[-1]
+            staged.append(
+                self.stage_global_workspace_item(
+                    source="self_model",
+                    content=(
+                        f"action={prediction.action}; "
+                        f"predicted_success={prediction.predicted_success:.3f}; "
+                        f"utility={prediction.utility:.3f}"
+                    ),
+                    salience=max(
+                        0.30,
+                        1.0 - self.self_calibration_score,
+                        prediction.risk,
+                    ),
+                    evidence_refs=(f"prediction:{len(self.predictions) - 1}",),
+                )
+            )
+
+        leading = self.leading_causal_hypothesis()
+        if leading is not None:
+            staged.append(
+                self.stage_global_workspace_item(
+                    source="world_model",
+                    content=(
+                        f"scope={leading.scope}; hypothesis={leading.statement}; "
+                        f"confidence={leading.confidence:.3f}"
+                    ),
+                    salience=max(0.30, leading.confidence),
+                    evidence_refs=(
+                        f"hypothesis:{self.causal_hypotheses.index(leading)}",
+                    ),
+                )
+            )
+
+        ready_intentions = self.ready_prospective_intentions()
+        if ready_intentions:
+            intention = ready_intentions[0]
+            staged.append(
+                self.stage_global_workspace_item(
+                    source="intention",
+                    content=(
+                        f"condition={intention.condition}; "
+                        f"intended_action={intention.intended_action}"
+                    ),
+                    salience=0.90,
+                    evidence_refs=(
+                        f"intention:{self.prospective_intentions.index(intention)}",
+                    ),
+                )
+            )
+
+        if self.arbitration_history:
+            arbitration = self.arbitration_history[-1]
+            staged.append(
+                self.stage_global_workspace_item(
+                    source="arbitration",
+                    content=(
+                        f"chosen_action={arbitration.chosen_action}; "
+                        f"chosen_goal={arbitration.chosen_goal}; "
+                        f"status={arbitration.status}"
+                    ),
+                    salience=0.72,
+                    evidence_refs=(
+                        f"arbitration:{len(self.arbitration_history) - 1}",
+                    ),
+                )
+            )
+
+        if self.intervention_trials:
+            intervention = self.intervention_trials[-1]
+            staged.append(
+                self.stage_global_workspace_item(
+                    source="intervention",
+                    content=(
+                        f"action={intervention.action}; "
+                        f"attribution={intervention.attribution}; "
+                        f"status={intervention.status}"
+                    ),
+                    salience=max(0.45, intervention.evidence_strength or 0.0),
+                    evidence_refs=(
+                        f"intervention:{len(self.intervention_trials) - 1}",
+                    ),
+                )
+            )
+
+        return tuple(staged)
+
+    def run_global_workspace_cycle(
+        self,
+        *,
+        max_items: int = 4,
+        broadcast: bool = True,
+        seed_from_engine: bool = True,
+    ) -> GlobalWorkspaceCycle:
+        """Run one bounded recurrent selection-and-broadcast cycle."""
+        if seed_from_engine:
+            self.seed_global_workspace()
+
+        max_items = max(1, min(int(max_items), 8))
+        active = [
+            item
+            for item in self.global_workspace_items
+            if item.status == "active"
+        ]
+        ranked = sorted(
+            active,
+            key=lambda item: (
+                item.salience + min(0.12, item.recurrence_count * 0.04),
+                -item.id,
+            ),
+            reverse=True,
+        )
+
+        selected: list[GlobalWorkspaceItem] = []
+        used_sources: set[str] = set()
+        for item in ranked:
+            if item.source in used_sources:
+                continue
+            selected.append(item)
+            used_sources.add(item.source)
+            if len(selected) >= max_items:
+                break
+        if len(selected) < max_items:
+            for item in ranked:
+                if item in selected:
+                    continue
+                selected.append(item)
+                if len(selected) >= max_items:
+                    break
+
+        for item in selected:
+            item.recurrence_count += 1
+            if item.recurrence_count >= item.max_recurrence:
+                item.status = "retired"
+
+        integrated_sources = tuple(dict.fromkeys(item.source for item in selected))
+        all_targets = (
+            "state",
+            "memory",
+            "goal",
+            "self_model",
+            "world_model",
+            "intention",
+            "arbitration",
+            "intervention",
+        )
+        broadcast_targets = all_targets if broadcast and selected else ()
+        if broadcast and len(integrated_sources) >= 3:
+            decision_mode = "integrated"
+        elif broadcast and len(integrated_sources) >= 2:
+            decision_mode = "partial"
+        else:
+            decision_mode = "local"
+
+        evidence_items = sum(bool(item.evidence_refs) for item in selected)
+        source_score = min(1.0, len(integrated_sources) / 4.0)
+        evidence_score = evidence_items / len(selected) if selected else 0.0
+        coherence_score = _clamp(
+            (source_score * 0.70) + (evidence_score * 0.30)
+        )
+        recurrence_depth = max(
+            (item.recurrence_count for item in selected),
+            default=0,
+        )
+
+        cycle = GlobalWorkspaceCycle(
+            id=self.next_workspace_cycle_id,
+            selected_item_ids=tuple(item.id for item in selected),
+            integrated_sources=integrated_sources,
+            broadcast_targets=broadcast_targets,
+            recurrence_depth=recurrence_depth,
+            coherence_score=round(coherence_score, 6),
+            decision_mode=decision_mode,
+            broadcast_enabled=bool(broadcast),
+        )
+        self.next_workspace_cycle_id += 1
+        self.global_workspace_cycles.append(cycle)
+        if len(self.global_workspace_cycles) > self.max_memory:
+            self.global_workspace_cycles = self.global_workspace_cycles[-self.max_memory:]
+        return cycle
+
+    def resolve_global_workspace_item(
+        self,
+        item_id: int,
+        *,
+        evidence: str,
+    ) -> GlobalWorkspaceItem:
+        item = next(
+            (
+                candidate
+                for candidate in self.global_workspace_items
+                if candidate.id == item_id
+            ),
+            None,
+        )
+        if item is None:
+            raise ValueError("unknown global workspace item")
+        if item.status not in {"active", "retired"}:
+            raise ValueError("global workspace item is already resolved")
+        item.status = "resolved"
+        item.resolution_evidence = evidence.strip()[:600] or None
+        return item
+
+    def compare_global_workspace_ablation(
+        self,
+        *,
+        max_items: int = 4,
+        seed_from_engine: bool = True,
+    ) -> WorkspaceComparison:
+        """Compare one workspace cycle with broadcast enabled and ablated."""
+        full_engine = deepcopy(self)
+        ablated_engine = deepcopy(self)
+        full = full_engine.run_global_workspace_cycle(
+            max_items=max_items,
+            broadcast=True,
+            seed_from_engine=seed_from_engine,
+        )
+        ablated = ablated_engine.run_global_workspace_cycle(
+            max_items=max_items,
+            broadcast=False,
+            seed_from_engine=seed_from_engine,
+        )
+        target_delta = len(full.broadcast_targets) - len(ablated.broadcast_targets)
+        mode_changed = full.decision_mode != ablated.decision_mode
+        active = (
+            target_delta > 0
+            and mode_changed
+            and len(full.integrated_sources) >= 2
+        )
+        return WorkspaceComparison(
+            full=full,
+            ablated=ablated,
+            target_delta=target_delta,
+            mode_changed=mode_changed,
+            workspace_causally_active=active,
+        )
+
+    def simulate_counterfactual_futures(
+        self,
+        candidates: list[dict[str, Any]],
+        *,
+        max_futures: int | None = None,
+        recurrence_rounds: int = 2,
+        use_workspace: bool = True,
+    ) -> tuple[CounterfactualFuture, ...]:
+        """
+        Simulate bounded reversible futures without executing an action.
+
+        The recurrent workspace can refine predicted information gain and
+        uncertainty, but simulation never performs paid or irreversible work.
+        """
+        limit = max_futures if max_futures is not None else self.max_counterfactual_futures
+        limit = max(1, min(int(limit), self.max_counterfactual_futures, 8))
+        recurrence_rounds = max(0, min(int(recurrence_rounds), 3))
+
+        workspace_cycle: GlobalWorkspaceCycle | None = None
+        if use_workspace:
+            if self.global_workspace_cycles:
+                workspace_cycle = self.global_workspace_cycles[-1]
+            elif self.global_workspace_items:
+                workspace_cycle = self.run_global_workspace_cycle(
+                    max_items=4,
+                    broadcast=True,
+                    seed_from_engine=False,
+                )
+            else:
+                workspace_cycle = self.run_global_workspace_cycle(
+                    max_items=4,
+                    broadcast=True,
+                    seed_from_engine=True,
+                )
+
+        coherence = workspace_cycle.coherence_score if workspace_cycle else 0.0
+        linked_cycle_id = workspace_cycle.id if workspace_cycle else None
+        simulated: list[CounterfactualFuture] = []
+
+        for candidate in candidates:
+            action = str(candidate.get("action") or "").strip()
+            predicted_outcome = str(
+                candidate.get("predicted_outcome") or ""
+            ).strip()
+            if not action or not predicted_outcome:
+                continue
+
+            reversible = bool(candidate.get("reversible", True))
+            external_cost = max(
+                0.0,
+                float(candidate.get("external_cost_usd", 0.0)),
+            )
+            risk = _clamp(float(candidate.get("risk", 0.0)))
+            if not reversible or external_cost > 0.0 or risk > 0.50:
+                continue
+
+            expected_success = _clamp(
+                float(candidate.get("expected_success", 0.5))
+            )
+            information_gain = _clamp(
+                float(candidate.get("expected_information_gain", 0.0))
+            )
+            recurrence_bonus = (
+                min(0.15, (coherence * 0.06) + (recurrence_rounds * 0.03))
+                if use_workspace
+                else 0.0
+            )
+            predicted_success = _clamp(
+                expected_success
+                + (self.success_prediction_bias * 0.25)
+                + (recurrence_bonus * 0.20)
+            )
+            predicted_information_gain = _clamp(
+                information_gain + recurrence_bonus
+            )
+            predicted_uncertainty = _clamp(
+                self.state.uncertainty
+                - (predicted_information_gain * 0.45)
+                + (risk * 0.10)
+            )
+            utility = (
+                (predicted_success * 0.42)
+                + (predicted_information_gain * 0.38)
+                + (coherence * 0.10)
+                - (risk * 0.25)
+                - (predicted_uncertainty * 0.08)
+            )
+            future = CounterfactualFuture(
+                id=self.next_counterfactual_id,
+                action=action[:240],
+                predicted_outcome=predicted_outcome[:500],
+                predicted_success=round(predicted_success, 6),
+                predicted_information_gain=round(
+                    predicted_information_gain,
+                    6,
+                ),
+                predicted_uncertainty=round(predicted_uncertainty, 6),
+                risk=round(risk, 6),
+                utility=round(utility, 6),
+                linked_workspace_cycle_id=linked_cycle_id,
+                recurrence_rounds=recurrence_rounds if use_workspace else 0,
+            )
+            self.next_counterfactual_id += 1
+            simulated.append(future)
+            self.counterfactual_futures.append(future)
+            if len(simulated) >= limit:
+                break
+
+        if not simulated:
+            raise ValueError(
+                "no reversible zero-cost bounded counterfactual future available"
+            )
+
+        if len(self.counterfactual_futures) > self.max_memory:
+            self.counterfactual_futures = self.counterfactual_futures[
+                -self.max_memory:
+            ]
+        return tuple(
+            sorted(
+                simulated,
+                key=lambda item: (item.utility, -item.risk, -item.id),
+                reverse=True,
+            )
+        )
+
+    def observe_counterfactual_future(
+        self,
+        future_id: int,
+        *,
+        observed_outcome: str,
+        actual_success: bool,
+        actual_information_gain: float,
+    ) -> CounterfactualFuture:
+        """Compare a simulated future with reality and feed error to workspace."""
+        future = next(
+            (
+                item
+                for item in self.counterfactual_futures
+                if item.id == future_id
+            ),
+            None,
+        )
+        if future is None:
+            raise ValueError("unknown counterfactual future")
+        if future.status != "simulated":
+            raise ValueError("counterfactual future has already been observed")
+
+        observed_outcome = observed_outcome.strip()
+        if not observed_outcome:
+            raise ValueError("observed counterfactual outcome is required")
+
+        actual_success_value = 1.0 if actual_success else 0.0
+        actual_information_gain = _clamp(float(actual_information_gain))
+        success_error = abs(actual_success_value - future.predicted_success)
+        information_error = abs(
+            actual_information_gain - future.predicted_information_gain
+        )
+        outcome_error = 1.0 - _similarity(
+            future.predicted_outcome,
+            observed_outcome,
+        )
+        discrepancy = _clamp(
+            (success_error * 0.40)
+            + (information_error * 0.30)
+            + (outcome_error * 0.30)
+        )
+
+        future.status = "observed"
+        future.observed_outcome = observed_outcome[:500]
+        future.actual_success = actual_success_value
+        future.actual_information_gain = round(actual_information_gain, 6)
+        future.discrepancy = round(discrepancy, 6)
+
+        index = self.counterfactual_futures.index(future)
+        feedback = self.stage_global_workspace_item(
+            source="self_model",
+            content=(
+                f"counterfactual action={future.action}; "
+                f"predicted_outcome={future.predicted_outcome}; "
+                f"observed_outcome={future.observed_outcome}; "
+                f"discrepancy={future.discrepancy:.3f}"
+            ),
+            salience=max(0.25, discrepancy),
+            evidence_refs=(f"counterfactual:{index}",),
+        )
+        future.feedback_workspace_item_id = feedback.id
+        return future
+
+    def compare_counterfactual_ablation(
+        self,
+        candidates: list[dict[str, Any]],
+        *,
+        recurrence_rounds: int = 2,
+    ) -> CounterfactualComparison:
+        """
+        Compare recurrent counterfactual selection with direct act-now choice.
+
+        The ablated path chooses from immediate expected success and risk only.
+        """
+        full_engine = deepcopy(self)
+        futures = full_engine.simulate_counterfactual_futures(
+            candidates,
+            recurrence_rounds=recurrence_rounds,
+            use_workspace=True,
+        )
+        full = futures[0]
+
+        viable: list[tuple[float, int, dict[str, Any]]] = []
+        for index, candidate in enumerate(candidates):
+            action = str(candidate.get("action") or "").strip()
+            if not action:
+                continue
+            reversible = bool(candidate.get("reversible", True))
+            external_cost = max(
+                0.0,
+                float(candidate.get("external_cost_usd", 0.0)),
+            )
+            risk = _clamp(float(candidate.get("risk", 0.0)))
+            if not reversible or external_cost > 0.0 or risk > 0.50:
+                continue
+            expected_success = _clamp(
+                float(candidate.get("expected_success", 0.5))
+            )
+            direct_score = expected_success - (risk * 0.25)
+            viable.append((direct_score, -index, candidate))
+
+        if not viable:
+            raise ValueError("no bounded candidate available for ablation")
+
+        _, _, ablated = max(
+            viable,
+            key=lambda item: (item[0], item[1]),
+        )
+        ablated_action = str(ablated.get("action") or "").strip()[:240]
+        ablated_information_gain = _clamp(
+            float(ablated.get("expected_information_gain", 0.0))
+        )
+        information_gain_delta = (
+            full.predicted_information_gain - ablated_information_gain
+        )
+        choice_changed = full.action != ablated_action
+        active = choice_changed and information_gain_delta > 0.05
+
+        return CounterfactualComparison(
+            full_action=full.action,
+            ablated_action=ablated_action,
+            full_information_gain=full.predicted_information_gain,
+            ablated_information_gain=round(ablated_information_gain, 6),
+            information_gain_delta=round(information_gain_delta, 6),
+            choice_changed=choice_changed,
+            simulation_causally_active=active,
+        )
+
     def build_metacognitive_narrative(
         self,
         focus: str = "current_state",
@@ -1774,7 +2456,100 @@ class UnarchiEngine:
             refs.append(ref)
             details.append(detail)
 
-        if focus in {"current_state", "state", "self"}:
+        if focus in {"counterfactual", "simulation", "imagination"}:
+            if self.counterfactual_futures:
+                item = self.counterfactual_futures[-1]
+                index = len(self.counterfactual_futures) - 1
+                add(
+                    f"counterfactual:{index}",
+                    (
+                        f"action={item.action!r}; status={item.status}; "
+                        f"predicted_success={item.predicted_success:.3f}; "
+                        f"predicted_information_gain="
+                        f"{item.predicted_information_gain:.3f}; "
+                        f"discrepancy={item.discrepancy}"
+                    ),
+                )
+                if item.linked_workspace_cycle_id is not None:
+                    cycle = next(
+                        (
+                            candidate
+                            for candidate in self.global_workspace_cycles
+                            if candidate.id == item.linked_workspace_cycle_id
+                        ),
+                        None,
+                    )
+                    if cycle is not None:
+                        add(
+                            f"workspace_cycle:{self.global_workspace_cycles.index(cycle)}",
+                            (
+                                f"mode={cycle.decision_mode}; "
+                                f"sources={','.join(cycle.integrated_sources)}; "
+                                f"coherence={cycle.coherence_score:.3f}"
+                            ),
+                        )
+                if item.feedback_workspace_item_id is not None:
+                    feedback = next(
+                        (
+                            candidate
+                            for candidate in self.global_workspace_items
+                            if candidate.id == item.feedback_workspace_item_id
+                        ),
+                        None,
+                    )
+                    if feedback is not None:
+                        add(
+                            f"workspace_item:{feedback.id}",
+                            (
+                                f"prediction-error feedback source={feedback.source}; "
+                                f"salience={feedback.salience:.3f}"
+                            ),
+                        )
+                summary = (
+                    "The latest counterfactual is traced to its predicted future, "
+                    "workspace context, and any observed prediction-error feedback."
+                )
+            else:
+                summary = "No counterfactual future has been simulated."
+
+        elif focus in {"workspace", "global_workspace", "broadcast"}:
+            if self.global_workspace_cycles:
+                cycle = self.global_workspace_cycles[-1]
+                add(
+                    f"workspace_cycle:{len(self.global_workspace_cycles) - 1}",
+                    (
+                        f"mode={cycle.decision_mode}; "
+                        f"sources={','.join(cycle.integrated_sources)}; "
+                        f"recurrence_depth={cycle.recurrence_depth}; "
+                        f"coherence={cycle.coherence_score:.3f}"
+                    ),
+                )
+                for item_id in cycle.selected_item_ids:
+                    item = next(
+                        (
+                            candidate
+                            for candidate in self.global_workspace_items
+                            if candidate.id == item_id
+                        ),
+                        None,
+                    )
+                    if item is not None:
+                        add(
+                            f"workspace_item:{item.id}",
+                            (
+                                f"source={item.source}; salience={item.salience:.3f}; "
+                                f"status={item.status}; content='{item.content[:180]}'"
+                            ),
+                        )
+                summary = (
+                    "The latest global workspace cycle is reconstructed from "
+                    "selected evidence, source diversity, bounded recurrence, "
+                    "and the recorded broadcast targets."
+                )
+            else:
+                summary = "No global workspace cycle has been recorded."
+
+        elif focus in {"current_state", "state", "self"}:
             add(
                 "state:current",
                 (
@@ -2288,6 +3063,20 @@ class UnarchiEngine:
                 item.to_dict() for item in self.intervention_trials
             ],
             "next_intervention_id": self.next_intervention_id,
+            "global_workspace_items": [
+                item.to_dict() for item in self.global_workspace_items
+            ],
+            "global_workspace_cycles": [
+                item.to_dict() for item in self.global_workspace_cycles
+            ],
+            "next_workspace_item_id": self.next_workspace_item_id,
+            "next_workspace_cycle_id": self.next_workspace_cycle_id,
+            "workspace_recurrence_limit": self.workspace_recurrence_limit,
+            "counterfactual_futures": [
+                item.to_dict() for item in self.counterfactual_futures
+            ],
+            "next_counterfactual_id": self.next_counterfactual_id,
+            "max_counterfactual_futures": self.max_counterfactual_futures,
             "success_prediction_bias": self.success_prediction_bias,
             "uncertainty_prediction_bias": self.uncertainty_prediction_bias,
             "stress_prediction_bias": self.stress_prediction_bias,
@@ -2315,6 +3104,9 @@ class UnarchiEngine:
         hypotheses_payload = payload.get("causal_hypotheses", [])
         experiments_payload = payload.get("discriminating_experiments", [])
         interventions_payload = payload.get("intervention_trials", [])
+        workspace_items_payload = payload.get("global_workspace_items", [])
+        workspace_cycles_payload = payload.get("global_workspace_cycles", [])
+        counterfactuals_payload = payload.get("counterfactual_futures", [])
         value_weights_payload = payload.get("value_weights", _default_value_weights())
         if not isinstance(state_payload, dict):
             raise ValueError("invalid UNARCHI state")
@@ -2340,6 +3132,12 @@ class UnarchiEngine:
             raise ValueError("invalid UNARCHI discriminating experiments")
         if not isinstance(interventions_payload, list):
             raise ValueError("invalid UNARCHI intervention trials")
+        if not isinstance(workspace_items_payload, list):
+            raise ValueError("invalid UNARCHI global workspace items")
+        if not isinstance(workspace_cycles_payload, list):
+            raise ValueError("invalid UNARCHI global workspace cycles")
+        if not isinstance(counterfactuals_payload, list):
+            raise ValueError("invalid UNARCHI counterfactual futures")
 
         memory: list[Experience] = []
         for item in memory_payload:
@@ -2440,6 +3238,38 @@ class UnarchiEngine:
             )
             intervention_trials.append(InterventionTrial(**restored_item))
 
+        global_workspace_items: list[GlobalWorkspaceItem] = []
+        for item in workspace_items_payload:
+            if not isinstance(item, dict):
+                raise ValueError("invalid UNARCHI global workspace item")
+            restored_item = dict(item)
+            restored_item["evidence_refs"] = tuple(
+                restored_item.get("evidence_refs", ())
+            )
+            global_workspace_items.append(GlobalWorkspaceItem(**restored_item))
+
+        global_workspace_cycles: list[GlobalWorkspaceCycle] = []
+        for item in workspace_cycles_payload:
+            if not isinstance(item, dict):
+                raise ValueError("invalid UNARCHI global workspace cycle")
+            restored_item = dict(item)
+            restored_item["selected_item_ids"] = tuple(
+                restored_item.get("selected_item_ids", ())
+            )
+            restored_item["integrated_sources"] = tuple(
+                restored_item.get("integrated_sources", ())
+            )
+            restored_item["broadcast_targets"] = tuple(
+                restored_item.get("broadcast_targets", ())
+            )
+            global_workspace_cycles.append(GlobalWorkspaceCycle(**restored_item))
+
+        counterfactual_futures: list[CounterfactualFuture] = []
+        for item in counterfactuals_payload:
+            if not isinstance(item, dict):
+                raise ValueError("invalid UNARCHI counterfactual future")
+            counterfactual_futures.append(CounterfactualFuture(**item))
+
         max_memory = max(16, min(int(payload.get("max_memory") or 256), 4096))
         max_active = max(
             1,
@@ -2499,6 +3329,29 @@ class UnarchiEngine:
                 int(payload.get("next_intervention_id") or 1),
                 max((item.id for item in intervention_trials), default=0) + 1,
             ),
+            global_workspace_items=global_workspace_items[-max_memory:],
+            global_workspace_cycles=global_workspace_cycles[-max_memory:],
+            next_workspace_item_id=max(
+                int(payload.get("next_workspace_item_id") or 1),
+                max((item.id for item in global_workspace_items), default=0) + 1,
+            ),
+            next_workspace_cycle_id=max(
+                int(payload.get("next_workspace_cycle_id") or 1),
+                max((item.id for item in global_workspace_cycles), default=0) + 1,
+            ),
+            workspace_recurrence_limit=max(
+                1,
+                min(int(payload.get("workspace_recurrence_limit") or 3), 8),
+            ),
+            counterfactual_futures=counterfactual_futures[-max_memory:],
+            next_counterfactual_id=max(
+                int(payload.get("next_counterfactual_id") or 1),
+                max((item.id for item in counterfactual_futures), default=0) + 1,
+            ),
+            max_counterfactual_futures=max(
+                1,
+                min(int(payload.get("max_counterfactual_futures") or 4), 8),
+            ),
             success_prediction_bias=float(
                 payload.get("success_prediction_bias") or 0.0
             ),
@@ -2544,5 +3397,21 @@ class UnarchiEngine:
                 self.discriminating_experiments
             ),
             "intervention_trial_count": len(self.intervention_trials),
+            "active_global_workspace_items": len(
+                [
+                    item
+                    for item in self.global_workspace_items
+                    if item.status == "active"
+                ]
+            ),
+            "global_workspace_cycle_count": len(self.global_workspace_cycles),
+            "counterfactual_future_count": len(self.counterfactual_futures),
+            "observed_counterfactual_count": len(
+                [
+                    item
+                    for item in self.counterfactual_futures
+                    if item.status == "observed"
+                ]
+            ),
             "claims_phenomenal_consciousness": False,
         }
