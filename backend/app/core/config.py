@@ -55,6 +55,8 @@ class Settings(BaseSettings):
     ai_pdf_max_output_tokens: int = 2200
     pdf_brain_enabled: bool = True
     pdf_brain_min_confidence: float = 0.78
+    pdf_local_ocr_enabled: bool = True
+    pdf_external_fallback_enabled: bool = False
     ai_image_job_max_usd: float = 0.08
     ai_video_job_max_usd: float = 0.40
     ai_video_default_seconds: int = 4
