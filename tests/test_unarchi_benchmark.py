@@ -4,8 +4,8 @@ from backend.app.services.unarchi_benchmark import run_unarchi_ablation_benchmar
 def test_unarchi_ablation_benchmark_passes_all_scenarios() -> None:
     result = run_unarchi_ablation_benchmark()
 
-    assert result["scenario_count"] == 5
-    assert result["passed_scenarios"] == 5
+    assert result["scenario_count"] == 6
+    assert result["passed_scenarios"] == 6
     assert result["pass_rate"] == 1.0
     assert result["claims_phenomenal_consciousness"] is False
 
@@ -47,3 +47,16 @@ def test_unarchi_benchmark_covers_predictive_self_calibration() -> None:
         < calibration["first_success_error"]
     )
     assert 0.0 <= calibration["self_calibration_score"] <= 1.0
+
+
+def test_unarchi_benchmark_covers_temporal_prospective_continuity() -> None:
+    result = run_unarchi_ablation_benchmark()
+    scenarios = {item["name"]: item for item in result["scenarios"]}
+
+    temporal = scenarios["prospective_temporal_continuity"]
+
+    assert temporal["passed"] is True
+    assert temporal["recalled"] is True
+    assert temporal["linked_past_prediction"] is True
+    assert temporal["no_auto_execution"] is True
+    assert temporal["alignment_recorded"] is True
