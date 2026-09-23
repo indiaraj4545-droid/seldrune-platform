@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 
-UNARCHI_VERSION = "unarchi-v0.22"
+UNARCHI_VERSION = "unarchi-v0.23"
 _STOPWORDS = {
     "a",
     "an",
@@ -662,6 +662,46 @@ class ContextValidityDecisionGate:
 
 
 @dataclass(frozen=True)
+class ContextValidityGateOutcome:
+    id: int
+    gate_id: int
+    validity_map_id: int
+    environment_signature: str
+    actual_success_by_action: tuple[tuple[str, bool], ...]
+    gated_error: float
+    causal_enabled_error: float
+    causal_ablated_error: float
+    alternative_error: float
+    gated_advantage_vs_alternative: float
+    evidence_refs: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class ContextValidityRegionCalibration:
+    id: int
+    validity_map_id: int
+    hypothesis_id: int
+    environment_signature: str
+    source_classification_status: str
+    outcome_ids: tuple[int, ...]
+    sample_count: int
+    mean_gated_error: float
+    mean_causal_enabled_error: float
+    mean_causal_ablated_error: float
+    mean_alternative_error: float
+    gated_advantage_vs_alternative: float
+    status: str
+    confidence_delta: float
+    evidence_refs: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class LatentContextDiscovery:
     id: int
     parent_schema_id: int
@@ -730,7 +770,7 @@ class UnarchiEngine:
     """
     CPU-only experimental cognitive kernel.
 
-    v0.22 includes causal internal dynamics, bounded endogenous goals, a
+    v0.23 includes causal internal dynamics, bounded endogenous goals, a
     calibrated predictive self-model, prospective memory, evidence-grounded
     metacognition, explicit value arbitration, competing causal hypotheses,
     controlled self-intervention trials, a bounded recurrent global workspace,
@@ -740,8 +780,9 @@ class UnarchiEngine:
     discovery, intervention-supported context causality evidence, replicated
     reversible context-causality stability checks, bounded causal-invariance
     tests across distinct controlled environments, active low-risk boundary
-    probe planning, compact boundary-aware causal validity maps, and
-    validity-gated causal-context decision use.
+    probe planning, compact boundary-aware causal validity maps,
+    validity-gated causal-context decision use, and evidence-backed gate
+    outcome calibration that can revoke nearby support.
     """
 
     state: UnarchiState = field(default_factory=UnarchiState)
@@ -822,6 +863,14 @@ class UnarchiEngine:
         ContextValidityDecisionGate
     ] = field(default_factory=list)
     next_context_validity_decision_gate_id: int = 1
+    context_validity_gate_outcomes: list[
+        ContextValidityGateOutcome
+    ] = field(default_factory=list)
+    next_context_validity_gate_outcome_id: int = 1
+    context_validity_region_calibrations: list[
+        ContextValidityRegionCalibration
+    ] = field(default_factory=list)
+    next_context_validity_region_calibration_id: int = 1
     success_prediction_bias: float = 0.0
     uncertainty_prediction_bias: float = 0.0
     stress_prediction_bias: float = 0.0
@@ -4957,6 +5006,33 @@ class UnarchiEngine:
         elif status == "unknown":
             base_confidence = 0.0
 
+        calibration = next(
+            (
+                item
+                for item in reversed(self.context_validity_region_calibrations)
+                if item.validity_map_id == validity_map.id
+                and item.environment_signature == signature
+            ),
+            None,
+        )
+        if calibration is not None:
+            refs.append(
+                f"context_validity_region_calibration:{calibration.id}"
+            )
+            if status == "supported_nearby":
+                if calibration.status == "nearby_support_revoked":
+                    status = "unknown"
+                    base_confidence = 0.0
+                elif calibration.status == "nearby_support_calibrated":
+                    base_confidence = _clamp(
+                        base_confidence
+                        + max(0.0, calibration.confidence_delta)
+                    )
+            elif status == "tested_valid":
+                base_confidence = _clamp(
+                    base_confidence + calibration.confidence_delta
+                )
+
         return ContextValidityClassification(
             map_id=validity_map.id,
             hypothesis_id=validity_map.hypothesis_id,
@@ -5090,6 +5166,281 @@ class UnarchiEngine:
             ),
             evidence_refs=(
                 f"context_validity_decision_gate:{record.id}",
+                *record.evidence_refs[-4:],
+            ),
+        )
+        return record
+
+    def record_context_validity_gate_outcome(
+        self,
+        gate_id: int,
+        *,
+        actual_success_by_action: dict[str, bool],
+        evidence_refs: tuple[str, ...] | list[str],
+    ) -> ContextValidityGateOutcome:
+        """
+        Score a validity-gated decision against later observed action outcomes.
+
+        Counterfactual policy calibration is accepted only when the caller
+        supplies observed outcomes for every distinct action chosen by the
+        gated, causal-enabled, and causal-ablated paths.
+        """
+        gate = next(
+            (
+                item
+                for item in self.context_validity_decision_gates
+                if item.id == gate_id
+            ),
+            None,
+        )
+        if gate is None:
+            raise ValueError("unknown context validity decision gate")
+        if any(
+            item.gate_id == gate_id
+            for item in self.context_validity_gate_outcomes
+        ):
+            raise ValueError("gate outcome has already been recorded")
+
+        provided_refs = tuple(
+            str(ref).strip()
+            for ref in evidence_refs
+            if str(ref).strip()
+        )
+        if not provided_refs:
+            raise ValueError("observed gate outcome requires evidence references")
+
+        required_actions = {
+            gate.gated_action,
+            gate.causal_enabled_action,
+            gate.causal_ablated_action,
+        }
+        missing = required_actions - set(actual_success_by_action)
+        if missing:
+            raise ValueError(
+                "observed outcomes are required for every policy-selected action"
+            )
+        if any(
+            not isinstance(actual_success_by_action[action], bool)
+            for action in required_actions
+        ):
+            raise ValueError("action outcomes must be boolean success values")
+
+        actuals = tuple(
+            sorted(
+                (
+                    action,
+                    actual_success_by_action[action],
+                )
+                for action in required_actions
+            )
+        )
+
+        def error(action: str, prediction: float) -> float:
+            actual = 1.0 if actual_success_by_action[action] else 0.0
+            return abs(actual - prediction)
+
+        gated_error = error(
+            gate.gated_action,
+            gate.gated_predicted_success,
+        )
+        enabled_error = error(
+            gate.causal_enabled_action,
+            gate.causal_enabled_predicted_success,
+        )
+        ablated_error = error(
+            gate.causal_ablated_action,
+            gate.causal_ablated_predicted_success,
+        )
+        alternative_error = (
+            ablated_error
+            if gate.causal_context_allowed
+            else enabled_error
+        )
+        advantage = alternative_error - gated_error
+
+        outcome = ContextValidityGateOutcome(
+            id=self.next_context_validity_gate_outcome_id,
+            gate_id=gate.id,
+            validity_map_id=gate.validity_map_id,
+            environment_signature=gate.environment_signature,
+            actual_success_by_action=actuals,
+            gated_error=round(gated_error, 6),
+            causal_enabled_error=round(enabled_error, 6),
+            causal_ablated_error=round(ablated_error, 6),
+            alternative_error=round(alternative_error, 6),
+            gated_advantage_vs_alternative=round(advantage, 6),
+            evidence_refs=tuple(dict.fromkeys(provided_refs)),
+        )
+        self.next_context_validity_gate_outcome_id += 1
+        self.context_validity_gate_outcomes.append(outcome)
+        if len(self.context_validity_gate_outcomes) > self.max_memory:
+            self.context_validity_gate_outcomes = (
+                self.context_validity_gate_outcomes[-self.max_memory:]
+            )
+        return outcome
+
+    def calibrate_context_validity_region(
+        self,
+        validity_map_id: int,
+        *,
+        environment_signature: str,
+        min_samples: int = 3,
+        advantage_margin: float = 0.05,
+    ) -> ContextValidityRegionCalibration:
+        """
+        Aggregate matched gate outcomes and calibrate one environment region.
+
+        Nearby support can be strengthened only after repeated favorable
+        calibration and is revoked after repeated underperformance. Exact
+        tested-valid evidence is never relabeled by this policy-calibration step.
+        """
+        validity_map = next(
+            (
+                item
+                for item in self.context_causal_validity_maps
+                if item.id == validity_map_id
+            ),
+            None,
+        )
+        if validity_map is None:
+            raise ValueError("unknown context causal validity map")
+
+        signature = environment_signature.strip()
+        if not signature:
+            raise ValueError("environment signature is required")
+
+        gate_map = {
+            item.id: item
+            for item in self.context_validity_decision_gates
+            if item.validity_map_id == validity_map_id
+            and item.environment_signature == signature
+        }
+        outcomes = [
+            item
+            for item in self.context_validity_gate_outcomes
+            if item.gate_id in gate_map
+        ]
+        min_samples = max(2, min(int(min_samples), 20))
+        if len(outcomes) < min_samples:
+            raise ValueError("insufficient matched gate outcomes for calibration")
+
+        margin = _clamp(advantage_margin, 0.01, 0.50)
+        mean_gated = sum(item.gated_error for item in outcomes) / len(outcomes)
+        mean_enabled = (
+            sum(item.causal_enabled_error for item in outcomes)
+            / len(outcomes)
+        )
+        mean_ablated = (
+            sum(item.causal_ablated_error for item in outcomes)
+            / len(outcomes)
+        )
+        mean_alternative = (
+            sum(item.alternative_error for item in outcomes)
+            / len(outcomes)
+        )
+        advantage = mean_alternative - mean_gated
+
+        source_statuses = {
+            gate_map[item.gate_id].classification_status
+            for item in outcomes
+        }
+        source_status = (
+            next(iter(source_statuses))
+            if len(source_statuses) == 1
+            else "mixed"
+        )
+
+        if source_status == "supported_nearby":
+            status = (
+                "nearby_support_calibrated"
+                if advantage >= margin
+                else "nearby_support_revoked"
+                if advantage <= -margin
+                else "nearby_support_uncertain"
+            )
+        elif source_status == "tested_valid":
+            status = (
+                "tested_valid_calibrated"
+                if advantage >= margin
+                else "tested_valid_policy_warning"
+                if advantage <= -margin
+                else "tested_valid_uncertain"
+            )
+        else:
+            status = (
+                "abstention_calibrated"
+                if advantage >= margin
+                else "abstention_warning"
+                if advantage <= -margin
+                else "abstention_uncertain"
+            )
+
+        confidence_delta = 0.0
+        if status in {
+            "nearby_support_calibrated",
+            "tested_valid_calibrated",
+            "abstention_calibrated",
+        }:
+            confidence_delta = min(0.20, max(0.0, advantage) * 0.50)
+        elif status in {
+            "nearby_support_revoked",
+            "tested_valid_policy_warning",
+            "abstention_warning",
+        }:
+            confidence_delta = -min(0.20, abs(advantage) * 0.50)
+
+        refs = tuple(
+            dict.fromkeys(
+                tuple(
+                    f"context_validity_gate_outcome:{item.id}"
+                    for item in outcomes
+                )
+                + tuple(
+                    ref
+                    for item in outcomes
+                    for ref in item.evidence_refs
+                )
+            )
+        )
+        record = ContextValidityRegionCalibration(
+            id=self.next_context_validity_region_calibration_id,
+            validity_map_id=validity_map_id,
+            hypothesis_id=validity_map.hypothesis_id,
+            environment_signature=signature,
+            source_classification_status=source_status,
+            outcome_ids=tuple(item.id for item in outcomes),
+            sample_count=len(outcomes),
+            mean_gated_error=round(mean_gated, 6),
+            mean_causal_enabled_error=round(mean_enabled, 6),
+            mean_causal_ablated_error=round(mean_ablated, 6),
+            mean_alternative_error=round(mean_alternative, 6),
+            gated_advantage_vs_alternative=round(advantage, 6),
+            status=status,
+            confidence_delta=round(confidence_delta, 6),
+            evidence_refs=refs,
+        )
+        self.next_context_validity_region_calibration_id += 1
+        self.context_validity_region_calibrations.append(record)
+        if len(self.context_validity_region_calibrations) > self.max_memory:
+            self.context_validity_region_calibrations = (
+                self.context_validity_region_calibrations[-self.max_memory:]
+            )
+
+        self.stage_global_workspace_item(
+            source="intervention",
+            content=(
+                f"context validity calibration={record.id}; "
+                f"environment={signature}; "
+                f"samples={record.sample_count}; "
+                f"advantage={record.gated_advantage_vs_alternative:.3f}; "
+                f"status={record.status}"
+            ),
+            salience=max(
+                0.50,
+                min(1.0, abs(record.gated_advantage_vs_alternative) + 0.45),
+            ),
+            evidence_refs=(
+                f"context_validity_region_calibration:{record.id}",
                 *record.evidence_refs[-4:],
             ),
         )
@@ -5824,6 +6175,36 @@ class UnarchiEngine:
             details.append(detail)
 
         if focus in {
+            "context_validity_calibration",
+            "validity_gate_calibration",
+            "gate_outcome_calibration",
+        }:
+            if self.context_validity_region_calibrations:
+                item = self.context_validity_region_calibrations[-1]
+                add(
+                    f"context_validity_region_calibration:{item.id}",
+                    (
+                        f"environment={item.environment_signature}; "
+                        f"source={item.source_classification_status}; "
+                        f"samples={item.sample_count}; "
+                        f"gated_error={item.mean_gated_error}; "
+                        f"alternative_error={item.mean_alternative_error}; "
+                        f"advantage={item.gated_advantage_vs_alternative}; "
+                        f"status={item.status}"
+                    ),
+                )
+                for ref in item.evidence_refs[-6:]:
+                    add(ref, "observed outcome evidence used for gate calibration")
+                summary = (
+                    "The latest validity-gate calibration compares matched "
+                    "observed outcomes without inventing unobserved "
+                    "counterfactuals and can revoke nearby support after "
+                    "repeated gated-policy underperformance."
+                )
+            else:
+                summary = "No validity-gate outcome calibration has been recorded."
+
+        elif focus in {
             "context_validity_gate",
             "validity_gated_decision",
             "decision_gate",
@@ -6901,6 +7282,20 @@ class UnarchiEngine:
             "next_context_validity_decision_gate_id": (
                 self.next_context_validity_decision_gate_id
             ),
+            "context_validity_gate_outcomes": [
+                item.to_dict()
+                for item in self.context_validity_gate_outcomes
+            ],
+            "next_context_validity_gate_outcome_id": (
+                self.next_context_validity_gate_outcome_id
+            ),
+            "context_validity_region_calibrations": [
+                item.to_dict()
+                for item in self.context_validity_region_calibrations
+            ],
+            "next_context_validity_region_calibration_id": (
+                self.next_context_validity_region_calibration_id
+            ),
             "success_prediction_bias": self.success_prediction_bias,
             "uncertainty_prediction_bias": self.uncertainty_prediction_bias,
             "stress_prediction_bias": self.stress_prediction_bias,
@@ -6974,6 +7369,14 @@ class UnarchiEngine:
             "context_validity_decision_gates",
             [],
         )
+        context_validity_gate_outcomes_payload = payload.get(
+            "context_validity_gate_outcomes",
+            [],
+        )
+        context_validity_region_calibrations_payload = payload.get(
+            "context_validity_region_calibrations",
+            [],
+        )
         value_weights_payload = payload.get("value_weights", _default_value_weights())
         if not isinstance(state_payload, dict):
             raise ValueError("invalid UNARCHI state")
@@ -7031,6 +7434,12 @@ class UnarchiEngine:
             raise ValueError("invalid UNARCHI context causal validity maps")
         if not isinstance(context_validity_decision_gates_payload, list):
             raise ValueError("invalid UNARCHI context validity decision gates")
+        if not isinstance(context_validity_gate_outcomes_payload, list):
+            raise ValueError("invalid UNARCHI context validity gate outcomes")
+        if not isinstance(context_validity_region_calibrations_payload, list):
+            raise ValueError(
+                "invalid UNARCHI context validity region calibrations"
+            )
 
         memory: list[Experience] = []
         for item in memory_payload:
@@ -7392,6 +7801,46 @@ class UnarchiEngine:
                 ContextValidityDecisionGate(**restored_item)
             )
 
+        context_validity_gate_outcomes: list[
+            ContextValidityGateOutcome
+        ] = []
+        for item in context_validity_gate_outcomes_payload:
+            if not isinstance(item, dict):
+                raise ValueError("invalid UNARCHI context validity gate outcome")
+            restored_item = dict(item)
+            restored_item["actual_success_by_action"] = tuple(
+                tuple(pair)
+                for pair in restored_item.get(
+                    "actual_success_by_action",
+                    (),
+                )
+            )
+            restored_item["evidence_refs"] = tuple(
+                restored_item.get("evidence_refs", ())
+            )
+            context_validity_gate_outcomes.append(
+                ContextValidityGateOutcome(**restored_item)
+            )
+
+        context_validity_region_calibrations: list[
+            ContextValidityRegionCalibration
+        ] = []
+        for item in context_validity_region_calibrations_payload:
+            if not isinstance(item, dict):
+                raise ValueError(
+                    "invalid UNARCHI context validity region calibration"
+                )
+            restored_item = dict(item)
+            restored_item["outcome_ids"] = tuple(
+                restored_item.get("outcome_ids", ())
+            )
+            restored_item["evidence_refs"] = tuple(
+                restored_item.get("evidence_refs", ())
+            )
+            context_validity_region_calibrations.append(
+                ContextValidityRegionCalibration(**restored_item)
+            )
+
         max_memory = max(16, min(int(payload.get("max_memory") or 256), 4096))
         max_active = max(
             1,
@@ -7627,6 +8076,36 @@ class UnarchiEngine:
                 )
                 + 1,
             ),
+            context_validity_gate_outcomes=(
+                context_validity_gate_outcomes[-max_memory:]
+            ),
+            next_context_validity_gate_outcome_id=max(
+                int(payload.get("next_context_validity_gate_outcome_id") or 1),
+                max(
+                    (item.id for item in context_validity_gate_outcomes),
+                    default=0,
+                )
+                + 1,
+            ),
+            context_validity_region_calibrations=(
+                context_validity_region_calibrations[-max_memory:]
+            ),
+            next_context_validity_region_calibration_id=max(
+                int(
+                    payload.get(
+                        "next_context_validity_region_calibration_id"
+                    )
+                    or 1
+                ),
+                max(
+                    (
+                        item.id
+                        for item in context_validity_region_calibrations
+                    ),
+                    default=0,
+                )
+                + 1,
+            ),
             success_prediction_bias=float(
                 payload.get("success_prediction_bias") or 0.0
             ),
@@ -7760,6 +8239,19 @@ class UnarchiEngine:
                     item
                     for item in self.context_validity_decision_gates
                     if not item.causal_context_allowed
+                ]
+            ),
+            "context_validity_gate_outcome_count": len(
+                self.context_validity_gate_outcomes
+            ),
+            "context_validity_region_calibration_count": len(
+                self.context_validity_region_calibrations
+            ),
+            "revoked_nearby_support_count": len(
+                [
+                    item
+                    for item in self.context_validity_region_calibrations
+                    if item.status == "nearby_support_revoked"
                 ]
             ),
             "observed_counterfactual_count": len(
