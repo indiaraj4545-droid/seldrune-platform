@@ -233,9 +233,9 @@ def _predict_intent(instruction: str) -> tuple[str, float]:
 
 _FIELD_VALUE_PREFIX_RE = re.compile(
     r"^(?:the\s+)?(?:"
-    r"joining\s+date|last\s+working\s+date|invoice\s+date|offer\s+date|"\
+    r"joining\s+date|last\s+working\s+date|invoice\s+date|offer\s+date|"
     r"effective\s+date|start\s+date|end\s+date|date\s+of\s+birth|dob|date|"
-    r"annual\s+salary|monthly\s+salary|gross\s+salary|net\s+salary|"\
+    r"annual\s+salary|monthly\s+salary|gross\s+salary|net\s+salary|"
     r"basic\s+salary|basic\s+pay|fixed\s+pay|variable\s+pay|salary|"
     r"total\s+ctc|ctc|hra|amount|total|"
     r"employee\s+name|candidate\s+name|name|"
