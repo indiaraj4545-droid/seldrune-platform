@@ -1413,13 +1413,79 @@ an evidence-governance record, not autonomous authority, and does not establish
 subjective identity, sentience, phenomenal consciousness, qualia, or
 unrestricted real-world causation.
 
-## Next checkpoint: v0.27 rollback-recommendation resolution
+## v0.27 rollback-recommendation resolution checkpoint
 
-The next research step should add explicit accept, defer, and dismiss resolution
-records for degradation-watch recommendations and measure the outcome of an
-accepted rollback before allowing re-advance.
+UNARCHI v0.27 adds explicit governance decisions for v0.26 degradation-watch
+recommendations.
 
-The measurable target is closed-loop governance: every recommendation receives
-an auditable resolution, accepted rollback uses the existing v0.25 ancestor-only
-operation, and later evidence determines whether the rollback improved
-calibration before any descendant is reactivated.
+A recommendation can receive one of three decisions:
+
+- `accept`: explicitly execute the existing v0.25 ancestor-only rollback;
+- `defer`: record that the recommendation remains under review without moving
+  the active pointer;
+- `dismiss`: close the recommendation without moving the active pointer.
+
+Defer is non-terminal and can later be superseded by accept or dismiss.
+Accept and dismiss are terminal for that recommendation.
+
+Every resolution record stores:
+
+- degradation-watch ID and hypothesis ID;
+- decision and required human-readable reason;
+- recommended ancestor map;
+- descendant map blocked by an accepted rollback;
+- rollback selection ID when acceptance executes the rollback;
+- supporting evidence references.
+
+Accepted rollback does not delete the degraded descendant or any evidence.
+Instead, the rollback selection records both a calibration watermark and a
+decision-gate watermark. These watermarks isolate evidence that genuinely
+arrives after rollback.
+
+After acceptance, any attempt to advance from the rollback map to a descendant
+is blocked until post-rollback validation succeeds.
+
+Rollback validation uses only gate outcomes that:
+
+- were created after the rollback decision-gate watermark;
+- belong to the active rollback map; and
+- concern the environment signatures that triggered the original degradation
+  recommendation.
+
+Each degraded signature must meet the minimum number of new observed outcomes.
+The rollback is considered improved only when mean gated-policy advantage is
+positive by at least the configured margin and improves materially over the
+degraded revision's prior mean advantage.
+
+Validation statuses include:
+
+- `insufficient_post_rollback_evidence`;
+- `rollback_not_improved`;
+- `rollback_improved`.
+
+Only `rollback_improved` sets `reactivation_allowed=true`. A later explicit
+selection can then re-advance along the intact lineage. UNARCHI does not
+automatically reactivate the descendant.
+
+The deterministic v0.27 benchmark requires:
+
+rollback recommendation -> defer leaves the active pointer unchanged -> dismiss
+leaves the active pointer unchanged -> accept performs the existing ancestor
+rollback -> immediate re-advance is rejected -> validation initially reports
+insufficient post-rollback evidence -> three new matched rollback outcomes show
+improved calibration -> validation permits reactivation -> explicit re-advance
+succeeds -> export/restore preserves resolution and validation history.
+
+This remains bounded functional causal research. Recommendation resolution and
+rollback validation are auditable governance mechanisms and do not establish
+subjective identity, sentience, phenomenal consciousness, qualia, or
+unrestricted real-world causation.
+
+## Next checkpoint: v0.28 rollback holdout validation
+
+The next research step should separate rollback recovery evidence from the data
+used to justify reactivation by reserving a deterministic holdout window.
+
+The measurable target is anti-overfitting governance: a rollback must first
+recover on one post-rollback evidence batch and then confirm that recovery on a
+separate holdout batch before descendant reactivation is permitted.
