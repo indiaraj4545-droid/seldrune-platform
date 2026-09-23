@@ -5,7 +5,7 @@ from typing import Any
 from backend.app.services.unarchi_engine import UnarchiEngine
 
 
-BENCHMARK_VERSION = "unarchi-ablation-v0.23"
+BENCHMARK_VERSION = "unarchi-ablation-v0.24"
 
 
 def _failure_sensitization() -> dict[str, Any]:
@@ -2450,6 +2450,283 @@ def _validity_gate_outcome_calibration() -> dict[str, Any]:
     }
 
 
+def _calibration_aware_validity_map_revision() -> dict[str, Any]:
+    engine = UnarchiEngine()
+    goal = "validate release evidence"
+    action = "run automated release check"
+
+    for index in range(6):
+        engine.learn(
+            observation=f"Sandbox release validation {index}.",
+            goal=goal,
+            action=action,
+            outcome="correct evidence",
+            success=True,
+            reward=0.8,
+            predicted_success=0.55,
+        )
+        engine.learn(
+            observation=f"Production release validation {index}.",
+            goal=goal,
+            action=action,
+            outcome="invalid evidence escaped",
+            success=False,
+            reward=-0.8,
+            predicted_success=0.70,
+        )
+
+    parent_schema = next(
+        item
+        for item in engine.consolidate_self_schema()
+        if item.kind == "mixed" and action in item.pattern
+    )
+    discovery = engine.discover_latent_context_hypotheses(parent_schema.id)
+    hypothesis = next(
+        item
+        for item in engine.latent_context_hypotheses
+        if item.id == discovery.selected_hypothesis_id
+    )
+
+    def build_stability(
+        signature: str,
+        prefix: str,
+        *,
+        reverse_supported: bool,
+    ):
+        forward_ids: list[int] = []
+        for batch in ("a", "b"):
+            trial = engine.propose_context_causality_intervention(
+                hypothesis.id,
+                from_context="production",
+                to_context="sandbox",
+                controlled_signature=signature,
+                min_samples=4,
+            )
+            trial = engine.observe_context_causality_intervention(
+                trial.id,
+                observed_target_success_rate=1.0,
+                observed_signature=signature,
+                sample_count=4,
+                evidence_refs=(f"{prefix}:forward:{batch}",),
+            )
+            forward_ids.append(trial.id)
+
+        reverse = engine.propose_context_causality_intervention(
+            hypothesis.id,
+            from_context="sandbox",
+            to_context="production",
+            controlled_signature=signature,
+            min_samples=4,
+        )
+        reverse = engine.observe_context_causality_intervention(
+            reverse.id,
+            observed_target_success_rate=0.0 if reverse_supported else 1.0,
+            observed_signature=signature,
+            sample_count=4,
+            evidence_refs=(f"{prefix}:reverse:a",),
+        )
+        return engine.assess_context_causal_stability(
+            hypothesis.id,
+            forward_trial_ids=forward_ids,
+            reverse_trial_ids=(reverse.id,),
+        )
+
+    normal = build_stability(
+        "code=v1;load=normal;data=fixed",
+        "revision:normal",
+        reverse_supported=True,
+    )
+    extreme = build_stability(
+        "code=v1;load=extreme;data=fixed",
+        "revision:extreme",
+        reverse_supported=False,
+    )
+    engine.assess_context_causal_invariance(
+        hypothesis.id,
+        stability_assessment_ids=(normal.id, extreme.id),
+    )
+    base_map = engine.consolidate_context_causal_validity_map(
+        hypothesis.id,
+        max_generalization_distance=1,
+    )
+
+    candidates = [
+        {
+            "action": action,
+            "expected_success": 0.62,
+            "expected_information_gain": 0.10,
+            "risk": 0.10,
+            "reversible": True,
+        },
+        {
+            "action": "request independent review",
+            "expected_success": 0.58,
+            "expected_information_gain": 0.15,
+            "risk": 0.10,
+            "reversible": True,
+        },
+    ]
+    good_signature = "code=v1;load=normal;data=shifted"
+    bad_signature = "code=v2;load=normal;data=fixed"
+
+    for index in range(3):
+        gate = engine.evaluate_context_validity_gated_decision(
+            base_map.id,
+            environment_signature=good_signature,
+            candidates=candidates,
+            context="production release",
+        )
+        engine.record_context_validity_gate_outcome(
+            gate.id,
+            actual_success_by_action={
+                action: False,
+                "request independent review": True,
+            },
+            evidence_refs=(f"revision:good:{index}",),
+        )
+    good_calibration = engine.calibrate_context_validity_region(
+        base_map.id,
+        environment_signature=good_signature,
+    )
+
+    for index in range(3):
+        gate = engine.evaluate_context_validity_gated_decision(
+            base_map.id,
+            environment_signature=bad_signature,
+            candidates=candidates,
+            context="production release",
+        )
+        engine.record_context_validity_gate_outcome(
+            gate.id,
+            actual_success_by_action={
+                action: True,
+                "request independent review": False,
+            },
+            evidence_refs=(f"revision:bad:{index}",),
+        )
+    bad_calibration = engine.calibrate_context_validity_region(
+        base_map.id,
+        environment_signature=bad_signature,
+    )
+
+    revision_two = engine.revise_context_causal_validity_map(
+        base_map.id,
+        calibration_ids=(good_calibration.id, bad_calibration.id),
+    )
+    good_v2 = engine.classify_context_causal_validity(
+        revision_two.id,
+        environment_signature=good_signature,
+    )
+    bad_v2 = engine.classify_context_causal_validity(
+        revision_two.id,
+        environment_signature=bad_signature,
+    )
+
+    for index in range(3):
+        gate = engine.evaluate_context_validity_gated_decision(
+            revision_two.id,
+            environment_signature=good_signature,
+            candidates=candidates,
+            context="production release",
+        )
+        engine.record_context_validity_gate_outcome(
+            gate.id,
+            actual_success_by_action={
+                action: True,
+                "request independent review": False,
+            },
+            evidence_refs=(f"revision:v2:good_reversal:{index}",),
+        )
+    reversal = engine.calibrate_context_validity_region(
+        revision_two.id,
+        environment_signature=good_signature,
+    )
+    good_v2_after_new_evidence = engine.classify_context_causal_validity(
+        revision_two.id,
+        environment_signature=good_signature,
+    )
+    revision_three = engine.revise_context_causal_validity_map(
+        revision_two.id,
+        calibration_ids=(reversal.id,),
+    )
+    good_v3 = engine.classify_context_causal_validity(
+        revision_three.id,
+        environment_signature=good_signature,
+    )
+    exact_valid_v3 = engine.classify_context_causal_validity(
+        revision_three.id,
+        environment_signature="code=v1;load=normal;data=fixed",
+    )
+    exact_invalid_v3 = engine.classify_context_causal_validity(
+        revision_three.id,
+        environment_signature="code=v1;load=extreme;data=fixed",
+    )
+
+    narrative = engine.build_metacognitive_narrative(
+        "context_validity_revision"
+    )
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    return {
+        "name": "calibration_aware_validity_map_revision",
+        "expected_direction": (
+            "calibration creates immutable child validity maps whose inferred "
+            "regions change only when a new revision is explicitly created"
+        ),
+        "passed": (
+            revision_two.parent_map_id == base_map.id
+            and revision_two.revision_number == 2
+            and good_signature
+            in revision_two.calibrated_supported_signatures
+            and bad_signature in revision_two.revoked_inferred_signatures
+            and revision_two.tested_valid_signatures
+            == base_map.tested_valid_signatures
+            and revision_two.tested_invalid_signatures
+            == base_map.tested_invalid_signatures
+            and any(
+                reason.startswith("expand inferred support")
+                for reason in revision_two.revision_reasons
+            )
+            and any(
+                reason.startswith("contract inferred support")
+                for reason in revision_two.revision_reasons
+            )
+            and good_v2.status == "supported_nearby"
+            and bad_v2.status == "unknown"
+            and reversal.status == "nearby_support_revoked"
+            and good_v2_after_new_evidence.status == "supported_nearby"
+            and revision_three.parent_map_id == revision_two.id
+            and revision_three.revision_number == 3
+            and good_signature in revision_three.revoked_inferred_signatures
+            and good_signature
+            not in revision_three.calibrated_supported_signatures
+            and good_v3.status == "unknown"
+            and exact_valid_v3.status == "tested_valid"
+            and exact_invalid_v3.status == "tested_invalid"
+            and restored.context_causal_validity_maps
+            == engine.context_causal_validity_maps
+            and narrative.unsupported_claims == 0
+            and bool(narrative.evidence_refs)
+        ),
+        "base_map_id": base_map.id,
+        "revision_two_id": revision_two.id,
+        "revision_two_number": revision_two.revision_number,
+        "good_v2_status": good_v2.status,
+        "bad_v2_status": bad_v2.status,
+        "reversal_status": reversal.status,
+        "good_v2_after_new_evidence": good_v2_after_new_evidence.status,
+        "revision_three_id": revision_three.id,
+        "revision_three_number": revision_three.revision_number,
+        "good_v3_status": good_v3.status,
+        "exact_valid_v3_status": exact_valid_v3.status,
+        "exact_invalid_v3_status": exact_invalid_v3.status,
+        "restart_preserved": (
+            restored.context_causal_validity_maps
+            == engine.context_causal_validity_maps
+        ),
+    }
+
+
 def run_unarchi_ablation_benchmark() -> dict[str, Any]:
     scenarios = [
         _failure_sensitization(),
@@ -2476,6 +2753,7 @@ def run_unarchi_ablation_benchmark() -> dict[str, Any]:
         _causal_validity_map_consolidation(),
         _validity_gated_decision_use(),
         _validity_gate_outcome_calibration(),
+        _calibration_aware_validity_map_revision(),
     ]
     passed = sum(bool(item["passed"]) for item in scenarios)
     return {
