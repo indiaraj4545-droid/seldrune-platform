@@ -116,13 +116,13 @@ def test_cumulative_spend_guard_blocks_monthly_ceiling() -> None:
                 content="metered direct response",
                 estimated_cost_usd=1.9,
                 model_calls=1,
-                created_at=now,
+                created_at=now.replace(day=now.day - 1),
             )
         )
         session.commit()
 
         settings = Settings(
-            ai_daily_max_usd=2.0,
+            ai_daily_max_usd=1.0,
             ai_monthly_max_usd=2.0,
         )
         with pytest.raises(AISpendBudgetExceeded, match="monthly spend guard"):
