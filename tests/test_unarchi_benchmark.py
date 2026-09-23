@@ -4,8 +4,8 @@ from backend.app.services.unarchi_benchmark import run_unarchi_ablation_benchmar
 def test_unarchi_ablation_benchmark_passes_all_scenarios() -> None:
     result = run_unarchi_ablation_benchmark()
 
-    assert result["scenario_count"] == 15
-    assert result["passed_scenarios"] == 15
+    assert result["scenario_count"] == 16
+    assert result["passed_scenarios"] == 16
     assert result["pass_rate"] == 1.0
     assert result["claims_phenomenal_consciousness"] is False
 
@@ -212,3 +212,23 @@ def test_unarchi_benchmark_covers_context_sensitive_schema_decomposition() -> No
     assert contextual["choice_changed"] is True
     assert contextual["contextual_schema_causally_active"] is True
     assert contextual["restart_preserved"] is True
+
+
+
+def test_unarchi_benchmark_covers_context_transfer_boundary_learning() -> None:
+    result = run_unarchi_ablation_benchmark()
+    scenarios = {item["name"]: item for item in result["scenarios"]}
+
+    transfer = scenarios["context_transfer_boundary_learning"]
+
+    assert transfer["passed"] is True
+    assert transfer["staging_status"] == "accepted"
+    assert transfer["staging_source_mae"] < transfer["staging_global_mae"]
+    assert transfer["staging_gain"] > 0.0
+    assert transfer["emergency_status"] == "abstained_no_gain"
+    assert transfer["emergency_source_mae"] > transfer["emergency_global_mae"]
+    assert transfer["transfer_action"] == "run automated release check"
+    assert transfer["no_transfer_action"] == "request independent review"
+    assert transfer["choice_changed"] is True
+    assert transfer["transfer_causally_active"] is True
+    assert transfer["restart_preserved"] is True

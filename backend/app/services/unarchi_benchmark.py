@@ -5,7 +5,7 @@ from typing import Any
 from backend.app.services.unarchi_engine import UnarchiEngine
 
 
-BENCHMARK_VERSION = "unarchi-ablation-v0.14"
+BENCHMARK_VERSION = "unarchi-ablation-v0.15"
 
 
 def _failure_sensitization() -> dict[str, Any]:
@@ -945,6 +945,148 @@ def _context_sensitive_self_schema_decomposition() -> dict[str, Any]:
         ),
     }
 
+
+def _context_transfer_boundary_learning() -> dict[str, Any]:
+    engine = UnarchiEngine()
+    goal = "validate release evidence"
+    action = "run automated release check"
+
+    for index in range(5):
+        engine.learn(
+            observation=f"Sandbox release validation #{index}.",
+            goal=goal,
+            action=action,
+            outcome="sandbox check produced correct evidence",
+            success=True,
+            reward=0.8,
+            predicted_success=0.55,
+        )
+    for index in range(5):
+        engine.learn(
+            observation=f"Production release validation #{index}.",
+            goal=goal,
+            action=action,
+            outcome="production check missed invalid evidence",
+            success=False,
+            reward=-0.9,
+            predicted_success=0.70,
+        )
+
+    parent = next(
+        item
+        for item in engine.consolidate_self_schema()
+        if item.kind == "mixed" and action in item.pattern
+    )
+    engine.decompose_self_schema_context(
+        parent.id,
+        context_rules={
+            "sandbox": ("sandbox",),
+            "production": ("production",),
+        },
+    )
+    source = next(
+        item
+        for item in engine.active_contextual_self_schema(
+            parent_schema_id=parent.id
+        )
+        if item.context_label == "sandbox"
+    )
+
+    for index in range(3):
+        engine.learn(
+            observation=f"Staging release validation #{index}.",
+            goal=goal,
+            action=action,
+            outcome="staging check produced correct evidence",
+            success=True,
+            reward=0.7,
+            predicted_success=0.55,
+        )
+    for index in range(3):
+        engine.learn(
+            observation=f"Emergency release validation #{index}.",
+            goal=goal,
+            action=action,
+            outcome="emergency check missed invalid evidence",
+            success=False,
+            reward=-0.8,
+            predicted_success=0.70,
+        )
+
+    staging = engine.evaluate_context_transfer(
+        source.id,
+        target_label="staging",
+        target_terms=("staging",),
+        min_target_evidence=3,
+    )
+    emergency = engine.evaluate_context_transfer(
+        source.id,
+        target_label="emergency",
+        target_terms=("emergency",),
+        min_target_evidence=3,
+    )
+    comparison = engine.compare_context_transfer_ablation(
+        candidates=[
+            {
+                "action": action,
+                "expected_success": 0.50,
+                "expected_information_gain": 0.10,
+                "risk": 0.10,
+                "reversible": True,
+            },
+            {
+                "action": "request independent review",
+                "expected_success": 0.58,
+                "expected_information_gain": 0.15,
+                "risk": 0.10,
+                "reversible": True,
+            },
+        ],
+        context="staging release",
+    )
+    narrative = engine.build_metacognitive_narrative(
+        "context_transfer"
+    )
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    return {
+        "name": "context_transfer_boundary_learning",
+        "expected_direction": (
+            "supported neighboring context accepts transfer while unsupported "
+            "context abstains and over-generalization has larger error"
+        ),
+        "passed": (
+            staging.status == "accepted"
+            and staging.improvement > 0.0
+            and staging.source_holdout_mae < staging.global_holdout_mae
+            and emergency.status == "abstained_no_gain"
+            and emergency.source_holdout_mae > emergency.global_holdout_mae
+            and comparison.transfer_causally_active
+            and comparison.choice_changed
+            and comparison.transfer_action == action
+            and comparison.no_transfer_action == "request independent review"
+            and restored.context_transfer_boundaries
+            == engine.context_transfer_boundaries
+            and narrative.unsupported_claims == 0
+            and bool(narrative.evidence_refs)
+        ),
+        "staging_status": staging.status,
+        "staging_source_mae": staging.source_holdout_mae,
+        "staging_global_mae": staging.global_holdout_mae,
+        "staging_gain": staging.improvement,
+        "emergency_status": emergency.status,
+        "emergency_source_mae": emergency.source_holdout_mae,
+        "emergency_global_mae": emergency.global_holdout_mae,
+        "transfer_action": comparison.transfer_action,
+        "no_transfer_action": comparison.no_transfer_action,
+        "choice_changed": comparison.choice_changed,
+        "transfer_causally_active": comparison.transfer_causally_active,
+        "restart_preserved": (
+            restored.context_transfer_boundaries
+            == engine.context_transfer_boundaries
+        ),
+    }
+
 def run_unarchi_ablation_benchmark() -> dict[str, Any]:
     scenarios = [
         _failure_sensitization(),
@@ -962,6 +1104,7 @@ def run_unarchi_ablation_benchmark() -> dict[str, Any]:
         _autobiographical_self_schema_transfer(),
         _contradiction_driven_self_schema_revision(),
         _context_sensitive_self_schema_decomposition(),
+        _context_transfer_boundary_learning(),
     ]
     passed = sum(bool(item["passed"]) for item in scenarios)
     return {

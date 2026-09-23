@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 
-UNARCHI_VERSION = "unarchi-v0.14"
+UNARCHI_VERSION = "unarchi-v0.15"
 _STOPWORDS = {
     "a",
     "an",
@@ -452,6 +452,42 @@ class ContextualSchemaComparison:
 
 
 @dataclass(frozen=True)
+class ContextTransferBoundary:
+    id: int
+    parent_schema_id: int
+    source_context_schema_id: int
+    target_label: str
+    target_terms: tuple[str, ...]
+    evidence_count: int
+    target_success_rate: float
+    source_success_rate: float
+    global_success_rate: float
+    source_holdout_mae: float
+    global_holdout_mae: float
+    improvement: float
+    transfer_strength: float
+    status: str
+    evidence_refs: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class ContextTransferComparison:
+    transfer_action: str
+    no_transfer_action: str
+    transfer_predicted_success: float
+    no_transfer_predicted_success: float
+    predicted_success_delta: float
+    choice_changed: bool
+    transfer_causally_active: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class MetacognitiveNarrative:
     focus: str
     summary: str
@@ -504,13 +540,13 @@ class UnarchiEngine:
     """
     CPU-only experimental cognitive kernel.
 
-    v0.14 includes causal internal dynamics, bounded endogenous goals, a
+    v0.15 includes causal internal dynamics, bounded endogenous goals, a
     calibrated predictive self-model, prospective memory, evidence-grounded
     metacognition, explicit value arbitration, competing causal hypotheses,
     controlled self-intervention trials, a bounded recurrent global workspace,
     counterfactual future simulation with prediction-error feedback, a compact
-    autobiographical self-schema, contradiction-driven revision, and validated
-    context-sensitive self-schema decomposition.
+    autobiographical self-schema, contradiction-driven revision, validated
+    context decomposition, and evidence-gated context transfer boundaries.
     """
 
     state: UnarchiState = field(default_factory=UnarchiState)
@@ -555,6 +591,10 @@ class UnarchiEngine:
         default_factory=list
     )
     next_self_schema_decomposition_id: int = 1
+    context_transfer_boundaries: list[ContextTransferBoundary] = field(
+        default_factory=list
+    )
+    next_context_transfer_boundary_id: int = 1
     success_prediction_bias: float = 0.0
     uncertainty_prediction_bias: float = 0.0
     stress_prediction_bias: float = 0.0
@@ -1012,6 +1052,7 @@ class UnarchiEngine:
         context: str = "",
         use_self_schema: bool = True,
         use_contextual_schema: bool = True,
+        use_context_transfer: bool = True,
     ) -> SelfPrediction:
         """
         Predict external success and internal consequences before an action.
@@ -1034,6 +1075,7 @@ class UnarchiEngine:
                 context=context,
                 action=action,
                 use_contextual_schema=use_contextual_schema,
+                use_context_transfer=use_context_transfer,
             )
 
         effective_risk = _clamp(risk + schema_risk_bias)
@@ -1104,6 +1146,7 @@ class UnarchiEngine:
         context: str = "",
         use_self_schema: bool = True,
         use_contextual_schema: bool = True,
+        use_context_transfer: bool = True,
     ) -> SelfPrediction:
         """Predict each candidate and return the highest-utility option."""
         if not candidates:
@@ -1121,6 +1164,7 @@ class UnarchiEngine:
                 context=str(candidate.get("context") or context),
                 use_self_schema=use_self_schema,
                 use_contextual_schema=use_contextual_schema,
+                use_context_transfer=use_context_transfer,
             )
             for candidate in candidates
         ]
@@ -3352,11 +3396,286 @@ class UnarchiEngine:
             )
         return record
 
+
+    def active_context_transfer_boundaries(
+        self,
+    ) -> tuple[ContextTransferBoundary, ...]:
+        return tuple(
+            item
+            for item in self.context_transfer_boundaries
+            if item.status == "accepted"
+        )
+
+    def evaluate_context_transfer(
+        self,
+        source_context_schema_id: int,
+        *,
+        target_label: str,
+        target_terms: tuple[str, ...] | list[str],
+        min_target_evidence: int = 3,
+        min_gain_over_global: float = 0.10,
+        max_source_holdout_mae: float = 0.30,
+        similarity_threshold: float = 0.28,
+    ) -> ContextTransferBoundary:
+        """
+        Validate transfer to a new context using evidence excluded from the schemas.
+
+        Target experiences already cited by the parent or source contextual schema
+        are excluded, so the transfer test is genuinely out-of-sample relative to
+        those stored self-models.
+        """
+        source = next(
+            (
+                item
+                for item in self.contextual_self_schema
+                if item.id == source_context_schema_id
+            ),
+            None,
+        )
+        if source is None or source.status != "active":
+            raise ValueError("unknown active source contextual self schema")
+
+        parent = next(
+            (
+                item
+                for item in self.self_schema
+                if item.id == source.parent_schema_id
+            ),
+            None,
+        )
+        if parent is None or parent.status != "active":
+            raise ValueError("source contextual schema has no active parent")
+
+        label = target_label.strip().casefold()
+        if not label:
+            raise ValueError("target context label is required")
+        target_term_set: set[str] = set()
+        for raw in target_terms:
+            target_term_set.update(_terms(str(raw)))
+        if not target_term_set:
+            raise ValueError("target context needs at least one matching term")
+        normalized_terms = tuple(sorted(target_term_set))
+
+        min_target_evidence = max(2, min(int(min_target_evidence), 24))
+        min_gain_over_global = _clamp(min_gain_over_global, 0.01, 0.80)
+        max_source_holdout_mae = _clamp(max_source_holdout_mae, 0.0, 1.0)
+
+        already_used = set(parent.evidence_refs) | set(source.evidence_refs)
+        candidates: list[tuple[int, Experience]] = []
+        for index, experience in self._matching_schema_experiences(
+            parent,
+            similarity_threshold=similarity_threshold,
+        ):
+            ref = f"experience:{index}"
+            if ref in already_used:
+                continue
+            if not _terms(experience.observation).intersection(target_term_set):
+                continue
+            candidates.append((index, experience))
+
+        evidence_refs = tuple(
+            f"experience:{index}" for index, _ in candidates
+        )
+        if len(candidates) < min_target_evidence:
+            boundary = ContextTransferBoundary(
+                id=self.next_context_transfer_boundary_id,
+                parent_schema_id=parent.id,
+                source_context_schema_id=source.id,
+                target_label=label,
+                target_terms=normalized_terms,
+                evidence_count=len(candidates),
+                target_success_rate=0.0,
+                source_success_rate=source.success_rate,
+                global_success_rate=parent.success_rate,
+                source_holdout_mae=1.0,
+                global_holdout_mae=1.0,
+                improvement=0.0,
+                transfer_strength=0.0,
+                status="insufficient_evidence",
+                evidence_refs=evidence_refs,
+            )
+            self.next_context_transfer_boundary_id += 1
+            self.context_transfer_boundaries.append(boundary)
+            return boundary
+
+        outcomes = [
+            1.0 if experience.success is True else 0.0
+            for _, experience in candidates
+        ]
+        target_success_rate = sum(outcomes) / len(outcomes)
+        source_errors = [
+            abs(outcome - source.success_rate) for outcome in outcomes
+        ]
+        global_errors = [
+            abs(outcome - parent.success_rate) for outcome in outcomes
+        ]
+        source_mae = sum(source_errors) / len(source_errors)
+        global_mae = sum(global_errors) / len(global_errors)
+        improvement = global_mae - source_mae
+        accepted = (
+            improvement >= min_gain_over_global
+            and source_mae <= max_source_holdout_mae
+        )
+        transfer_strength = (
+            _clamp(0.55 + improvement, 0.55, 0.90)
+            if accepted
+            else 0.0
+        )
+        boundary = ContextTransferBoundary(
+            id=self.next_context_transfer_boundary_id,
+            parent_schema_id=parent.id,
+            source_context_schema_id=source.id,
+            target_label=label,
+            target_terms=normalized_terms,
+            evidence_count=len(candidates),
+            target_success_rate=round(target_success_rate, 6),
+            source_success_rate=source.success_rate,
+            global_success_rate=parent.success_rate,
+            source_holdout_mae=round(source_mae, 6),
+            global_holdout_mae=round(global_mae, 6),
+            improvement=round(improvement, 6),
+            transfer_strength=round(transfer_strength, 6),
+            status="accepted" if accepted else "abstained_no_gain",
+            evidence_refs=evidence_refs,
+        )
+        self.next_context_transfer_boundary_id += 1
+        self.context_transfer_boundaries.append(boundary)
+        if len(self.context_transfer_boundaries) > self.max_memory:
+            self.context_transfer_boundaries = self.context_transfer_boundaries[
+                -self.max_memory:
+            ]
+
+        if accepted:
+            self.stage_global_workspace_item(
+                source="self_schema",
+                content=(
+                    f"context transfer id={boundary.id}; "
+                    f"source={source.context_label}; target={label}; "
+                    f"heldout_gain={boundary.improvement:.3f}; "
+                    f"strength={boundary.transfer_strength:.3f}"
+                ),
+                salience=max(0.55, boundary.transfer_strength),
+                evidence_refs=(
+                    f"context_transfer:{boundary.id}",
+                    *evidence_refs[-4:],
+                ),
+            )
+        return boundary
+
+    def transferred_context_adjustment(
+        self,
+        *,
+        context: str,
+        action: str,
+    ) -> tuple[float, float, tuple[str, ...]]:
+        context_terms = _terms(context)
+        if not context_terms:
+            return 0.0, 0.0, ()
+
+        matches: list[
+            tuple[float, ContextTransferBoundary, ContextualSelfSchemaEntry]
+        ] = []
+        for boundary in self.active_context_transfer_boundaries():
+            if not context_terms.intersection(boundary.target_terms):
+                continue
+            source = next(
+                (
+                    item
+                    for item in self.contextual_self_schema
+                    if item.id == boundary.source_context_schema_id
+                    and item.status == "active"
+                ),
+                None,
+            )
+            if source is None:
+                continue
+            similarity = _similarity(action, source.pattern)
+            if similarity < 0.18:
+                continue
+            weight = (
+                similarity
+                * source.confidence
+                * boundary.transfer_strength
+            )
+            matches.append((weight, boundary, source))
+
+        if not matches:
+            return 0.0, 0.0, ()
+
+        matches.sort(
+            key=lambda item: (
+                item[0],
+                item[1].improvement,
+                item[2].confidence,
+            ),
+            reverse=True,
+        )
+        selected = matches[:3]
+        total_weight = sum(weight for weight, _, _ in selected) or 1.0
+        success_bias = sum(
+            weight * source.success_bias * boundary.transfer_strength
+            for weight, boundary, source in selected
+        ) / total_weight
+        risk_bias = sum(
+            weight * source.risk_bias * boundary.transfer_strength
+            for weight, boundary, source in selected
+        ) / total_weight
+        refs = tuple(
+            f"context_transfer:{boundary.id}"
+            for _, boundary, _ in selected
+        )
+        return (
+            round(max(-0.20, min(0.20, success_bias)), 6),
+            round(max(-0.14, min(0.14, risk_bias)), 6),
+            refs,
+        )
+
+    def compare_context_transfer_ablation(
+        self,
+        *,
+        candidates: list[dict[str, Any]],
+        context: str,
+    ) -> ContextTransferComparison:
+        if not candidates:
+            raise ValueError("at least one candidate action is required")
+        transfer_engine = deepcopy(self)
+        no_transfer_engine = deepcopy(self)
+        transfer = transfer_engine.choose_predicted_action(
+            candidates,
+            context=context,
+            use_self_schema=True,
+            use_contextual_schema=True,
+            use_context_transfer=True,
+        )
+        no_transfer = no_transfer_engine.choose_predicted_action(
+            candidates,
+            context=context,
+            use_self_schema=True,
+            use_contextual_schema=True,
+            use_context_transfer=False,
+        )
+        delta = (
+            transfer.predicted_success
+            - no_transfer.predicted_success
+        )
+        choice_changed = transfer.action != no_transfer.action
+        active = choice_changed or abs(delta) >= 0.05
+        return ContextTransferComparison(
+            transfer_action=transfer.action,
+            no_transfer_action=no_transfer.action,
+            transfer_predicted_success=transfer.predicted_success,
+            no_transfer_predicted_success=no_transfer.predicted_success,
+            predicted_success_delta=round(delta, 6),
+            choice_changed=choice_changed,
+            transfer_causally_active=active,
+        )
+
     def contextual_self_schema_adjustment(
         self,
         *,
         context: str,
         action: str,
+        use_context_transfer: bool = True,
     ) -> tuple[float, float, tuple[str, ...]]:
         context_terms = _terms(context)
         if not context_terms:
@@ -3375,6 +3694,11 @@ class UnarchiEngine:
             matches.append((weight, item))
 
         if not matches:
+            if use_context_transfer:
+                return self.transferred_context_adjustment(
+                    context=context,
+                    action=action,
+                )
             return 0.0, 0.0, ()
 
         matches.sort(key=lambda pair: (pair[0], pair[1].confidence), reverse=True)
@@ -3437,12 +3761,14 @@ class UnarchiEngine:
         context: str,
         action: str,
         use_contextual_schema: bool = True,
+        use_context_transfer: bool = True,
     ) -> tuple[float, float, tuple[str, ...]]:
         """Return bounded transfer biases from related demonstrated self-schema."""
         if use_contextual_schema:
             contextual = self.contextual_self_schema_adjustment(
                 context=context,
                 action=action,
+                use_context_transfer=use_context_transfer,
             )
             if contextual[2]:
                 return contextual
@@ -3500,6 +3826,41 @@ class UnarchiEngine:
             details.append(detail)
 
         if focus in {
+            "context_transfer",
+            "transfer_boundary",
+            "context_generalization",
+        }:
+            if self.context_transfer_boundaries:
+                boundary = self.context_transfer_boundaries[-1]
+                add(
+                    f"context_transfer:{boundary.id}",
+                    (
+                        f"source_schema={boundary.source_context_schema_id}; "
+                        f"target={boundary.target_label}; status={boundary.status}; "
+                        f"source_mae={boundary.source_holdout_mae:.3f}; "
+                        f"global_mae={boundary.global_holdout_mae:.3f}; "
+                        f"gain={boundary.improvement:.3f}; "
+                        f"strength={boundary.transfer_strength:.3f}"
+                    ),
+                )
+                add(
+                    f"contextual_self_schema:{boundary.source_context_schema_id}",
+                    "source contextual self-schema considered for transfer",
+                )
+                for ref in boundary.evidence_refs[-4:]:
+                    add(
+                        ref,
+                        "new target-context evidence used to validate transfer",
+                    )
+                summary = (
+                    "The latest context-transfer boundary is reconstructed from "
+                    "a validated source context and previously unused target "
+                    "evidence compared against the global fallback."
+                )
+            else:
+                summary = "No context-transfer boundary has been evaluated."
+
+        elif focus in {
             "contextual_schema",
             "schema_decomposition",
             "context_decomposition",
@@ -4248,6 +4609,12 @@ class UnarchiEngine:
             "next_self_schema_decomposition_id": (
                 self.next_self_schema_decomposition_id
             ),
+            "context_transfer_boundaries": [
+                item.to_dict() for item in self.context_transfer_boundaries
+            ],
+            "next_context_transfer_boundary_id": (
+                self.next_context_transfer_boundary_id
+            ),
             "success_prediction_bias": self.success_prediction_bias,
             "uncertainty_prediction_bias": self.uncertainty_prediction_bias,
             "stress_prediction_bias": self.stress_prediction_bias,
@@ -4283,6 +4650,10 @@ class UnarchiEngine:
         contextual_self_schema_payload = payload.get("contextual_self_schema", [])
         self_schema_decompositions_payload = payload.get(
             "self_schema_decompositions",
+            [],
+        )
+        context_transfer_boundaries_payload = payload.get(
+            "context_transfer_boundaries",
             [],
         )
         value_weights_payload = payload.get("value_weights", _default_value_weights())
@@ -4324,6 +4695,8 @@ class UnarchiEngine:
             raise ValueError("invalid UNARCHI contextual self schema")
         if not isinstance(self_schema_decompositions_payload, list):
             raise ValueError("invalid UNARCHI self schema decompositions")
+        if not isinstance(context_transfer_boundaries_payload, list):
+            raise ValueError("invalid UNARCHI context transfer boundaries")
 
         memory: list[Experience] = []
         for item in memory_payload:
@@ -4509,6 +4882,21 @@ class UnarchiEngine:
                 SelfSchemaDecomposition(**restored_item)
             )
 
+        context_transfer_boundaries: list[ContextTransferBoundary] = []
+        for item in context_transfer_boundaries_payload:
+            if not isinstance(item, dict):
+                raise ValueError("invalid UNARCHI context transfer boundary")
+            restored_item = dict(item)
+            restored_item["target_terms"] = tuple(
+                restored_item.get("target_terms", ())
+            )
+            restored_item["evidence_refs"] = tuple(
+                restored_item.get("evidence_refs", ())
+            )
+            context_transfer_boundaries.append(
+                ContextTransferBoundary(**restored_item)
+            )
+
         max_memory = max(16, min(int(payload.get("max_memory") or 256), 4096))
         max_active = max(
             1,
@@ -4623,6 +5011,15 @@ class UnarchiEngine:
                 )
                 + 1,
             ),
+            context_transfer_boundaries=context_transfer_boundaries[-max_memory:],
+            next_context_transfer_boundary_id=max(
+                int(payload.get("next_context_transfer_boundary_id") or 1),
+                max(
+                    (item.id for item in context_transfer_boundaries),
+                    default=0,
+                )
+                + 1,
+            ),
             success_prediction_bias=float(
                 payload.get("success_prediction_bias") or 0.0
             ),
@@ -4685,6 +5082,12 @@ class UnarchiEngine:
             ),
             "self_schema_decomposition_count": len(
                 self.self_schema_decompositions
+            ),
+            "context_transfer_boundary_count": len(
+                self.context_transfer_boundaries
+            ),
+            "accepted_context_transfer_count": len(
+                self.active_context_transfer_boundaries()
             ),
             "observed_counterfactual_count": len(
                 [
