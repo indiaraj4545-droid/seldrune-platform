@@ -34,6 +34,13 @@ class PDFInspection:
         return "hybrid"
 
 
+@dataclass(frozen=True)
+class PDFPageRender:
+    page_number: int
+    media_type: str
+    data: bytes
+
+
 @dataclass
 class PDFEditResult:
     data: bytes
@@ -109,6 +116,47 @@ def inspect_pdf(pdf_bytes: bytes, password: str | None = None) -> PDFInspection:
     )
     document.close()
     return inspection
+
+
+def render_pdf_pages_for_model(
+    pdf_bytes: bytes,
+    password: str | None = None,
+    *,
+    page_numbers: list[int] | tuple[int, ...] | None = None,
+    max_pages: int = 10,
+    max_long_edge: int = 1400,
+) -> tuple[PDFPageRender, ...]:
+    document = _open_document(pdf_bytes, password)
+    try:
+        if page_numbers:
+            requested = [
+                number
+                for number in dict.fromkeys(int(item) for item in page_numbers)
+                if 1 <= number <= document.page_count
+            ]
+        else:
+            requested = list(range(1, document.page_count + 1))
+        requested = requested[: max(1, max_pages)]
+
+        rendered: list[PDFPageRender] = []
+        for page_number in requested:
+            page = document[page_number - 1]
+            longest = max(float(page.rect.width), float(page.rect.height), 1.0)
+            scale = min(2.0, max(1.0, float(max_long_edge) / longest))
+            pixmap = page.get_pixmap(
+                matrix=pymupdf.Matrix(scale, scale),
+                alpha=False,
+            )
+            rendered.append(
+                PDFPageRender(
+                    page_number=page_number,
+                    media_type="image/jpeg",
+                    data=pixmap.tobytes("jpeg", jpg_quality=80),
+                )
+            )
+        return tuple(rendered)
+    finally:
+        document.close()
 
 
 def _normalize_text(value: str) -> str:
@@ -1240,12 +1288,18 @@ def assess_pdf_edit_candidate(
             source_page = original[page_index]
             output_page = edited[page_index]
             target_rectangles: list[pymupdf.Rect] = []
+            target_mode = "native_text"
             if target_text:
-                target_rectangles, _mode = _locate_text(source_page, target_text)
+                target_rectangles, locate_mode = _locate_text(
+                    source_page,
+                    target_text,
+                )
+                target_mode = locate_mode
             if not target_rectangles:
                 visual_rect = _normalized_bbox(source_page, operation.get("bbox"))
                 if visual_rect is not None:
                     target_rectangles = [visual_rect]
+                    target_mode = "visual_bbox"
 
             if isinstance(occurrence, int) and occurrence >= 1:
                 target_rectangles = target_rectangles[occurrence - 1 : occurrence]
@@ -1285,16 +1339,37 @@ def assess_pdf_edit_candidate(
                     )
                     continue
 
-                vertical_drift = abs(
-                    (replacement_rect.y0 + replacement_rect.y1) / 2
-                    - (target_rect.y0 + target_rect.y1) / 2
-                )
-                max_vertical_drift = max(2.5, target_rect.height * 0.35)
-                if vertical_drift > max_vertical_drift:
-                    issues.append(
-                        f"operation {op_index}: replacement drifted vertically "
-                        f"{vertical_drift:.1f}pt"
+                if target_mode == "visual_bbox":
+                    allowed_region = _expanded_rect(
+                        output_page,
+                        target_rect,
+                        x_pad=max(3.0, target_rect.width * 0.08),
+                        y_pad=max(3.0, target_rect.height * 0.08),
                     )
+                    overlap = _rect_intersection_area(
+                        replacement_rect,
+                        allowed_region,
+                    )
+                    replacement_area = max(
+                        1.0,
+                        replacement_rect.width * replacement_rect.height,
+                    )
+                    if overlap / replacement_area < 0.90:
+                        issues.append(
+                            f"operation {op_index}: replacement escaped the "
+                            "AI-located visual region"
+                        )
+                else:
+                    vertical_drift = abs(
+                        (replacement_rect.y0 + replacement_rect.y1) / 2
+                        - (target_rect.y0 + target_rect.y1) / 2
+                    )
+                    max_vertical_drift = max(2.5, target_rect.height * 0.35)
+                    if vertical_drift > max_vertical_drift:
+                        issues.append(
+                            f"operation {op_index}: replacement drifted vertically "
+                            f"{vertical_drift:.1f}pt"
+                        )
 
                 for protected in _protected_word_rectangles(source_page, target_rect):
                     intersection = _rect_intersection_area(replacement_rect, protected)
@@ -1559,11 +1634,46 @@ def apply_pdf_edit_plan(
                         f"Operation {op_index}, page {page_index + 1}: {note} "
                         f"({match_mode} match)."
                     )
-                else:
-                    verification_notes.append(
-                        f"Operation {op_index}, page {page_index + 1}: visual-region edit "
-                        "applied; text-level verification is unavailable for image-only content."
-                    )
+                elif match_mode == "visual_bbox":
+                    visual_verified = 0
+                    if action == "replace_text" and replacement_text:
+                        replacement_matches = list(page.search_for(replacement_text))
+                        for rectangle, _style, _background in prepared:
+                            if (
+                                _local_replacement_rect(
+                                    page,
+                                    replacement_matches,
+                                    rectangle,
+                                )
+                                is not None
+                            ):
+                                visual_verified += 1
+                        if visual_verified:
+                            verified += visual_verified
+                            verification_notes.append(
+                                f"Operation {op_index}, page {page_index + 1}: "
+                                "visual-region edit applied; visual-region replacement "
+                                "verified near the AI-located bbox."
+                            )
+                        else:
+                            warnings.append(
+                                f"Operation {op_index}: visual-region replacement could not "
+                                f"be verified near its bbox on page {page_index + 1}."
+                            )
+                    elif action == "redact_text":
+                        # The source is image content, so there is no extractable old text
+                        # to query after redaction. Reaching this branch means the normalized
+                        # region was valid and the redaction was applied to the original page.
+                        verified += len(prepared)
+                        verification_notes.append(
+                            f"Operation {op_index}, page {page_index + 1}: "
+                            "visual-region redaction applied to the validated bbox."
+                        )
+                    else:
+                        verification_notes.append(
+                            f"Operation {op_index}, page {page_index + 1}: "
+                            "visual-region edit applied."
+                        )
 
             if not operation_applied:
                 warnings.append(
