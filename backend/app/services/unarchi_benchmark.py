@@ -5,7 +5,7 @@ from typing import Any
 from backend.app.services.unarchi_engine import UnarchiEngine
 
 
-BENCHMARK_VERSION = "unarchi-ablation-v0.13"
+BENCHMARK_VERSION = "unarchi-ablation-v0.14"
 
 
 def _failure_sensitization() -> dict[str, Any]:
@@ -823,6 +823,128 @@ def _contradiction_driven_self_schema_revision() -> dict[str, Any]:
         ),
     }
 
+
+def _context_sensitive_self_schema_decomposition() -> dict[str, Any]:
+    engine = UnarchiEngine()
+    goal = "validate release evidence"
+    action = "run automated release check"
+
+    for index in range(5):
+        engine.learn(
+            observation=f"Sandbox release validation #{index} completed.",
+            goal=goal,
+            action=action,
+            outcome="sandbox automated check produced correct evidence",
+            success=True,
+            reward=0.8,
+            predicted_success=0.55,
+        )
+
+    for index in range(5):
+        engine.learn(
+            observation=f"Production release validation #{index} completed.",
+            goal=goal,
+            action=action,
+            outcome="production automated check missed invalid evidence",
+            success=False,
+            reward=-0.9,
+            predicted_success=0.70,
+        )
+
+    schema = engine.consolidate_self_schema(min_evidence=2)
+    parent = next(
+        item
+        for item in schema
+        if item.kind == "mixed" and action in item.pattern
+    )
+    decomposition = engine.decompose_self_schema_context(
+        parent.id,
+        context_rules={
+            "sandbox": ("sandbox",),
+            "production": ("production",),
+        },
+        min_evidence_per_context=3,
+        min_holdout_improvement=0.10,
+    )
+    contextual_entries = engine.active_contextual_self_schema(
+        parent_schema_id=parent.id
+    )
+    by_label = {item.context_label: item for item in contextual_entries}
+
+    comparison = engine.compare_contextual_schema_ablation(
+        candidates=[
+            {
+                "action": action,
+                "expected_success": 0.62,
+                "expected_information_gain": 0.10,
+                "risk": 0.10,
+                "reversible": True,
+            },
+            {
+                "action": "request independent review",
+                "expected_success": 0.58,
+                "expected_information_gain": 0.15,
+                "risk": 0.10,
+                "reversible": True,
+            },
+        ],
+        context="production release",
+    )
+    narrative = engine.build_metacognitive_narrative(
+        "contextual_schema"
+    )
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    return {
+        "name": "context_sensitive_self_schema_decomposition",
+        "expected_direction": (
+            "held_out context split outperforms a mixed global schema and "
+            "changes a later context-specific decision"
+        ),
+        "passed": (
+            parent.kind == "mixed"
+            and decomposition.status == "accepted"
+            and decomposition.improvement > 0.0
+            and decomposition.contextual_holdout_mae
+            < decomposition.global_holdout_mae
+            and set(by_label) == {"sandbox", "production"}
+            and by_label["sandbox"].kind == "capability"
+            and by_label["production"].kind == "limitation"
+            and comparison.contextual_schema_causally_active
+            and comparison.choice_changed
+            and comparison.global_action == action
+            and comparison.contextual_action == "request independent review"
+            and restored.contextual_self_schema
+            == engine.contextual_self_schema
+            and restored.self_schema_decompositions
+            == engine.self_schema_decompositions
+            and narrative.unsupported_claims == 0
+            and bool(narrative.evidence_refs)
+        ),
+        "global_kind": parent.kind,
+        "decomposition_status": decomposition.status,
+        "global_holdout_mae": decomposition.global_holdout_mae,
+        "contextual_holdout_mae": decomposition.contextual_holdout_mae,
+        "heldout_improvement": decomposition.improvement,
+        "sandbox_kind": by_label.get("sandbox").kind
+        if by_label.get("sandbox")
+        else None,
+        "production_kind": by_label.get("production").kind
+        if by_label.get("production")
+        else None,
+        "global_action": comparison.global_action,
+        "contextual_action": comparison.contextual_action,
+        "choice_changed": comparison.choice_changed,
+        "contextual_schema_causally_active": (
+            comparison.contextual_schema_causally_active
+        ),
+        "restart_preserved": (
+            restored.contextual_self_schema == engine.contextual_self_schema
+            and restored.self_schema_decompositions
+            == engine.self_schema_decompositions
+        ),
+    }
+
 def run_unarchi_ablation_benchmark() -> dict[str, Any]:
     scenarios = [
         _failure_sensitization(),
@@ -839,6 +961,7 @@ def run_unarchi_ablation_benchmark() -> dict[str, Any]:
         _counterfactual_recurrent_information_gain(),
         _autobiographical_self_schema_transfer(),
         _contradiction_driven_self_schema_revision(),
+        _context_sensitive_self_schema_decomposition(),
     ]
     passed = sum(bool(item["passed"]) for item in scenarios)
     return {

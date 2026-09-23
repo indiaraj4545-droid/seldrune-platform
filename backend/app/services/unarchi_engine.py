@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 
-UNARCHI_VERSION = "unarchi-v0.13"
+UNARCHI_VERSION = "unarchi-v0.14"
 _STOPWORDS = {
     "a",
     "an",
@@ -396,6 +396,61 @@ class SelfSchemaRevisionComparison:
         return asdict(self)
 
 
+@dataclass
+class ContextualSelfSchemaEntry:
+    id: int
+    parent_schema_id: int
+    context_label: str
+    context_terms: tuple[str, ...]
+    pattern: str
+    kind: str
+    confidence: float
+    evidence_count: int
+    success_count: int
+    failure_count: int
+    success_rate: float
+    mean_reward: float
+    success_bias: float
+    risk_bias: float
+    evidence_refs: tuple[str, ...] = ()
+    status: str = "active"
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class SelfSchemaDecomposition:
+    id: int
+    parent_schema_id: int
+    context_schema_ids: tuple[int, ...]
+    context_labels: tuple[str, ...]
+    global_success_rate: float
+    global_holdout_mae: float
+    contextual_holdout_mae: float
+    improvement: float
+    held_out_count: int
+    status: str
+    evidence_refs: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class ContextualSchemaComparison:
+    contextual_action: str
+    global_action: str
+    contextual_predicted_success: float
+    global_predicted_success: float
+    predicted_success_delta: float
+    choice_changed: bool
+    contextual_schema_causally_active: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 @dataclass(frozen=True)
 class MetacognitiveNarrative:
     focus: str
@@ -449,12 +504,13 @@ class UnarchiEngine:
     """
     CPU-only experimental cognitive kernel.
 
-    v0.13 includes causal internal dynamics, bounded endogenous goals, a
+    v0.14 includes causal internal dynamics, bounded endogenous goals, a
     calibrated predictive self-model, prospective memory, evidence-grounded
     metacognition, explicit value arbitration, competing causal hypotheses,
     controlled self-intervention trials, a bounded recurrent global workspace,
     counterfactual future simulation with prediction-error feedback, a compact
-    autobiographical self-schema, and contradiction-driven schema revision.
+    autobiographical self-schema, contradiction-driven revision, and validated
+    context-sensitive self-schema decomposition.
     """
 
     state: UnarchiState = field(default_factory=UnarchiState)
@@ -491,6 +547,14 @@ class UnarchiEngine:
     max_self_schema_entries: int = 32
     self_schema_revisions: list[SelfSchemaRevision] = field(default_factory=list)
     next_self_schema_revision_id: int = 1
+    contextual_self_schema: list[ContextualSelfSchemaEntry] = field(
+        default_factory=list
+    )
+    next_contextual_self_schema_id: int = 1
+    self_schema_decompositions: list[SelfSchemaDecomposition] = field(
+        default_factory=list
+    )
+    next_self_schema_decomposition_id: int = 1
     success_prediction_bias: float = 0.0
     uncertainty_prediction_bias: float = 0.0
     stress_prediction_bias: float = 0.0
@@ -947,6 +1011,7 @@ class UnarchiEngine:
         reversible: bool = True,
         context: str = "",
         use_self_schema: bool = True,
+        use_contextual_schema: bool = True,
     ) -> SelfPrediction:
         """
         Predict external success and internal consequences before an action.
@@ -968,6 +1033,7 @@ class UnarchiEngine:
             ) = self.self_schema_adjustment(
                 context=context,
                 action=action,
+                use_contextual_schema=use_contextual_schema,
             )
 
         effective_risk = _clamp(risk + schema_risk_bias)
@@ -1037,6 +1103,7 @@ class UnarchiEngine:
         *,
         context: str = "",
         use_self_schema: bool = True,
+        use_contextual_schema: bool = True,
     ) -> SelfPrediction:
         """Predict each candidate and return the highest-utility option."""
         if not candidates:
@@ -1053,6 +1120,7 @@ class UnarchiEngine:
                 reversible=bool(candidate.get("reversible", True)),
                 context=str(candidate.get("context") or context),
                 use_self_schema=use_self_schema,
+                use_contextual_schema=use_contextual_schema,
             )
             for candidate in candidates
         ]
@@ -2963,13 +3031,422 @@ class UnarchiEngine:
             revision_causally_active=active,
         )
 
-    def self_schema_adjustment(
+
+    def active_contextual_self_schema(
+        self,
+        *,
+        parent_schema_id: int | None = None,
+    ) -> tuple[ContextualSelfSchemaEntry, ...]:
+        items = [
+            item
+            for item in self.contextual_self_schema
+            if item.status == "active"
+            and (
+                parent_schema_id is None
+                or item.parent_schema_id == parent_schema_id
+            )
+        ]
+        return tuple(
+            sorted(
+                items,
+                key=lambda item: (
+                    item.parent_schema_id,
+                    item.context_label,
+                    item.id,
+                ),
+            )
+        )
+
+    def _context_rule_terms(
+        self,
+        context_rules: dict[str, tuple[str, ...] | list[str]],
+    ) -> dict[str, tuple[str, ...]]:
+        if len(context_rules) < 2:
+            raise ValueError("at least two candidate contexts are required")
+        normalized: dict[str, tuple[str, ...]] = {}
+        for raw_label, raw_terms in context_rules.items():
+            label = str(raw_label).strip().casefold()
+            if not label:
+                raise ValueError("context labels must be non-empty")
+            if not isinstance(raw_terms, (tuple, list)):
+                raise ValueError("context rules must map labels to term lists")
+            terms: set[str] = set()
+            for raw in raw_terms:
+                terms.update(_terms(str(raw)))
+            if not terms:
+                raise ValueError("each context rule needs at least one term")
+            normalized[label] = tuple(sorted(terms))
+        if len(normalized) < 2:
+            raise ValueError("context labels must be unique")
+        return normalized
+
+    def _experience_context_label(
+        self,
+        experience: Experience,
+        context_rules: dict[str, tuple[str, ...]],
+    ) -> str | None:
+        observation_terms = _terms(experience.observation)
+        matches = [
+            label
+            for label, terms in context_rules.items()
+            if observation_terms.intersection(terms)
+        ]
+        return matches[0] if len(matches) == 1 else None
+
+    def decompose_self_schema_context(
+        self,
+        schema_id: int,
+        *,
+        context_rules: dict[str, tuple[str, ...] | list[str]],
+        min_evidence_per_context: int = 3,
+        min_holdout_improvement: float = 0.10,
+        similarity_threshold: float = 0.28,
+    ) -> SelfSchemaDecomposition:
+        """
+        Test a candidate context split against held-out autobiographical outcomes.
+
+        The split is accepted only if every context has enough evidence and its
+        held-out mean absolute error beats an unsplit global predictor by the
+        requested margin. Context rules are explicit hypotheses, not invented
+        identity labels.
+        """
+        parent = next(
+            (item for item in self.self_schema if item.id == schema_id),
+            None,
+        )
+        if parent is None:
+            raise ValueError("unknown self schema")
+        if parent.status != "active":
+            raise ValueError("self schema is not active")
+
+        rules = self._context_rule_terms(context_rules)
+        min_evidence_per_context = max(
+            3,
+            min(int(min_evidence_per_context), 24),
+        )
+        min_holdout_improvement = _clamp(
+            min_holdout_improvement,
+            0.01,
+            0.80,
+        )
+        matching = self._matching_schema_experiences(
+            parent,
+            similarity_threshold=similarity_threshold,
+        )
+
+        by_context: dict[str, list[tuple[int, Experience]]] = {
+            label: [] for label in rules
+        }
+        for index, experience in matching:
+            label = self._experience_context_label(experience, rules)
+            if label is not None:
+                by_context[label].append((index, experience))
+
+        sufficient = all(
+            len(records) >= min_evidence_per_context
+            for records in by_context.values()
+        )
+        evidence_refs = tuple(
+            f"experience:{index}"
+            for label in sorted(by_context)
+            for index, _ in by_context[label]
+        )
+        if not sufficient:
+            record = SelfSchemaDecomposition(
+                id=self.next_self_schema_decomposition_id,
+                parent_schema_id=parent.id,
+                context_schema_ids=(),
+                context_labels=tuple(sorted(rules)),
+                global_success_rate=parent.success_rate,
+                global_holdout_mae=1.0,
+                contextual_holdout_mae=1.0,
+                improvement=0.0,
+                held_out_count=0,
+                status="insufficient_evidence",
+                evidence_refs=evidence_refs,
+            )
+            self.next_self_schema_decomposition_id += 1
+            self.self_schema_decompositions.append(record)
+            return record
+
+        training_by_context: dict[str, list[tuple[int, Experience]]] = {}
+        holdout: list[tuple[str, int, Experience]] = []
+        for label, records in by_context.items():
+            training_by_context[label] = records[:-1]
+            held_index, held_experience = records[-1]
+            holdout.append((label, held_index, held_experience))
+
+        training = [
+            item
+            for label in sorted(training_by_context)
+            for item in training_by_context[label]
+        ]
+        global_success_rate = sum(
+            1.0 if experience.success is True else 0.0
+            for _, experience in training
+        ) / len(training)
+        context_success_rates = {
+            label: (
+                sum(
+                    1.0 if experience.success is True else 0.0
+                    for _, experience in records
+                )
+                / len(records)
+            )
+            for label, records in training_by_context.items()
+        }
+
+        global_errors: list[float] = []
+        contextual_errors: list[float] = []
+        for label, _, experience in holdout:
+            actual = 1.0 if experience.success is True else 0.0
+            global_errors.append(abs(actual - global_success_rate))
+            contextual_errors.append(
+                abs(actual - context_success_rates[label])
+            )
+        global_mae = sum(global_errors) / len(global_errors)
+        contextual_mae = sum(contextual_errors) / len(contextual_errors)
+        improvement = global_mae - contextual_mae
+        rate_spread = (
+            max(context_success_rates.values())
+            - min(context_success_rates.values())
+        )
+        accepted = (
+            improvement >= min_holdout_improvement
+            and rate_spread >= 0.25
+        )
+
+        context_schema_ids: list[int] = []
+        if accepted:
+            for label in sorted(rules):
+                records = by_context[label]
+                successes = sum(
+                    1 for _, experience in records if experience.success is True
+                )
+                failures = sum(
+                    1 for _, experience in records if experience.success is False
+                )
+                count = successes + failures
+                success_rate = successes / count
+                mean_reward = sum(
+                    experience.reward for _, experience in records
+                ) / count
+                if success_rate >= 0.75:
+                    kind = "capability"
+                elif success_rate <= 0.35:
+                    kind = "limitation"
+                else:
+                    kind = "mixed"
+                consistency = max(success_rate, 1.0 - success_rate)
+                confidence = _clamp(
+                    0.30
+                    + min(0.45, count * 0.08)
+                    + (consistency * 0.15)
+                    + min(0.10, improvement * 0.20),
+                    0.0,
+                    0.98,
+                )
+                success_bias = max(
+                    -0.22,
+                    min(
+                        0.22,
+                        (success_rate - 0.5) * 0.44 * confidence,
+                    ),
+                )
+                risk_bias = max(
+                    -0.16,
+                    min(
+                        0.16,
+                        (0.5 - success_rate) * 0.32 * confidence,
+                    ),
+                )
+                existing = next(
+                    (
+                        item
+                        for item in self.contextual_self_schema
+                        if item.parent_schema_id == parent.id
+                        and item.context_label == label
+                    ),
+                    None,
+                )
+                refs = tuple(
+                    f"experience:{index}" for index, _ in records
+                )
+                if existing is None:
+                    existing = ContextualSelfSchemaEntry(
+                        id=self.next_contextual_self_schema_id,
+                        parent_schema_id=parent.id,
+                        context_label=label,
+                        context_terms=rules[label],
+                        pattern=parent.pattern,
+                        kind=kind,
+                        confidence=round(confidence, 6),
+                        evidence_count=count,
+                        success_count=successes,
+                        failure_count=failures,
+                        success_rate=round(success_rate, 6),
+                        mean_reward=round(mean_reward, 6),
+                        success_bias=round(success_bias, 6),
+                        risk_bias=round(risk_bias, 6),
+                        evidence_refs=refs,
+                    )
+                    self.next_contextual_self_schema_id += 1
+                    self.contextual_self_schema.append(existing)
+                else:
+                    existing.context_terms = rules[label]
+                    existing.pattern = parent.pattern
+                    existing.kind = kind
+                    existing.confidence = round(confidence, 6)
+                    existing.evidence_count = count
+                    existing.success_count = successes
+                    existing.failure_count = failures
+                    existing.success_rate = round(success_rate, 6)
+                    existing.mean_reward = round(mean_reward, 6)
+                    existing.success_bias = round(success_bias, 6)
+                    existing.risk_bias = round(risk_bias, 6)
+                    existing.evidence_refs = refs
+                    existing.status = "active"
+                context_schema_ids.append(existing.id)
+
+            for item in self.contextual_self_schema:
+                if (
+                    item.parent_schema_id == parent.id
+                    and item.context_label not in rules
+                ):
+                    item.status = "retired"
+
+        record = SelfSchemaDecomposition(
+            id=self.next_self_schema_decomposition_id,
+            parent_schema_id=parent.id,
+            context_schema_ids=tuple(context_schema_ids),
+            context_labels=tuple(sorted(rules)),
+            global_success_rate=round(global_success_rate, 6),
+            global_holdout_mae=round(global_mae, 6),
+            contextual_holdout_mae=round(contextual_mae, 6),
+            improvement=round(improvement, 6),
+            held_out_count=len(holdout),
+            status="accepted" if accepted else "rejected_no_gain",
+            evidence_refs=evidence_refs,
+        )
+        self.next_self_schema_decomposition_id += 1
+        self.self_schema_decompositions.append(record)
+        if len(self.self_schema_decompositions) > self.max_memory:
+            self.self_schema_decompositions = self.self_schema_decompositions[
+                -self.max_memory:
+            ]
+
+        if accepted:
+            self.stage_global_workspace_item(
+                source="self_schema",
+                content=(
+                    f"context decomposition id={record.id}; "
+                    f"parent_schema={parent.id}; "
+                    f"contexts={','.join(record.context_labels)}; "
+                    f"heldout_improvement={record.improvement:.3f}"
+                ),
+                salience=max(0.55, _clamp(record.improvement + 0.35)),
+                evidence_refs=(
+                    f"self_schema_decomposition:{record.id}",
+                    *evidence_refs[-4:],
+                ),
+            )
+        return record
+
+    def contextual_self_schema_adjustment(
         self,
         *,
         context: str,
         action: str,
     ) -> tuple[float, float, tuple[str, ...]]:
+        context_terms = _terms(context)
+        if not context_terms:
+            return 0.0, 0.0, ()
+
+        matches: list[tuple[float, ContextualSelfSchemaEntry]] = []
+        for item in self.contextual_self_schema:
+            if item.status != "active":
+                continue
+            if not context_terms.intersection(item.context_terms):
+                continue
+            similarity = _similarity(action, item.pattern)
+            if similarity < 0.18:
+                continue
+            weight = max(0.01, similarity) * item.confidence
+            matches.append((weight, item))
+
+        if not matches:
+            return 0.0, 0.0, ()
+
+        matches.sort(key=lambda pair: (pair[0], pair[1].confidence), reverse=True)
+        selected = matches[:3]
+        total_weight = sum(weight for weight, _ in selected) or 1.0
+        success_bias = sum(
+            weight * item.success_bias for weight, item in selected
+        ) / total_weight
+        risk_bias = sum(
+            weight * item.risk_bias for weight, item in selected
+        ) / total_weight
+        refs = tuple(
+            f"contextual_self_schema:{item.id}" for _, item in selected
+        )
+        return (
+            round(max(-0.22, min(0.22, success_bias)), 6),
+            round(max(-0.16, min(0.16, risk_bias)), 6),
+            refs,
+        )
+
+    def compare_contextual_schema_ablation(
+        self,
+        *,
+        candidates: list[dict[str, Any]],
+        context: str,
+    ) -> ContextualSchemaComparison:
+        if not candidates:
+            raise ValueError("at least one candidate action is required")
+
+        contextual_engine = deepcopy(self)
+        global_engine = deepcopy(self)
+        contextual = contextual_engine.choose_predicted_action(
+            candidates,
+            context=context,
+            use_self_schema=True,
+            use_contextual_schema=True,
+        )
+        global_only = global_engine.choose_predicted_action(
+            candidates,
+            context=context,
+            use_self_schema=True,
+            use_contextual_schema=False,
+        )
+        delta = contextual.predicted_success - global_only.predicted_success
+        choice_changed = contextual.action != global_only.action
+        active = choice_changed or abs(delta) >= 0.05
+        return ContextualSchemaComparison(
+            contextual_action=contextual.action,
+            global_action=global_only.action,
+            contextual_predicted_success=contextual.predicted_success,
+            global_predicted_success=global_only.predicted_success,
+            predicted_success_delta=round(delta, 6),
+            choice_changed=choice_changed,
+            contextual_schema_causally_active=active,
+        )
+
+    def self_schema_adjustment(
+        self,
+        *,
+        context: str,
+        action: str,
+        use_contextual_schema: bool = True,
+    ) -> tuple[float, float, tuple[str, ...]]:
         """Return bounded transfer biases from related demonstrated self-schema."""
+        if use_contextual_schema:
+            contextual = self.contextual_self_schema_adjustment(
+                context=context,
+                action=action,
+            )
+            if contextual[2]:
+                return contextual
+
         query = f"{context} {action}".strip()
         matches: list[tuple[float, SelfSchemaEntry]] = []
         for item in self.self_schema:
@@ -3022,7 +3499,57 @@ class UnarchiEngine:
             refs.append(ref)
             details.append(detail)
 
-        if focus in {"schema_revision", "self_schema_revision", "corrigibility"}:
+        if focus in {
+            "contextual_schema",
+            "schema_decomposition",
+            "context_decomposition",
+        }:
+            if self.self_schema_decompositions:
+                decomposition = self.self_schema_decompositions[-1]
+                add(
+                    f"self_schema_decomposition:{decomposition.id}",
+                    (
+                        f"parent_schema={decomposition.parent_schema_id}; "
+                        f"contexts={','.join(decomposition.context_labels)}; "
+                        f"status={decomposition.status}; "
+                        f"global_mae={decomposition.global_holdout_mae:.3f}; "
+                        f"contextual_mae="
+                        f"{decomposition.contextual_holdout_mae:.3f}; "
+                        f"improvement={decomposition.improvement:.3f}"
+                    ),
+                )
+                for schema_id in decomposition.context_schema_ids:
+                    item = next(
+                        (
+                            candidate
+                            for candidate in self.contextual_self_schema
+                            if candidate.id == schema_id
+                        ),
+                        None,
+                    )
+                    if item is not None:
+                        add(
+                            f"contextual_self_schema:{item.id}",
+                            (
+                                f"context={item.context_label}; kind={item.kind}; "
+                                f"success_rate={item.success_rate:.3f}; "
+                                f"confidence={item.confidence:.3f}"
+                            ),
+                        )
+                for ref in decomposition.evidence_refs[-4:]:
+                    add(
+                        ref,
+                        "autobiographical evidence used to validate context split",
+                    )
+                summary = (
+                    "The latest context-sensitive self-schema decomposition is "
+                    "grounded in an explicit candidate partition and held-out "
+                    "prediction gain over the unsplit global schema."
+                )
+            else:
+                summary = "No context-sensitive self-schema decomposition exists."
+
+        elif focus in {"schema_revision", "self_schema_revision", "corrigibility"}:
             if self.self_schema_revisions:
                 revision = self.self_schema_revisions[-1]
                 add(
@@ -3711,6 +4238,16 @@ class UnarchiEngine:
                 item.to_dict() for item in self.self_schema_revisions
             ],
             "next_self_schema_revision_id": self.next_self_schema_revision_id,
+            "contextual_self_schema": [
+                item.to_dict() for item in self.contextual_self_schema
+            ],
+            "next_contextual_self_schema_id": self.next_contextual_self_schema_id,
+            "self_schema_decompositions": [
+                item.to_dict() for item in self.self_schema_decompositions
+            ],
+            "next_self_schema_decomposition_id": (
+                self.next_self_schema_decomposition_id
+            ),
             "success_prediction_bias": self.success_prediction_bias,
             "uncertainty_prediction_bias": self.uncertainty_prediction_bias,
             "stress_prediction_bias": self.stress_prediction_bias,
@@ -3743,6 +4280,11 @@ class UnarchiEngine:
         counterfactuals_payload = payload.get("counterfactual_futures", [])
         self_schema_payload = payload.get("self_schema", [])
         self_schema_revisions_payload = payload.get("self_schema_revisions", [])
+        contextual_self_schema_payload = payload.get("contextual_self_schema", [])
+        self_schema_decompositions_payload = payload.get(
+            "self_schema_decompositions",
+            [],
+        )
         value_weights_payload = payload.get("value_weights", _default_value_weights())
         if not isinstance(state_payload, dict):
             raise ValueError("invalid UNARCHI state")
@@ -3778,6 +4320,10 @@ class UnarchiEngine:
             raise ValueError("invalid UNARCHI self schema")
         if not isinstance(self_schema_revisions_payload, list):
             raise ValueError("invalid UNARCHI self schema revisions")
+        if not isinstance(contextual_self_schema_payload, list):
+            raise ValueError("invalid UNARCHI contextual self schema")
+        if not isinstance(self_schema_decompositions_payload, list):
+            raise ValueError("invalid UNARCHI self schema decompositions")
 
         memory: list[Experience] = []
         for item in memory_payload:
@@ -3930,6 +4476,39 @@ class UnarchiEngine:
             )
             self_schema_revisions.append(SelfSchemaRevision(**restored_item))
 
+        contextual_self_schema: list[ContextualSelfSchemaEntry] = []
+        for item in contextual_self_schema_payload:
+            if not isinstance(item, dict):
+                raise ValueError("invalid UNARCHI contextual self schema entry")
+            restored_item = dict(item)
+            restored_item["context_terms"] = tuple(
+                restored_item.get("context_terms", ())
+            )
+            restored_item["evidence_refs"] = tuple(
+                restored_item.get("evidence_refs", ())
+            )
+            contextual_self_schema.append(
+                ContextualSelfSchemaEntry(**restored_item)
+            )
+
+        self_schema_decompositions: list[SelfSchemaDecomposition] = []
+        for item in self_schema_decompositions_payload:
+            if not isinstance(item, dict):
+                raise ValueError("invalid UNARCHI self schema decomposition")
+            restored_item = dict(item)
+            restored_item["context_schema_ids"] = tuple(
+                restored_item.get("context_schema_ids", ())
+            )
+            restored_item["context_labels"] = tuple(
+                restored_item.get("context_labels", ())
+            )
+            restored_item["evidence_refs"] = tuple(
+                restored_item.get("evidence_refs", ())
+            )
+            self_schema_decompositions.append(
+                SelfSchemaDecomposition(**restored_item)
+            )
+
         max_memory = max(16, min(int(payload.get("max_memory") or 256), 4096))
         max_active = max(
             1,
@@ -4026,6 +4605,24 @@ class UnarchiEngine:
                 int(payload.get("next_self_schema_revision_id") or 1),
                 max((item.id for item in self_schema_revisions), default=0) + 1,
             ),
+            contextual_self_schema=contextual_self_schema[-max_memory:],
+            next_contextual_self_schema_id=max(
+                int(payload.get("next_contextual_self_schema_id") or 1),
+                max(
+                    (item.id for item in contextual_self_schema),
+                    default=0,
+                )
+                + 1,
+            ),
+            self_schema_decompositions=self_schema_decompositions[-max_memory:],
+            next_self_schema_decomposition_id=max(
+                int(payload.get("next_self_schema_decomposition_id") or 1),
+                max(
+                    (item.id for item in self_schema_decompositions),
+                    default=0,
+                )
+                + 1,
+            ),
             success_prediction_bias=float(
                 payload.get("success_prediction_bias") or 0.0
             ),
@@ -4083,6 +4680,12 @@ class UnarchiEngine:
             "self_schema_active_count": len(self.active_self_schema()),
             "self_schema_total_count": len(self.self_schema),
             "self_schema_revision_count": len(self.self_schema_revisions),
+            "contextual_self_schema_count": len(
+                self.active_contextual_self_schema()
+            ),
+            "self_schema_decomposition_count": len(
+                self.self_schema_decompositions
+            ),
             "observed_counterfactual_count": len(
                 [
                     item

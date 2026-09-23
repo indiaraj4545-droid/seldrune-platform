@@ -4,8 +4,8 @@ from backend.app.services.unarchi_benchmark import run_unarchi_ablation_benchmar
 def test_unarchi_ablation_benchmark_passes_all_scenarios() -> None:
     result = run_unarchi_ablation_benchmark()
 
-    assert result["scenario_count"] == 14
-    assert result["passed_scenarios"] == 14
+    assert result["scenario_count"] == 15
+    assert result["passed_scenarios"] == 15
     assert result["pass_rate"] == 1.0
     assert result["claims_phenomenal_consciousness"] is False
 
@@ -188,3 +188,27 @@ def test_unarchi_benchmark_covers_contradiction_driven_schema_revision() -> None
     assert revision["predicted_success_delta"] < 0.0
     assert revision["revision_causally_active"] is True
     assert revision["restart_preserved"] is True
+
+
+
+def test_unarchi_benchmark_covers_context_sensitive_schema_decomposition() -> None:
+    result = run_unarchi_ablation_benchmark()
+    scenarios = {item["name"]: item for item in result["scenarios"]}
+
+    contextual = scenarios["context_sensitive_self_schema_decomposition"]
+
+    assert contextual["passed"] is True
+    assert contextual["global_kind"] == "mixed"
+    assert contextual["decomposition_status"] == "accepted"
+    assert (
+        contextual["contextual_holdout_mae"]
+        < contextual["global_holdout_mae"]
+    )
+    assert contextual["heldout_improvement"] > 0.0
+    assert contextual["sandbox_kind"] == "capability"
+    assert contextual["production_kind"] == "limitation"
+    assert contextual["global_action"] == "run automated release check"
+    assert contextual["contextual_action"] == "request independent review"
+    assert contextual["choice_changed"] is True
+    assert contextual["contextual_schema_causally_active"] is True
+    assert contextual["restart_preserved"] is True
