@@ -4,8 +4,8 @@ from backend.app.services.unarchi_benchmark import run_unarchi_ablation_benchmar
 def test_unarchi_ablation_benchmark_passes_all_scenarios() -> None:
     result = run_unarchi_ablation_benchmark()
 
-    assert result["scenario_count"] == 27
-    assert result["passed_scenarios"] == 27
+    assert result["scenario_count"] == 28
+    assert result["passed_scenarios"] == 28
     assert result["pass_rate"] == 1.0
     assert result["claims_phenomenal_consciousness"] is False
 
@@ -448,3 +448,25 @@ def test_unarchi_benchmark_covers_active_revision_degradation_watch() -> None:
     assert watch["active_map_unchanged"] is True
     assert watch["automatic_rollback_count"] == 0
     assert watch["restart_preserved"] is True
+
+
+
+def test_unarchi_benchmark_covers_rollback_recommendation_resolution() -> None:
+    result = run_unarchi_ablation_benchmark()
+    scenarios = {item["name"]: item for item in result["scenarios"]}
+
+    resolution = scenarios["rollback_recommendation_resolution"]
+
+    assert resolution["passed"] is True
+    assert resolution["defer_pointer_unchanged"] is True
+    assert resolution["dismiss_pointer_unchanged"] is True
+    assert resolution["accepted_map_id"] is not None
+    assert resolution["reactivation_blocked_before_validation"] is True
+    assert (
+        resolution["initial_validation_status"]
+        == "insufficient_post_rollback_evidence"
+    )
+    assert resolution["improved_validation_status"] == "rollback_improved"
+    assert resolution["improvement_delta"] >= 0.05
+    assert resolution["readvance_action"] == "advance"
+    assert resolution["restart_preserved"] is True
