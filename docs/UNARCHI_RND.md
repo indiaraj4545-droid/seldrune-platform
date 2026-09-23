@@ -787,3 +787,81 @@ from transfer because evidence is insufficient.
 The measurable target is calibrated generalization: context transfer should
 improve held-out prediction on supported neighboring contexts while an
 over-generalization ablation should make larger errors on unsupported contexts.
+
+
+## v0.15 transfer-boundary learning checkpoint
+
+UNARCHI v0.15 adds evidence-gated transfer between validated contextual
+self-schemas. A capability demonstrated in one context is not automatically
+generalized to another context simply because the task looks similar.
+
+A transfer candidate names:
+
+- one already validated source contextual self-schema;
+- one explicit target-context label and deterministic matching terms;
+- a minimum amount of new target-context evidence;
+- a required gain over the broader global self-schema;
+- a maximum tolerated source-schema error on the target evidence.
+
+Only autobiographical experiences that were not already cited by either the
+parent global schema or the source contextual schema are eligible to validate
+the transfer. This makes target evidence out-of-sample relative to the stored
+source model.
+
+For the new target evidence, UNARCHI compares:
+
+- error from directly transferring the source contextual success rate;
+- error from falling back to the broader global self-schema.
+
+Transfer is accepted only when the source contextual model beats the global
+fallback by the configured margin and stays below the bounded absolute-error
+threshold. Otherwise the system records an abstention and does not create an
+active transfer path.
+
+An accepted boundary stores:
+
+- source contextual schema identifier;
+- parent global schema identifier;
+- target label and matching terms;
+- target evidence count and observed target success rate;
+- source-context and global success rates;
+- source-transfer and global hold-out errors;
+- measured improvement;
+- bounded transfer strength;
+- exact target evidence references.
+
+Direct validated contextual schemas still take priority. A transfer boundary is
+consulted only when no direct contextual schema matches the current context. If
+no accepted transfer applies, UNARCHI falls back to the global autobiographical
+schema.
+
+v0.15 also includes a transfer ablation: the same later decision is evaluated
+with accepted transfer enabled and disabled while all other self-schema
+evidence remains identical.
+
+The deterministic benchmark requires:
+
+validated sandbox capability -> new staging evidence -> source beats global ->
+accepted staging transfer -> later staging decision -> no-transfer ablation ->
+measurable choice difference; and separately:
+
+validated sandbox capability -> new emergency evidence -> source worse than
+global -> transfer abstention.
+
+Both accepted and rejected transfer evaluations survive export/restore and can
+be reconstructed through evidence-grounded metacognition.
+
+This is functional calibration of generalization boundaries. It does not
+establish subjective identity, self-awareness, sentience, phenomenal
+consciousness, or qualia.
+
+## Next checkpoint: v0.16 latent context-hypothesis discovery
+
+The next research step should let UNARCHI propose a small bounded set of
+candidate context variables from repeated outcome differences, then subject
+those candidates to the same held-out validation used in v0.14 instead of
+treating correlation as a discovered truth.
+
+The measurable target is conservative context discovery: useful latent context
+hypotheses should improve held-out prediction, while noisy or spurious
+candidate splits should be rejected.
