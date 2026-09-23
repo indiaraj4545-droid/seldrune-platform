@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 
-UNARCHI_VERSION = "unarchi-v0.2"
+UNARCHI_VERSION = "unarchi-v0.3"
 _STOPWORDS = {
     "a",
     "an",
@@ -88,6 +88,27 @@ class Experience:
     prediction_error: float
 
 
+@dataclass
+class InternalGoal:
+    id: int
+    question: str
+    parent_goal: str
+    trigger: str
+    priority: float
+    initial_information_gap: float
+    current_information_gap: float
+    source_observation: str
+    max_steps: int = 3
+    steps_used: int = 0
+    status: str = "active"
+    last_evidence: str | None = None
+    reversible_only: bool = True
+    paid_actions_allowed: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 @dataclass(frozen=True)
 class UnarchiFrame:
     mode: str
@@ -134,7 +155,10 @@ class UnarchiEngine:
     state: UnarchiState = field(default_factory=UnarchiState)
     memory: list[Experience] = field(default_factory=list)
     observation_history: list[str] = field(default_factory=list)
+    internal_goals: list[InternalGoal] = field(default_factory=list)
+    next_internal_goal_id: int = 1
     max_memory: int = 256
+    max_active_internal_goals: int = 3
 
     def _novelty(self, observation: str) -> float:
         if not self.observation_history:
@@ -408,6 +432,96 @@ class UnarchiEngine:
             self_report=self_report,
         )
 
+    def _similar_active_internal_goal(
+        self,
+        *,
+        observation: str,
+        parent_goal: str,
+    ) -> InternalGoal | None:
+        query = f"{observation} {parent_goal}"
+        for item in self.internal_goals:
+            if item.status != "active":
+                continue
+            similarity = _similarity(
+                query,
+                f"{item.source_observation} {item.parent_goal}",
+            )
+            if similarity >= 0.55:
+                return item
+        return None
+
+    def _maybe_generate_internal_goal(
+        self,
+        *,
+        frame: UnarchiFrame,
+        observation: str,
+        parent_goal: str,
+    ) -> InternalGoal | None:
+        active = [item for item in self.internal_goals if item.status == "active"]
+        if len(active) >= self.max_active_internal_goals:
+            return None
+        if frame.effective_risk >= 0.70 or frame.state.fatigue >= 0.85:
+            return None
+
+        prediction_pressure = self.state.prediction_error
+        curiosity_pressure = frame.state.curiosity
+        should_generate = (
+            frame.information_gap >= 0.60
+            or prediction_pressure >= 0.45
+            or (
+                frame.state.uncertainty >= 0.62
+                and curiosity_pressure >= 0.55
+            )
+        )
+        if not should_generate:
+            return None
+
+        existing = self._similar_active_internal_goal(
+            observation=observation,
+            parent_goal=parent_goal,
+        )
+        if existing is not None:
+            return existing
+
+        if prediction_pressure >= 0.45:
+            trigger = "prediction_error"
+            question = (
+                "Which assumption most likely caused the recent prediction error "
+                f"while pursuing '{parent_goal[:140]}'?"
+            )
+        elif frame.information_gap >= 0.68:
+            trigger = "information_gap"
+            question = (
+                "What single missing fact would reduce uncertainty most for "
+                f"'{parent_goal[:140]}'?"
+            )
+        else:
+            trigger = "uncertainty"
+            question = (
+                "What low-cost reversible observation would distinguish the leading "
+                f"explanations for '{parent_goal[:140]}'?"
+            )
+
+        priority = _clamp(
+            (frame.information_gap * 0.45)
+            + (frame.state.curiosity * 0.25)
+            + (frame.state.uncertainty * 0.20)
+            + (prediction_pressure * 0.10)
+        )
+        item = InternalGoal(
+            id=self.next_internal_goal_id,
+            question=question,
+            parent_goal=parent_goal[:240],
+            trigger=trigger,
+            priority=round(priority, 6),
+            initial_information_gap=frame.information_gap,
+            current_information_gap=frame.information_gap,
+            source_observation=observation[:400],
+        )
+        self.next_internal_goal_id += 1
+        self.internal_goals.append(item)
+        return item
+
     def cycle(
         self,
         *,
@@ -417,8 +531,9 @@ class UnarchiEngine:
         risk: float = 0.0,
         urgency: float = 0.0,
         use_internal_state: bool = True,
+        generate_internal_goal: bool = True,
     ) -> UnarchiFrame:
-        return self._evaluate(
+        frame = self._evaluate(
             observation=observation,
             goal=goal,
             expected_success=expected_success,
@@ -427,6 +542,61 @@ class UnarchiEngine:
             use_internal_state=use_internal_state,
             record_observation=True,
         )
+        if use_internal_state and generate_internal_goal:
+            self._maybe_generate_internal_goal(
+                frame=frame,
+                observation=observation.strip(),
+                parent_goal=goal.strip(),
+            )
+        return frame
+
+    def active_internal_goals(self) -> tuple[InternalGoal, ...]:
+        return tuple(
+            sorted(
+                (item for item in self.internal_goals if item.status == "active"),
+                key=lambda item: (-item.priority, item.id),
+            )
+        )
+
+    def next_internal_goal(self) -> InternalGoal | None:
+        active = self.active_internal_goals()
+        return active[0] if active else None
+
+    def advance_internal_goal(
+        self,
+        goal_id: int,
+        *,
+        new_information_gap: float,
+        evidence: str,
+        reversible: bool = True,
+        external_cost_usd: float = 0.0,
+    ) -> InternalGoal:
+        """
+        Update one endogenous goal after a bounded investigation step.
+
+        v0.3 rejects irreversible or paid investigation steps. This keeps
+        endogenous cognition separate from uncontrolled external autonomy.
+        """
+        target = next((item for item in self.internal_goals if item.id == goal_id), None)
+        if target is None:
+            raise ValueError("unknown internal goal")
+        if target.status != "active":
+            raise ValueError("internal goal is not active")
+        if not reversible:
+            raise ValueError("UNARCHI v0.3 internal investigations must be reversible")
+        if external_cost_usd > 0.0:
+            raise ValueError("UNARCHI v0.3 internal investigations must be zero-cost")
+
+        target.steps_used += 1
+        target.current_information_gap = _clamp(new_information_gap)
+        target.last_evidence = evidence.strip()[:600] or None
+
+        if target.current_information_gap <= 0.35:
+            target.status = "resolved"
+        elif target.steps_used >= target.max_steps:
+            target.status = "exhausted"
+
+        return target
 
     def compare_ablation(
         self,
@@ -588,7 +758,10 @@ class UnarchiEngine:
             "state": self.state.to_dict(),
             "memory": [asdict(item) for item in self.memory],
             "observation_history": list(self.observation_history),
+            "internal_goals": [item.to_dict() for item in self.internal_goals],
+            "next_internal_goal_id": self.next_internal_goal_id,
             "max_memory": self.max_memory,
+            "max_active_internal_goals": self.max_active_internal_goals,
             "claims_phenomenal_consciousness": False,
         }
 
@@ -601,12 +774,15 @@ class UnarchiEngine:
         state_payload = payload.get("state")
         memory_payload = payload.get("memory")
         history_payload = payload.get("observation_history")
+        goals_payload = payload.get("internal_goals", [])
         if not isinstance(state_payload, dict):
             raise ValueError("invalid UNARCHI state")
         if not isinstance(memory_payload, list):
             raise ValueError("invalid UNARCHI memory")
         if not isinstance(history_payload, list):
             raise ValueError("invalid UNARCHI observation history")
+        if not isinstance(goals_payload, list):
+            raise ValueError("invalid UNARCHI internal goals")
 
         memory: list[Experience] = []
         for item in memory_payload:
@@ -614,12 +790,28 @@ class UnarchiEngine:
                 raise ValueError("invalid UNARCHI experience")
             memory.append(Experience(**item))
 
+        internal_goals: list[InternalGoal] = []
+        for item in goals_payload:
+            if not isinstance(item, dict):
+                raise ValueError("invalid UNARCHI internal goal")
+            internal_goals.append(InternalGoal(**item))
+
         max_memory = max(16, min(int(payload.get("max_memory") or 256), 4096))
+        max_active = max(
+            1,
+            min(int(payload.get("max_active_internal_goals") or 3), 10),
+        )
         return cls(
             state=UnarchiState(**state_payload),
             memory=memory[-max_memory:],
             observation_history=[str(item) for item in history_payload][-max_memory:],
+            internal_goals=internal_goals[-max_memory:],
+            next_internal_goal_id=max(
+                int(payload.get("next_internal_goal_id") or 1),
+                max((item.id for item in internal_goals), default=0) + 1,
+            ),
             max_memory=max_memory,
+            max_active_internal_goals=max_active,
         )
 
     def snapshot(self) -> dict[str, Any]:
@@ -628,5 +820,7 @@ class UnarchiEngine:
             "state": self.state.to_dict(),
             "memory_size": len(self.memory),
             "observation_history_size": len(self.observation_history),
+            "active_internal_goals": len(self.active_internal_goals()),
+            "total_internal_goals": len(self.internal_goals),
             "claims_phenomenal_consciousness": False,
         }
