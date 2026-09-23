@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 
-UNARCHI_VERSION = "unarchi-v0.27"
+UNARCHI_VERSION = "unarchi-v0.28"
 _STOPWORDS = {
     "a",
     "an",
@@ -698,6 +698,33 @@ class ContextValidityRollbackValidation:
     status: str
     reactivation_allowed: bool
     evidence_refs: tuple[str, ...]
+    holdout_gate_watermark_id: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class ContextValidityRollbackHoldoutValidation:
+    id: int
+    recovery_validation_id: int
+    resolution_id: int
+    watch_id: int
+    hypothesis_id: int
+    rollback_selection_id: int
+    rollback_map_id: int
+    blocked_descendant_map_id: int
+    recovery_outcome_ids: tuple[int, ...]
+    holdout_outcome_ids: tuple[int, ...]
+    degraded_signatures: tuple[str, ...]
+    mean_recovery_advantage: float
+    mean_holdout_advantage: float
+    prior_degraded_advantage: float
+    holdout_improvement_delta: float
+    recovery_to_holdout_delta: float
+    status: str
+    reactivation_allowed: bool
+    evidence_refs: tuple[str, ...]
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -852,7 +879,7 @@ class UnarchiEngine:
     """
     CPU-only experimental cognitive kernel.
 
-    v0.27 includes causal internal dynamics, bounded endogenous goals, a
+    v0.28 includes causal internal dynamics, bounded endogenous goals, a
     calibrated predictive self-model, prospective memory, evidence-grounded
     metacognition, explicit value arbitration, competing causal hypotheses,
     controlled self-intervention trials, a bounded recurrent global workspace,
@@ -866,8 +893,8 @@ class UnarchiEngine:
     validity-gated causal-context decision use, evidence-backed gate outcome
     calibration, immutable calibration-aware validity-map revisions,
     lineage-checked active revision selection with auditable rollback,
-    evidence-triggered active-revision degradation recommendations, and
-    explicit recommendation resolution with post-rollback validation gates.
+    evidence-triggered active-revision degradation recommendations, explicit
+    recommendation resolution, and separate rollback recovery/holdout gates.
     """
 
     state: UnarchiState = field(default_factory=UnarchiState)
@@ -973,6 +1000,10 @@ class UnarchiEngine:
         ContextValidityRollbackValidation
     ] = field(default_factory=list)
     next_context_validity_rollback_validation_id: int = 1
+    context_validity_rollback_holdout_validations: list[
+        ContextValidityRollbackHoldoutValidation
+    ] = field(default_factory=list)
+    next_context_validity_rollback_holdout_validation_id: int = 1
     success_prediction_bias: float = 0.0
     uncertainty_prediction_bias: float = 0.0
     stress_prediction_bias: float = 0.0
@@ -5249,23 +5280,20 @@ class UnarchiEngine:
                     rollback_selection is not None
                     and rollback_selection.selected_map_id == previous_map_id
                 ):
-                    validation = next(
+                    holdout = next(
                         (
                             item
                             for item in reversed(
-                                self.context_validity_rollback_validations
+                                self.context_validity_rollback_holdout_validations
                             )
                             if item.resolution_id == accepted.id
                         ),
                         None,
                     )
-                    if (
-                        validation is None
-                        or not validation.reactivation_allowed
-                    ):
+                    if holdout is None or not holdout.reactivation_allowed:
                         raise ValueError(
                             "re-advance blocked until accepted rollback "
-                            "has improved post-rollback calibration"
+                            "passes separate recovery and holdout validation"
                         )
 
         clean_reason = reason.strip()[:500]
@@ -5861,16 +5889,17 @@ class UnarchiEngine:
 
         if not enough:
             status = "insufficient_post_rollback_evidence"
-            allowed = False
+            recovery_passed = False
         elif (
             mean_advantage >= margin
             and improvement >= margin
         ):
-            status = "rollback_improved"
-            allowed = True
+            status = "rollback_recovery_passed"
+            recovery_passed = True
         else:
             status = "rollback_not_improved"
-            allowed = False
+            recovery_passed = False
+        allowed = False
 
         refs = [
             f"context_validity_recommendation_resolution:{resolution.id}",
@@ -5897,6 +5926,17 @@ class UnarchiEngine:
             status=status,
             reactivation_allowed=allowed,
             evidence_refs=tuple(dict.fromkeys(refs)),
+            holdout_gate_watermark_id=(
+                max(
+                    (
+                        item.id
+                        for item in self.context_validity_decision_gates
+                    ),
+                    default=0,
+                )
+                if recovery_passed
+                else 0
+            ),
         )
         self.next_context_validity_rollback_validation_id += 1
         self.context_validity_rollback_validations.append(record)
@@ -5910,11 +5950,161 @@ class UnarchiEngine:
             content=(
                 f"context validity rollback validation={record.id}; "
                 f"resolution={resolution.id}; status={record.status}; "
+                f"holdout_watermark={record.holdout_gate_watermark_id}; "
                 f"reactivation_allowed={record.reactivation_allowed}"
             ),
-            salience=0.70 if allowed else 0.60,
+            salience=0.70 if recovery_passed else 0.60,
             evidence_refs=(
                 f"context_validity_rollback_validation:{record.id}",
+                *record.evidence_refs[-4:],
+            ),
+        )
+        return record
+
+    def validate_context_validity_rollback_holdout(
+        self,
+        recovery_validation_id: int,
+        *,
+        min_samples: int = 3,
+        confirmation_margin: float = 0.05,
+        max_recovery_drop: float = 0.05,
+    ) -> ContextValidityRollbackHoldoutValidation:
+        """
+        Confirm rollback recovery on a separate post-recovery holdout batch.
+
+        Holdout outcomes must be generated after the recovery validation
+        watermark, preventing the same evidence from justifying both recovery
+        and descendant reactivation.
+        """
+        recovery = next(
+            (
+                item
+                for item in self.context_validity_rollback_validations
+                if item.id == recovery_validation_id
+            ),
+            None,
+        )
+        if recovery is None:
+            raise ValueError("unknown rollback recovery validation")
+        if (
+            recovery.status != "rollback_recovery_passed"
+            or recovery.holdout_gate_watermark_id <= 0
+        ):
+            raise ValueError("holdout requires a passed rollback recovery batch")
+
+        resolution = next(
+            (
+                item
+                for item in self.context_validity_recommendation_resolutions
+                if item.id == recovery.resolution_id
+            ),
+            None,
+        )
+        if resolution is None:
+            raise ValueError("rollback recovery resolution is missing")
+        active = self.active_context_causal_validity_map(
+            recovery.hypothesis_id
+        )
+        if active is None or active.id != recovery.rollback_map_id:
+            raise ValueError("holdout validation requires rollback map to remain active")
+
+        min_samples = max(2, min(int(min_samples), 20))
+        margin = _clamp(confirmation_margin, 0.01, 0.50)
+        max_drop = _clamp(max_recovery_drop, 0.0, 0.50)
+        degraded = set(recovery.degraded_signatures)
+        gate_map = {
+            item.id: item
+            for item in self.context_validity_decision_gates
+            if item.validity_map_id == recovery.rollback_map_id
+            and item.id > recovery.holdout_gate_watermark_id
+            and item.environment_signature in degraded
+        }
+        outcomes = [
+            item
+            for item in self.context_validity_gate_outcomes
+            if item.gate_id in gate_map
+        ]
+        counts: dict[str, int] = {}
+        for outcome in outcomes:
+            signature = gate_map[outcome.gate_id].environment_signature
+            counts[signature] = counts.get(signature, 0) + 1
+
+        enough = bool(degraded) and all(
+            counts.get(signature, 0) >= min_samples
+            for signature in degraded
+        )
+        mean_holdout = (
+            sum(
+                item.gated_advantage_vs_alternative
+                for item in outcomes
+            )
+            / len(outcomes)
+            if outcomes
+            else 0.0
+        )
+        improvement = mean_holdout - recovery.prior_degraded_advantage
+        recovery_delta = mean_holdout - recovery.mean_rollback_advantage
+
+        if not enough:
+            status = "insufficient_holdout_evidence"
+            allowed = False
+        elif (
+            mean_holdout >= margin
+            and improvement >= margin
+            and recovery_delta >= -max_drop
+        ):
+            status = "holdout_confirmed"
+            allowed = True
+        else:
+            status = "holdout_not_confirmed"
+            allowed = False
+
+        refs = [
+            f"context_validity_rollback_validation:{recovery.id}",
+            f"context_validity_recommendation_resolution:{resolution.id}",
+        ]
+        refs.extend(
+            f"context_validity_gate_outcome:{item.id}"
+            for item in outcomes
+        )
+        record = ContextValidityRollbackHoldoutValidation(
+            id=self.next_context_validity_rollback_holdout_validation_id,
+            recovery_validation_id=recovery.id,
+            resolution_id=recovery.resolution_id,
+            watch_id=recovery.watch_id,
+            hypothesis_id=recovery.hypothesis_id,
+            rollback_selection_id=recovery.rollback_selection_id,
+            rollback_map_id=recovery.rollback_map_id,
+            blocked_descendant_map_id=recovery.blocked_descendant_map_id,
+            recovery_outcome_ids=recovery.observed_outcome_ids,
+            holdout_outcome_ids=tuple(sorted(item.id for item in outcomes)),
+            degraded_signatures=recovery.degraded_signatures,
+            mean_recovery_advantage=recovery.mean_rollback_advantage,
+            mean_holdout_advantage=round(mean_holdout, 6),
+            prior_degraded_advantage=recovery.prior_degraded_advantage,
+            holdout_improvement_delta=round(improvement, 6),
+            recovery_to_holdout_delta=round(recovery_delta, 6),
+            status=status,
+            reactivation_allowed=allowed,
+            evidence_refs=tuple(dict.fromkeys(refs)),
+        )
+        self.next_context_validity_rollback_holdout_validation_id += 1
+        self.context_validity_rollback_holdout_validations.append(record)
+        if len(self.context_validity_rollback_holdout_validations) > self.max_memory:
+            self.context_validity_rollback_holdout_validations = (
+                self.context_validity_rollback_holdout_validations[-self.max_memory:]
+            )
+
+        self.stage_global_workspace_item(
+            source="intervention",
+            content=(
+                f"context validity rollback holdout={record.id}; "
+                f"recovery={recovery.id}; status={record.status}; "
+                f"reactivation_allowed={record.reactivation_allowed}"
+            ),
+            salience=0.75 if allowed else 0.60,
+            evidence_refs=(
+                f"context_validity_rollback_holdout_validation:{record.id}",
                 *record.evidence_refs[-4:],
             ),
         )
@@ -7295,6 +7485,35 @@ class UnarchiEngine:
             details.append(detail)
 
         if focus in {
+            "context_validity_holdout",
+            "rollback_holdout",
+            "holdout_validation",
+        }:
+            if self.context_validity_rollback_holdout_validations:
+                item = self.context_validity_rollback_holdout_validations[-1]
+                add(
+                    f"context_validity_rollback_holdout_validation:{item.id}",
+                    (
+                        f"recovery={item.recovery_validation_id}; "
+                        f"rollback_map={item.rollback_map_id}; "
+                        f"holdout_outcomes={len(item.holdout_outcome_ids)}; "
+                        f"recovery_advantage={item.mean_recovery_advantage}; "
+                        f"holdout_advantage={item.mean_holdout_advantage}; "
+                        f"status={item.status}; "
+                        f"reactivation_allowed={item.reactivation_allowed}"
+                    ),
+                )
+                for ref in item.evidence_refs[-8:]:
+                    add(ref, "separate post-recovery holdout evidence")
+                summary = (
+                    "Rollback reactivation requires recovery evidence first "
+                    "and a later non-overlapping holdout batch that independently "
+                    "confirms the calibration improvement."
+                )
+            else:
+                summary = "No rollback holdout validation has been recorded."
+
+        elif focus in {
             "context_validity_resolution",
             "rollback_resolution",
             "rollback_validation",
@@ -7346,7 +7565,7 @@ class UnarchiEngine:
                 summary = (
                     "Rollback recommendations require explicit resolution; "
                     "accepted rollbacks block descendant re-advance until "
-                    "new post-rollback observed outcomes validate improvement."
+                    "recovery improves and a later holdout batch confirms it."
                 )
             else:
                 summary = "No rollback recommendation resolution has been recorded."
@@ -8607,6 +8826,13 @@ class UnarchiEngine:
             "next_context_validity_rollback_validation_id": (
                 self.next_context_validity_rollback_validation_id
             ),
+            "context_validity_rollback_holdout_validations": [
+                item.to_dict()
+                for item in self.context_validity_rollback_holdout_validations
+            ],
+            "next_context_validity_rollback_holdout_validation_id": (
+                self.next_context_validity_rollback_holdout_validation_id
+            ),
             "success_prediction_bias": self.success_prediction_bias,
             "uncertainty_prediction_bias": self.uncertainty_prediction_bias,
             "stress_prediction_bias": self.stress_prediction_bias,
@@ -8708,6 +8934,10 @@ class UnarchiEngine:
             "context_validity_rollback_validations",
             [],
         )
+        context_validity_rollback_holdout_validations_payload = payload.get(
+            "context_validity_rollback_holdout_validations",
+            [],
+        )
         value_weights_payload = payload.get("value_weights", _default_value_weights())
         if not isinstance(state_payload, dict):
             raise ValueError("invalid UNARCHI state")
@@ -8793,6 +9023,13 @@ class UnarchiEngine:
         if not isinstance(context_validity_rollback_validations_payload, list):
             raise ValueError(
                 "invalid UNARCHI context validity rollback validations"
+            )
+        if not isinstance(
+            context_validity_rollback_holdout_validations_payload,
+            list,
+        ):
+            raise ValueError(
+                "invalid UNARCHI context validity rollback holdout validations"
             )
 
         memory: list[Experience] = []
@@ -9302,6 +9539,31 @@ class UnarchiEngine:
                 ContextValidityRollbackValidation(**restored_item)
             )
 
+        context_validity_rollback_holdout_validations: list[
+            ContextValidityRollbackHoldoutValidation
+        ] = []
+        for item in context_validity_rollback_holdout_validations_payload:
+            if not isinstance(item, dict):
+                raise ValueError(
+                    "invalid UNARCHI context validity rollback holdout validation"
+                )
+            restored_item = dict(item)
+            restored_item["recovery_outcome_ids"] = tuple(
+                restored_item.get("recovery_outcome_ids", ())
+            )
+            restored_item["holdout_outcome_ids"] = tuple(
+                restored_item.get("holdout_outcome_ids", ())
+            )
+            restored_item["degraded_signatures"] = tuple(
+                restored_item.get("degraded_signatures", ())
+            )
+            restored_item["evidence_refs"] = tuple(
+                restored_item.get("evidence_refs", ())
+            )
+            context_validity_rollback_holdout_validations.append(
+                ContextValidityRollbackHoldoutValidation(**restored_item)
+            )
+
         max_memory = max(16, min(int(payload.get("max_memory") or 256), 4096))
         max_active = max(
             1,
@@ -9639,6 +9901,25 @@ class UnarchiEngine:
                 )
                 + 1,
             ),
+            context_validity_rollback_holdout_validations=(
+                context_validity_rollback_holdout_validations[-max_memory:]
+            ),
+            next_context_validity_rollback_holdout_validation_id=max(
+                int(
+                    payload.get(
+                        "next_context_validity_rollback_holdout_validation_id"
+                    )
+                    or 1
+                ),
+                max(
+                    (
+                        item.id
+                        for item in context_validity_rollback_holdout_validations
+                    ),
+                    default=0,
+                )
+                + 1,
+            ),
             success_prediction_bias=float(
                 payload.get("success_prediction_bias") or 0.0
             ),
@@ -9830,10 +10111,13 @@ class UnarchiEngine:
             "rollback_validation_count": len(
                 self.context_validity_rollback_validations
             ),
+            "rollback_holdout_validation_count": len(
+                self.context_validity_rollback_holdout_validations
+            ),
             "rollback_reactivation_allowed_count": len(
                 [
                     item
-                    for item in self.context_validity_rollback_validations
+                    for item in self.context_validity_rollback_holdout_validations
                     if item.reactivation_allowed
                 ]
             ),
