@@ -669,3 +669,57 @@ The measurable target is identity-model corrigibility: repeated contrary
 evidence should reduce confidence in an obsolete capability/limitation and
 produce a better-calibrated replacement, while an ablation that freezes the
 schema should retain the old error.
+
+
+## v0.13 contradiction-driven self-schema revision checkpoint
+
+UNARCHI v0.13 makes autobiographical self-schema explicitly corrigible. An
+established capability or limitation is no longer allowed to remain authoritative
+only because it accumulated earlier supporting evidence.
+
+For a directional self-schema, the kernel now distinguishes evidence already used
+to construct the schema from genuinely new autobiographical evidence. New outcomes
+that oppose the stored direction are counted as contradictions. Revision requires a
+bounded minimum number of contradictory observations, preventing one anomalous event
+from rewriting the self-model.
+
+When the contradiction threshold is met, UNARCHI recomputes the schema from the
+complete relevant evidence set rather than selectively replacing the old claim.
+The revision record stores:
+
+- the schema identifier;
+- prior and revised schema kind;
+- prior and revised confidence;
+- prior and revised observed success rate;
+- the exact new contradictory experience references;
+- the contradiction ratio among new matching evidence;
+- whether the evidence was insufficient, confirmed the schema, or revised it.
+
+A revision that changes the self-schema is also staged back into the recurrent
+global workspace as self-model evidence. The metacognitive narrative can reconstruct
+the latest change from the old schema state and the actual contradictory experiences.
+
+v0.13 includes a frozen-schema ablation. Two otherwise identical engines receive
+the same new autobiographical evidence. The corrigible engine reconciles the stale
+schema before choosing a later action; the ablated engine keeps the old schema
+frozen. This makes the decision effect of self-model corrigibility measurable.
+
+The deterministic benchmark requires:
+
+established capability -> repeated contradictory failures -> contradiction threshold
+-> schema revision -> later related decision -> frozen-schema ablation -> measurable
+choice difference -> restart -> preserved revision evidence.
+
+This is functional self-model corrigibility. It does not demonstrate subjective
+identity, self-awareness, sentience, phenomenal consciousness, or qualia.
+
+## Next checkpoint: v0.14 context-sensitive self-schema decomposition
+
+The next research step should prevent contradictory evidence from being averaged
+together when outcomes differ because of a real context variable. UNARCHI should
+test whether an apparently inconsistent global self-schema is better explained by
+multiple context-specific schemas.
+
+The measurable target is contextual calibration: splitting a mixed schema only when
+a reproducible context distinction improves held-out prediction relative to the
+unsplit schema, with an ablation that preserves the global schema for comparison.
