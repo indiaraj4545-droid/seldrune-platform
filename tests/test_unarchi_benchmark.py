@@ -4,8 +4,8 @@ from backend.app.services.unarchi_benchmark import run_unarchi_ablation_benchmar
 def test_unarchi_ablation_benchmark_passes_all_scenarios() -> None:
     result = run_unarchi_ablation_benchmark()
 
-    assert result["scenario_count"] == 6
-    assert result["passed_scenarios"] == 6
+    assert result["scenario_count"] == 7
+    assert result["passed_scenarios"] == 7
     assert result["pass_rate"] == 1.0
     assert result["claims_phenomenal_consciousness"] is False
 
@@ -60,3 +60,16 @@ def test_unarchi_benchmark_covers_temporal_prospective_continuity() -> None:
     assert temporal["linked_past_prediction"] is True
     assert temporal["no_auto_execution"] is True
     assert temporal["alignment_recorded"] is True
+
+
+def test_unarchi_benchmark_covers_metacognitive_fidelity() -> None:
+    result = run_unarchi_ablation_benchmark()
+    scenarios = {item["name"]: item for item in result["scenarios"]}
+
+    narrative = scenarios["metacognitive_retrospective_fidelity"]
+
+    assert narrative["passed"] is True
+    assert narrative["identical_after_restart"] is True
+    assert narrative["evidence_linked"] is True
+    assert narrative["no_unsupported_claims"] is True
+    assert narrative["fidelity_score"] == 1.0
