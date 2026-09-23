@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 
-UNARCHI_VERSION = "unarchi-v0.25"
+UNARCHI_VERSION = "unarchi-v0.26"
 _STOPWORDS = {
     "a",
     "an",
@@ -637,6 +637,28 @@ class ContextValidityMapSelection:
     reason: str
     lineage: tuple[int, ...]
     evidence_refs: tuple[str, ...]
+    calibration_watermark_id: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class ContextValidityDegradationWatch:
+    id: int
+    hypothesis_id: int
+    active_map_id: int
+    activation_selection_id: int
+    calibration_watermark_id: int
+    observed_calibration_ids: tuple[int, ...]
+    degraded_signatures: tuple[str, ...]
+    mean_active_advantage: float
+    recommended_map_id: int | None
+    recommended_revision_number: int | None
+    ancestor_support_calibration_ids: tuple[int, ...]
+    status: str
+    reason: str
+    evidence_refs: tuple[str, ...]
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -791,7 +813,7 @@ class UnarchiEngine:
     """
     CPU-only experimental cognitive kernel.
 
-    v0.25 includes causal internal dynamics, bounded endogenous goals, a
+    v0.26 includes causal internal dynamics, bounded endogenous goals, a
     calibrated predictive self-model, prospective memory, evidence-grounded
     metacognition, explicit value arbitration, competing causal hypotheses,
     controlled self-intervention trials, a bounded recurrent global workspace,
@@ -803,8 +825,9 @@ class UnarchiEngine:
     tests across distinct controlled environments, active low-risk boundary
     probe planning, compact boundary-aware causal validity maps,
     validity-gated causal-context decision use, evidence-backed gate outcome
-    calibration, immutable calibration-aware validity-map revisions, and
-    lineage-checked active revision selection with auditable rollback.
+    calibration, immutable calibration-aware validity-map revisions,
+    lineage-checked active revision selection with auditable rollback, and
+    evidence-triggered active-revision degradation recommendations.
     """
 
     state: UnarchiState = field(default_factory=UnarchiState)
@@ -898,6 +921,10 @@ class UnarchiEngine:
         ContextValidityMapSelection
     ] = field(default_factory=list)
     next_context_validity_map_selection_id: int = 1
+    context_validity_degradation_watches: list[
+        ContextValidityDegradationWatch
+    ] = field(default_factory=list)
+    next_context_validity_degradation_watch_id: int = 1
     success_prediction_bias: float = 0.0
     uncertainty_prediction_bias: float = 0.0
     stress_prediction_bias: float = 0.0
@@ -5181,6 +5208,13 @@ class UnarchiEngine:
                     )
                 )
             ),
+            calibration_watermark_id=max(
+                (
+                    item.id
+                    for item in self.context_validity_region_calibrations
+                ),
+                default=0,
+            ),
         )
         self.next_context_validity_map_selection_id += 1
         self.active_context_validity_map_ids[hypothesis_id] = selected.id
@@ -5263,6 +5297,13 @@ class UnarchiEngine:
                     )
                 )
             ),
+            calibration_watermark_id=max(
+                (
+                    item.id
+                    for item in self.context_validity_region_calibrations
+                ),
+                default=0,
+            ),
         )
         self.next_context_validity_map_selection_id += 1
         self.active_context_validity_map_ids[hypothesis_id] = target.id
@@ -5282,6 +5323,213 @@ class UnarchiEngine:
             salience=max(0.60, target.confidence),
             evidence_refs=(
                 f"context_validity_map_selection:{record.id}",
+                *record.evidence_refs[-4:],
+            ),
+        )
+        return record
+
+    def watch_active_context_validity_degradation(
+        self,
+        hypothesis_id: int,
+        *,
+        min_samples: int = 3,
+        degradation_margin: float = 0.05,
+    ) -> ContextValidityDegradationWatch:
+        """
+        Inspect post-activation calibration and recommend, but never execute, rollback.
+
+        Degradation must be supported by repeated observed outcomes already
+        summarized in region-calibration records. The nearest intact ancestor
+        is recommended only when it has favorable calibration for at least one
+        degraded environment and a better mean advantage than the active map.
+        """
+        active = self.active_context_causal_validity_map(hypothesis_id)
+        if active is None:
+            raise ValueError("no active validity map exists for hypothesis")
+
+        selection = next(
+            (
+                item
+                for item in reversed(
+                    self.context_validity_map_selection_history
+                )
+                if item.hypothesis_id == hypothesis_id
+                and item.selected_map_id == active.id
+            ),
+            None,
+        )
+        if selection is None:
+            raise ValueError("active validity map has no selection record")
+
+        min_samples = max(2, min(int(min_samples), 20))
+        margin = _clamp(degradation_margin, 0.01, 0.50)
+        post_activation = [
+            item
+            for item in self.context_validity_region_calibrations
+            if item.validity_map_id == active.id
+            and item.id > selection.calibration_watermark_id
+            and item.sample_count >= min_samples
+        ]
+
+        latest_by_signature: dict[
+            str,
+            ContextValidityRegionCalibration,
+        ] = {}
+        for item in post_activation:
+            previous = latest_by_signature.get(item.environment_signature)
+            if previous is None or item.id > previous.id:
+                latest_by_signature[item.environment_signature] = item
+
+        degraded = [
+            item
+            for item in latest_by_signature.values()
+            if item.gated_advantage_vs_alternative <= -margin
+        ]
+        degraded.sort(key=lambda item: item.environment_signature)
+        degraded_signatures = tuple(
+            item.environment_signature for item in degraded
+        )
+        mean_active_advantage = (
+            sum(
+                item.gated_advantage_vs_alternative
+                for item in degraded
+            )
+            / len(degraded)
+            if degraded
+            else 0.0
+        )
+
+        recommended_map: ContextCausalValidityMap | None = None
+        ancestor_support_ids: tuple[int, ...] = ()
+        status = (
+            "insufficient_post_activation_evidence"
+            if not latest_by_signature
+            else "stable"
+            if not degraded
+            else "degradation_detected_no_supported_ancestor"
+        )
+        reason = (
+            "no post-activation calibration meets the minimum sample threshold"
+            if not latest_by_signature
+            else "post-activation calibration does not show sustained degradation"
+            if not degraded
+            else "active revision degraded but no better-calibrated ancestor was found"
+        )
+
+        if degraded:
+            lineage = self._context_validity_map_lineage(active.id)
+            maps = {
+                item.id: item
+                for item in self.context_causal_validity_maps
+            }
+            for ancestor_id in reversed(lineage[:-1]):
+                ancestor = maps[ancestor_id]
+                favorable = [
+                    item
+                    for item in self.context_validity_region_calibrations
+                    if item.validity_map_id == ancestor.id
+                    and item.environment_signature in degraded_signatures
+                    and item.sample_count >= min_samples
+                    and item.gated_advantage_vs_alternative >= margin
+                ]
+                latest_favorable: dict[
+                    str,
+                    ContextValidityRegionCalibration,
+                ] = {}
+                for item in favorable:
+                    previous = latest_favorable.get(item.environment_signature)
+                    if previous is None or item.id > previous.id:
+                        latest_favorable[item.environment_signature] = item
+                if not latest_favorable:
+                    continue
+                ancestor_mean = (
+                    sum(
+                        item.gated_advantage_vs_alternative
+                        for item in latest_favorable.values()
+                    )
+                    / len(latest_favorable)
+                )
+                if ancestor_mean <= mean_active_advantage:
+                    continue
+                recommended_map = ancestor
+                ancestor_support_ids = tuple(
+                    sorted(
+                        item.id
+                        for item in latest_favorable.values()
+                    )
+                )
+                status = "rollback_recommended"
+                reason = (
+                    "post-activation calibration degraded and the nearest "
+                    "intact ancestor retains better matched calibration support"
+                )
+                break
+
+        refs = [
+            f"context_causal_validity_map:{active.id}",
+            f"context_validity_map_selection:{selection.id}",
+        ]
+        refs.extend(
+            f"context_validity_region_calibration:{item.id}"
+            for item in latest_by_signature.values()
+        )
+        refs.extend(
+            f"context_validity_region_calibration:{item_id}"
+            for item_id in ancestor_support_ids
+        )
+        if recommended_map is not None:
+            refs.append(
+                f"context_causal_validity_map:{recommended_map.id}"
+            )
+
+        record = ContextValidityDegradationWatch(
+            id=self.next_context_validity_degradation_watch_id,
+            hypothesis_id=hypothesis_id,
+            active_map_id=active.id,
+            activation_selection_id=selection.id,
+            calibration_watermark_id=selection.calibration_watermark_id,
+            observed_calibration_ids=tuple(
+                sorted(item.id for item in latest_by_signature.values())
+            ),
+            degraded_signatures=degraded_signatures,
+            mean_active_advantage=round(mean_active_advantage, 6),
+            recommended_map_id=(
+                recommended_map.id
+                if recommended_map is not None
+                else None
+            ),
+            recommended_revision_number=(
+                recommended_map.revision_number
+                if recommended_map is not None
+                else None
+            ),
+            ancestor_support_calibration_ids=ancestor_support_ids,
+            status=status,
+            reason=reason,
+            evidence_refs=tuple(dict.fromkeys(refs)),
+        )
+        self.next_context_validity_degradation_watch_id += 1
+        self.context_validity_degradation_watches.append(record)
+        if len(self.context_validity_degradation_watches) > self.max_memory:
+            self.context_validity_degradation_watches = (
+                self.context_validity_degradation_watches[-self.max_memory:]
+            )
+
+        self.stage_global_workspace_item(
+            source="intervention",
+            content=(
+                f"context validity degradation watch={record.id}; "
+                f"active_map={record.active_map_id}; "
+                f"status={record.status}; "
+                f"recommended_map={record.recommended_map_id}"
+            ),
+            salience=(
+                0.75
+                if record.status == "rollback_recommended"
+                else 0.50
+            ),
+            evidence_refs=(
+                f"context_validity_degradation_watch:{record.id}",
                 *record.evidence_refs[-4:],
             ),
         )
@@ -6662,6 +6910,36 @@ class UnarchiEngine:
             details.append(detail)
 
         if focus in {
+            "context_validity_degradation",
+            "active_revision_degradation",
+            "degradation_watch",
+            "rollback_recommendation",
+        }:
+            if self.context_validity_degradation_watches:
+                item = self.context_validity_degradation_watches[-1]
+                add(
+                    f"context_validity_degradation_watch:{item.id}",
+                    (
+                        f"active_map={item.active_map_id}; "
+                        f"selection={item.activation_selection_id}; "
+                        f"degraded={item.degraded_signatures}; "
+                        f"mean_advantage={item.mean_active_advantage}; "
+                        f"recommended_map={item.recommended_map_id}; "
+                        f"status={item.status}; reason={item.reason!r}"
+                    ),
+                )
+                for ref in item.evidence_refs[-8:]:
+                    add(ref, "evidence used by active-revision degradation watch")
+                summary = (
+                    "The active-revision degradation watch uses only "
+                    "post-activation observed-outcome calibration and may "
+                    "recommend an intact ancestor, but never changes the "
+                    "active pointer automatically."
+                )
+            else:
+                summary = "No active-revision degradation watch has been recorded."
+
+        elif focus in {
             "context_validity_selection",
             "validity_map_selection",
             "active_validity_map",
@@ -7866,6 +8144,13 @@ class UnarchiEngine:
             "next_context_validity_map_selection_id": (
                 self.next_context_validity_map_selection_id
             ),
+            "context_validity_degradation_watches": [
+                item.to_dict()
+                for item in self.context_validity_degradation_watches
+            ],
+            "next_context_validity_degradation_watch_id": (
+                self.next_context_validity_degradation_watch_id
+            ),
             "success_prediction_bias": self.success_prediction_bias,
             "uncertainty_prediction_bias": self.uncertainty_prediction_bias,
             "stress_prediction_bias": self.stress_prediction_bias,
@@ -7955,6 +8240,10 @@ class UnarchiEngine:
             "context_validity_map_selection_history",
             [],
         )
+        context_validity_degradation_watches_payload = payload.get(
+            "context_validity_degradation_watches",
+            [],
+        )
         value_weights_payload = payload.get("value_weights", _default_value_weights())
         if not isinstance(state_payload, dict):
             raise ValueError("invalid UNARCHI state")
@@ -8025,6 +8314,10 @@ class UnarchiEngine:
         if not isinstance(context_validity_map_selection_history_payload, list):
             raise ValueError(
                 "invalid UNARCHI context validity map selection history"
+            )
+        if not isinstance(context_validity_degradation_watches_payload, list):
+            raise ValueError(
+                "invalid UNARCHI context validity degradation watches"
             )
 
         memory: list[Experience] = []
@@ -8471,6 +8764,31 @@ class UnarchiEngine:
                 ContextValidityMapSelection(**restored_item)
             )
 
+        context_validity_degradation_watches: list[
+            ContextValidityDegradationWatch
+        ] = []
+        for item in context_validity_degradation_watches_payload:
+            if not isinstance(item, dict):
+                raise ValueError(
+                    "invalid UNARCHI context validity degradation watch"
+                )
+            restored_item = dict(item)
+            restored_item["observed_calibration_ids"] = tuple(
+                restored_item.get("observed_calibration_ids", ())
+            )
+            restored_item["degraded_signatures"] = tuple(
+                restored_item.get("degraded_signatures", ())
+            )
+            restored_item["ancestor_support_calibration_ids"] = tuple(
+                restored_item.get("ancestor_support_calibration_ids", ())
+            )
+            restored_item["evidence_refs"] = tuple(
+                restored_item.get("evidence_refs", ())
+            )
+            context_validity_degradation_watches.append(
+                ContextValidityDegradationWatch(**restored_item)
+            )
+
         max_memory = max(16, min(int(payload.get("max_memory") or 256), 4096))
         max_active = max(
             1,
@@ -8751,6 +9069,25 @@ class UnarchiEngine:
                 )
                 + 1,
             ),
+            context_validity_degradation_watches=(
+                context_validity_degradation_watches[-max_memory:]
+            ),
+            next_context_validity_degradation_watch_id=max(
+                int(
+                    payload.get(
+                        "next_context_validity_degradation_watch_id"
+                    )
+                    or 1
+                ),
+                max(
+                    (
+                        item.id
+                        for item in context_validity_degradation_watches
+                    ),
+                    default=0,
+                )
+                + 1,
+            ),
             success_prediction_bias=float(
                 payload.get("success_prediction_bias") or 0.0
             ),
@@ -8917,6 +9254,16 @@ class UnarchiEngine:
                     item
                     for item in self.context_validity_map_selection_history
                     if item.action == "rollback"
+                ]
+            ),
+            "context_validity_degradation_watch_count": len(
+                self.context_validity_degradation_watches
+            ),
+            "rollback_recommendation_count": len(
+                [
+                    item
+                    for item in self.context_validity_degradation_watches
+                    if item.status == "rollback_recommended"
                 ]
             ),
             "observed_counterfactual_count": len(
