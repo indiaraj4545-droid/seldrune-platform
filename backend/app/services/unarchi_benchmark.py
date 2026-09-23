@@ -5,7 +5,7 @@ from typing import Any
 from backend.app.services.unarchi_engine import UnarchiEngine
 
 
-BENCHMARK_VERSION = "unarchi-ablation-v0.3"
+BENCHMARK_VERSION = "unarchi-ablation-v0.4"
 
 
 def _failure_sensitization() -> dict[str, Any]:
@@ -172,6 +172,52 @@ def _predictive_self_calibration() -> dict[str, Any]:
         "self_calibration_score": round(engine.self_calibration_score, 6),
     }
 
+
+
+def _prospective_temporal_continuity() -> dict[str, Any]:
+    engine = UnarchiEngine()
+    prediction = engine.predict_action(
+        action="review later validation evidence",
+        expected_success=0.75,
+        expected_information_gain=0.6,
+        risk=0.1,
+    )
+    intention = engine.remember_future_intention(
+        condition="validation report available",
+        intended_action="review validation report",
+        reason="compare future evidence with the earlier self prediction",
+        linked_prediction_id=prediction.id,
+    )
+
+    restored = UnarchiEngine.from_export(engine.export_state())
+    ready = restored.observe_future_condition(
+        "The validation report is now available."
+    )
+    surfaced = len(ready) == 1
+    recalled = surfaced and ready[0].id == intention.id
+    linked_past_prediction = (
+        surfaced and ready[0].linked_prediction_id == prediction.id
+    )
+    no_auto_execution = surfaced and ready[0].status == "ready"
+    alignment_recorded = (
+        surfaced and ready[0].temporal_alignment_score is not None
+    )
+
+    return {
+        "name": "prospective_temporal_continuity",
+        "expected_direction": "past_intention_survives_restart_and_reactivates",
+        "passed": (
+            recalled
+            and linked_past_prediction
+            and no_auto_execution
+            and alignment_recorded
+        ),
+        "recalled": recalled,
+        "linked_past_prediction": linked_past_prediction,
+        "no_auto_execution": no_auto_execution,
+        "alignment_recorded": alignment_recorded,
+    }
+
 def run_unarchi_ablation_benchmark() -> dict[str, Any]:
     scenarios = [
         _failure_sensitization(),
@@ -179,6 +225,7 @@ def run_unarchi_ablation_benchmark() -> dict[str, Any]:
         _homeostatic_recovery(),
         _endogenous_goal_lifecycle(),
         _predictive_self_calibration(),
+        _prospective_temporal_continuity(),
     ]
     passed = sum(bool(item["passed"]) for item in scenarios)
     return {
