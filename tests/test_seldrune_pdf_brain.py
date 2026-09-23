@@ -142,3 +142,20 @@ def test_pdf_brain_uses_local_ocr_for_scanned_replacement(monkeypatch) -> None:
     output = pymupdf.open(stream=local.result.data, filetype="pdf")
     assert "NEW" in output[0].get_text()
     output.close()
+
+
+def test_pdf_brain_builds_batch_replacement_plan_locally() -> None:
+    prediction = predict_pdf_plan(
+        'change "450000.00" to "455000.00" and '
+        'replace "2105000.00" with "2150000.00"'
+    )
+
+    assert prediction.usable is True
+    assert prediction.confidence == 1.0
+    assert prediction.plan is not None
+    operations = prediction.plan["operations"]
+    assert len(operations) == 2
+    assert operations[0]["target_text"] == "450000.00"
+    assert operations[0]["replacement_text"] == "455000.00"
+    assert operations[1]["target_text"] == "2105000.00"
+    assert operations[1]["replacement_text"] == "2150000.00"
