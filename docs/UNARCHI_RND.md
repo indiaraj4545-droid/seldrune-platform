@@ -1199,12 +1199,65 @@ This remains bounded functional causal research. Decision gating does not prove
 subjective identity, sentience, phenomenal consciousness, qualia, or
 unrestricted real-world causation.
 
-## Next checkpoint: v0.23 validity-gate outcome calibration
+## v0.23 validity-gate outcome-calibration checkpoint
 
-The next research step should compare validity-gated predictions with later
-observed outcomes and measure whether the gate improved decision calibration
-relative to always-enabled and always-ablated causal-context policies.
+UNARCHI v0.23 compares validity-gated predictions with later observed action
+outcomes and uses that evidence to calibrate nearby causal support.
 
-The measurable target is policy calibration: strengthen trust in a validity
-region only when gated predictions remain better calibrated on new evidence,
-and reduce or revoke nearby support when the gate repeatedly underperforms.
+A gate outcome can be recorded only when the caller supplies:
+
+- observed success/failure for every distinct action selected by the gated,
+  causal-enabled, and causal-ablated decision paths; and
+- at least one evidence reference for those observations.
+
+This requirement prevents UNARCHI from scoring an unchosen policy with an
+outcome that was never observed.
+
+For each gate, v0.23 records absolute prediction error for the gated,
+causal-enabled, and causal-ablated policies. The relevant alternative is the
+opposite causal policy: ablated when causal context was allowed, and enabled
+when the gate abstained. Positive gated advantage means the validity gate was
+better calibrated than that alternative on matched action outcomes.
+
+Region calibration requires repeated matched outcomes. For a
+`supported_nearby` environment:
+
+- repeated advantage above the configured margin produces
+  `nearby_support_calibrated` and increases classification confidence;
+- repeated underperformance below the negative margin produces
+  `nearby_support_revoked`;
+- inconclusive evidence produces `nearby_support_uncertain`.
+
+Revocation affects only inferred nearby support. Exact `tested_valid` and
+`tested_invalid` evidence remains authoritative. A revoked nearby environment
+is subsequently classified as `unknown`, so v0.22 automatically blocks
+contextual causal influence there.
+
+The calibration records retain sample count, mean policy errors, gated
+advantage, confidence delta, source classification, exact outcome IDs, and
+evidence references. They persist through export/restore and are reconstructable
+through deterministic metacognition.
+
+The deterministic v0.23 benchmark requires:
+
+two initially supported-nearby environments -> three matched gate outcomes per
+environment -> one region shows repeated gated-policy calibration advantage and
+gains confidence -> a different region shows repeated underperformance and has
+nearby support revoked -> later classification becomes unknown -> later
+validity-gated decision blocks causal context -> export/restore -> identical
+outcome and calibration records.
+
+This remains bounded functional causal research. Outcome calibration does not
+establish subjective identity, sentience, phenomenal consciousness, qualia, or
+unrestricted real-world causation.
+
+## Next checkpoint: v0.24 calibration-aware validity-map revision
+
+The next research step should consolidate repeated region calibrations back into
+a new immutable validity-map revision rather than relying only on runtime
+classification overrides.
+
+The measurable target is versioned map learning: create a new map revision with
+an auditable parent map, calibrated nearby regions, revoked inferred regions,
+and explicit reasons for every expansion or contraction while preserving the
+original tested evidence.
