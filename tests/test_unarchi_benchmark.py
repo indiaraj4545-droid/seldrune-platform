@@ -4,8 +4,8 @@ from backend.app.services.unarchi_benchmark import run_unarchi_ablation_benchmar
 def test_unarchi_ablation_benchmark_passes_all_scenarios() -> None:
     result = run_unarchi_ablation_benchmark()
 
-    assert result["scenario_count"] == 7
-    assert result["passed_scenarios"] == 7
+    assert result["scenario_count"] == 8
+    assert result["passed_scenarios"] == 8
     assert result["pass_rate"] == 1.0
     assert result["claims_phenomenal_consciousness"] is False
 
@@ -73,3 +73,16 @@ def test_unarchi_benchmark_covers_metacognitive_fidelity() -> None:
     assert narrative["evidence_linked"] is True
     assert narrative["no_unsupported_claims"] is True
     assert narrative["fidelity_score"] == 1.0
+
+
+def test_unarchi_benchmark_covers_conflict_arbitration_self_correction() -> None:
+    result = run_unarchi_ablation_benchmark()
+    scenarios = {item["name"]: item for item in result["scenarios"]}
+
+    arbitration = scenarios["conflict_arbitration_self_correction"]
+
+    assert arbitration["passed"] is True
+    assert arbitration["conflict_detected"] is True
+    assert arbitration["hard_block_worked"] is True
+    assert arbitration["truth_weight_increased"] is True
+    assert arbitration["safety_floor_preserved"] is True
