@@ -399,7 +399,7 @@ def create_owner_command(
             session,
             organization_id=organization_id,
             settings=settings,
-            projected_usd=min(settings.ai_request_max_usd, 0.05),
+            projected_usd=min(settings.ai_request_max_usd, 0.015),
         )
     except AISpendBudgetExceeded:
         planner_model_allowed = False
