@@ -5,7 +5,7 @@ from typing import Any
 from backend.app.services.unarchi_engine import UnarchiEngine
 
 
-BENCHMARK_VERSION = "unarchi-ablation-v0.2"
+BENCHMARK_VERSION = "unarchi-ablation-v0.3"
 
 
 def _failure_sensitization() -> dict[str, Any]:
@@ -135,12 +135,50 @@ def _endogenous_goal_lifecycle() -> dict[str, Any]:
         "resolved": resolved,
     }
 
+
+
+def _predictive_self_calibration() -> dict[str, Any]:
+    engine = UnarchiEngine()
+    first = engine.predict_action(
+        action="repeatable local diagnostic",
+        expected_success=0.35,
+        expected_information_gain=0.4,
+        risk=0.1,
+    )
+    first_success_error = abs(1.0 - first.predicted_success)
+    engine.record_prediction_outcome(
+        first.id,
+        actual_success=True,
+        actual_information_gain=0.4,
+    )
+    second = engine.predict_action(
+        action="repeatable local diagnostic",
+        expected_success=0.35,
+        expected_information_gain=0.4,
+        risk=0.1,
+    )
+    second_success_error = abs(1.0 - second.predicted_success)
+
+    return {
+        "name": "predictive_self_calibration",
+        "expected_direction": "prediction_error_decreases_with_experience",
+        "passed": (
+            second_success_error < first_success_error
+            and engine.success_prediction_bias > 0.0
+            and len(engine.calibration_history) == 1
+        ),
+        "first_success_error": round(first_success_error, 6),
+        "second_success_error": round(second_success_error, 6),
+        "self_calibration_score": round(engine.self_calibration_score, 6),
+    }
+
 def run_unarchi_ablation_benchmark() -> dict[str, Any]:
     scenarios = [
         _failure_sensitization(),
         _success_adaptation(),
         _homeostatic_recovery(),
         _endogenous_goal_lifecycle(),
+        _predictive_self_calibration(),
     ]
     passed = sum(bool(item["passed"]) for item in scenarios)
     return {
