@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 
-UNARCHI_VERSION = "unarchi-v0.3"
+UNARCHI_VERSION = "unarchi-v0.4"
 _STOPWORDS = {
     "a",
     "an",
@@ -110,6 +110,42 @@ class InternalGoal:
 
 
 @dataclass(frozen=True)
+class SelfPrediction:
+    id: int
+    action: str
+    predicted_success: float
+    predicted_information_gain: float
+    predicted_uncertainty: float
+    predicted_stress: float
+    predicted_agency: float
+    predicted_coherence: float
+    risk: float
+    reversible: bool
+    utility: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class CalibrationRecord:
+    prediction_id: int
+    action: str
+    actual_success: float
+    actual_information_gain: float
+    success_error: float
+    information_gain_error: float
+    uncertainty_error: float
+    stress_error: float
+    agency_error: float
+    mean_absolute_error: float
+    calibration_score: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class UnarchiFrame:
     mode: str
     workspace: tuple[str, ...]
@@ -147,9 +183,9 @@ class UnarchiEngine:
     """
     CPU-only experimental cognitive kernel.
 
-    v0.2 adds causal internal dynamics: prior outcomes change future risk,
-    uncertainty and action mode; homeostatic settling decays transient state;
-    and ablation compares identical inputs with the internal state disabled.
+    v0.4 includes causal internal dynamics, bounded endogenous goals and a
+    calibrated predictive self-model that forecasts internal consequences of
+    candidate actions and learns from prediction residuals.
     """
 
     state: UnarchiState = field(default_factory=UnarchiState)
@@ -157,6 +193,14 @@ class UnarchiEngine:
     observation_history: list[str] = field(default_factory=list)
     internal_goals: list[InternalGoal] = field(default_factory=list)
     next_internal_goal_id: int = 1
+    predictions: list[SelfPrediction] = field(default_factory=list)
+    calibration_history: list[CalibrationRecord] = field(default_factory=list)
+    next_prediction_id: int = 1
+    success_prediction_bias: float = 0.0
+    uncertainty_prediction_bias: float = 0.0
+    stress_prediction_bias: float = 0.0
+    agency_prediction_bias: float = 0.0
+    self_calibration_score: float = 0.5
     max_memory: int = 256
     max_active_internal_goals: int = 3
 
@@ -598,6 +642,204 @@ class UnarchiEngine:
 
         return target
 
+    def predict_action(
+        self,
+        *,
+        action: str,
+        expected_success: float,
+        expected_information_gain: float,
+        risk: float,
+        reversible: bool = True,
+    ) -> SelfPrediction:
+        """
+        Predict external success and internal consequences before an action.
+
+        This is a compact learned self-model. Calibration residuals update the
+        bias terms after real outcomes, allowing forecasts to improve without
+        GPU training or an external model.
+        """
+        expected_success = _clamp(expected_success)
+        expected_information_gain = _clamp(expected_information_gain)
+        risk = _clamp(risk)
+
+        predicted_success = _clamp(expected_success + self.success_prediction_bias)
+        predicted_information_gain = expected_information_gain
+
+        predicted_uncertainty = _clamp(
+            self.state.uncertainty
+            - (expected_information_gain * 0.45)
+            + (risk * 0.12)
+            + self.uncertainty_prediction_bias
+        )
+        predicted_stress = _clamp(
+            self.state.stress
+            + (risk * 0.30)
+            - (predicted_success * 0.08)
+            + self.stress_prediction_bias
+        )
+        predicted_agency = _clamp(
+            self.state.agency
+            + (predicted_success * 0.10)
+            - (risk * 0.08)
+            + self.agency_prediction_bias
+        )
+        predicted_coherence = _clamp(
+            self.state.coherence
+            + (expected_information_gain * 0.12)
+            - (risk * 0.05)
+        )
+
+        irreversibility_penalty = 0.35 if not reversible else 0.0
+        utility = (
+            (predicted_success * 0.36)
+            + (predicted_information_gain * 0.28)
+            + (predicted_agency * 0.12)
+            + (predicted_coherence * 0.09)
+            - (risk * 0.08)
+            - (predicted_stress * 0.07)
+            - irreversibility_penalty
+        )
+        prediction = SelfPrediction(
+            id=self.next_prediction_id,
+            action=action.strip()[:240],
+            predicted_success=round(predicted_success, 6),
+            predicted_information_gain=round(predicted_information_gain, 6),
+            predicted_uncertainty=round(predicted_uncertainty, 6),
+            predicted_stress=round(predicted_stress, 6),
+            predicted_agency=round(predicted_agency, 6),
+            predicted_coherence=round(predicted_coherence, 6),
+            risk=round(risk, 6),
+            reversible=bool(reversible),
+            utility=round(utility, 6),
+        )
+        self.next_prediction_id += 1
+        self.predictions.append(prediction)
+        if len(self.predictions) > self.max_memory:
+            self.predictions = self.predictions[-self.max_memory:]
+        return prediction
+
+    def choose_predicted_action(
+        self,
+        candidates: list[dict[str, Any]],
+    ) -> SelfPrediction:
+        """Predict each candidate and return the highest-utility option."""
+        if not candidates:
+            raise ValueError("at least one candidate action is required")
+
+        predictions = [
+            self.predict_action(
+                action=str(candidate.get("action") or ""),
+                expected_success=float(candidate.get("expected_success", 0.5)),
+                expected_information_gain=float(
+                    candidate.get("expected_information_gain", 0.0)
+                ),
+                risk=float(candidate.get("risk", 0.0)),
+                reversible=bool(candidate.get("reversible", True)),
+            )
+            for candidate in candidates
+        ]
+        return max(predictions, key=lambda item: (item.utility, -item.id))
+
+    def record_prediction_outcome(
+        self,
+        prediction_id: int,
+        *,
+        actual_success: bool,
+        actual_information_gain: float,
+        actual_state: UnarchiState | None = None,
+    ) -> CalibrationRecord:
+        """
+        Compare a self-prediction with reality and update calibration biases.
+        """
+        prediction = next(
+            (item for item in self.predictions if item.id == prediction_id),
+            None,
+        )
+        if prediction is None:
+            raise ValueError("unknown self prediction")
+
+        actual_success_value = 1.0 if actual_success else 0.0
+        actual_information_gain = _clamp(actual_information_gain)
+        observed_state = actual_state or self.state
+
+        success_residual = actual_success_value - prediction.predicted_success
+        information_residual = (
+            actual_information_gain - prediction.predicted_information_gain
+        )
+        uncertainty_residual = (
+            observed_state.uncertainty - prediction.predicted_uncertainty
+        )
+        stress_residual = observed_state.stress - prediction.predicted_stress
+        agency_residual = observed_state.agency - prediction.predicted_agency
+
+        success_error = abs(success_residual)
+        information_error = abs(information_residual)
+        uncertainty_error = abs(uncertainty_residual)
+        stress_error = abs(stress_residual)
+        agency_error = abs(agency_residual)
+        mean_error = (
+            success_error
+            + information_error
+            + uncertainty_error
+            + stress_error
+            + agency_error
+        ) / 5.0
+        calibration_score = _clamp(1.0 - mean_error)
+
+        learning_rate = 0.20
+        self.success_prediction_bias = max(
+            -0.35,
+            min(
+                0.35,
+                self.success_prediction_bias + (learning_rate * success_residual),
+            ),
+        )
+        self.uncertainty_prediction_bias = max(
+            -0.30,
+            min(
+                0.30,
+                self.uncertainty_prediction_bias
+                + (learning_rate * uncertainty_residual),
+            ),
+        )
+        self.stress_prediction_bias = max(
+            -0.30,
+            min(
+                0.30,
+                self.stress_prediction_bias + (learning_rate * stress_residual),
+            ),
+        )
+        self.agency_prediction_bias = max(
+            -0.30,
+            min(
+                0.30,
+                self.agency_prediction_bias + (learning_rate * agency_residual),
+            ),
+        )
+
+        previous_count = len(self.calibration_history)
+        self.self_calibration_score = (
+            (self.self_calibration_score * previous_count) + calibration_score
+        ) / (previous_count + 1)
+
+        record = CalibrationRecord(
+            prediction_id=prediction.id,
+            action=prediction.action,
+            actual_success=actual_success_value,
+            actual_information_gain=round(actual_information_gain, 6),
+            success_error=round(success_error, 6),
+            information_gain_error=round(information_error, 6),
+            uncertainty_error=round(uncertainty_error, 6),
+            stress_error=round(stress_error, 6),
+            agency_error=round(agency_error, 6),
+            mean_absolute_error=round(mean_error, 6),
+            calibration_score=round(calibration_score, 6),
+        )
+        self.calibration_history.append(record)
+        if len(self.calibration_history) > self.max_memory:
+            self.calibration_history = self.calibration_history[-self.max_memory:]
+        return record
+
     def compare_ablation(
         self,
         *,
@@ -760,6 +1002,16 @@ class UnarchiEngine:
             "observation_history": list(self.observation_history),
             "internal_goals": [item.to_dict() for item in self.internal_goals],
             "next_internal_goal_id": self.next_internal_goal_id,
+            "predictions": [item.to_dict() for item in self.predictions],
+            "calibration_history": [
+                item.to_dict() for item in self.calibration_history
+            ],
+            "next_prediction_id": self.next_prediction_id,
+            "success_prediction_bias": self.success_prediction_bias,
+            "uncertainty_prediction_bias": self.uncertainty_prediction_bias,
+            "stress_prediction_bias": self.stress_prediction_bias,
+            "agency_prediction_bias": self.agency_prediction_bias,
+            "self_calibration_score": self.self_calibration_score,
             "max_memory": self.max_memory,
             "max_active_internal_goals": self.max_active_internal_goals,
             "claims_phenomenal_consciousness": False,
@@ -775,6 +1027,8 @@ class UnarchiEngine:
         memory_payload = payload.get("memory")
         history_payload = payload.get("observation_history")
         goals_payload = payload.get("internal_goals", [])
+        predictions_payload = payload.get("predictions", [])
+        calibration_payload = payload.get("calibration_history", [])
         if not isinstance(state_payload, dict):
             raise ValueError("invalid UNARCHI state")
         if not isinstance(memory_payload, list):
@@ -783,6 +1037,10 @@ class UnarchiEngine:
             raise ValueError("invalid UNARCHI observation history")
         if not isinstance(goals_payload, list):
             raise ValueError("invalid UNARCHI internal goals")
+        if not isinstance(predictions_payload, list):
+            raise ValueError("invalid UNARCHI predictions")
+        if not isinstance(calibration_payload, list):
+            raise ValueError("invalid UNARCHI calibration history")
 
         memory: list[Experience] = []
         for item in memory_payload:
@@ -795,6 +1053,18 @@ class UnarchiEngine:
             if not isinstance(item, dict):
                 raise ValueError("invalid UNARCHI internal goal")
             internal_goals.append(InternalGoal(**item))
+
+        predictions: list[SelfPrediction] = []
+        for item in predictions_payload:
+            if not isinstance(item, dict):
+                raise ValueError("invalid UNARCHI prediction")
+            predictions.append(SelfPrediction(**item))
+
+        calibration_history: list[CalibrationRecord] = []
+        for item in calibration_payload:
+            if not isinstance(item, dict):
+                raise ValueError("invalid UNARCHI calibration record")
+            calibration_history.append(CalibrationRecord(**item))
 
         max_memory = max(16, min(int(payload.get("max_memory") or 256), 4096))
         max_active = max(
@@ -810,6 +1080,27 @@ class UnarchiEngine:
                 int(payload.get("next_internal_goal_id") or 1),
                 max((item.id for item in internal_goals), default=0) + 1,
             ),
+            predictions=predictions[-max_memory:],
+            calibration_history=calibration_history[-max_memory:],
+            next_prediction_id=max(
+                int(payload.get("next_prediction_id") or 1),
+                max((item.id for item in predictions), default=0) + 1,
+            ),
+            success_prediction_bias=float(
+                payload.get("success_prediction_bias") or 0.0
+            ),
+            uncertainty_prediction_bias=float(
+                payload.get("uncertainty_prediction_bias") or 0.0
+            ),
+            stress_prediction_bias=float(
+                payload.get("stress_prediction_bias") or 0.0
+            ),
+            agency_prediction_bias=float(
+                payload.get("agency_prediction_bias") or 0.0
+            ),
+            self_calibration_score=float(
+                payload.get("self_calibration_score", 0.5)
+            ),
             max_memory=max_memory,
             max_active_internal_goals=max_active,
         )
@@ -822,5 +1113,8 @@ class UnarchiEngine:
             "observation_history_size": len(self.observation_history),
             "active_internal_goals": len(self.active_internal_goals()),
             "total_internal_goals": len(self.internal_goals),
+            "prediction_count": len(self.predictions),
+            "calibration_count": len(self.calibration_history),
+            "self_calibration_score": round(self.self_calibration_score, 6),
             "claims_phenomenal_consciousness": False,
         }
