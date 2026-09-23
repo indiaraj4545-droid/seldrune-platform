@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 
-UNARCHI_VERSION = "unarchi-v0.26"
+UNARCHI_VERSION = "unarchi-v0.27"
 _STOPWORDS = {
     "a",
     "an",
@@ -638,6 +638,7 @@ class ContextValidityMapSelection:
     lineage: tuple[int, ...]
     evidence_refs: tuple[str, ...]
     calibration_watermark_id: int = 0
+    decision_gate_watermark_id: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -658,6 +659,44 @@ class ContextValidityDegradationWatch:
     ancestor_support_calibration_ids: tuple[int, ...]
     status: str
     reason: str
+    evidence_refs: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class ContextValidityRecommendationResolution:
+    id: int
+    watch_id: int
+    hypothesis_id: int
+    decision: str
+    reason: str
+    recommended_map_id: int | None
+    blocked_descendant_map_id: int | None
+    rollback_selection_id: int | None
+    evidence_refs: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class ContextValidityRollbackValidation:
+    id: int
+    resolution_id: int
+    watch_id: int
+    hypothesis_id: int
+    rollback_selection_id: int
+    rollback_map_id: int
+    blocked_descendant_map_id: int
+    observed_outcome_ids: tuple[int, ...]
+    degraded_signatures: tuple[str, ...]
+    mean_rollback_advantage: float
+    prior_degraded_advantage: float
+    improvement_delta: float
+    status: str
+    reactivation_allowed: bool
     evidence_refs: tuple[str, ...]
 
     def to_dict(self) -> dict[str, Any]:
@@ -813,7 +852,7 @@ class UnarchiEngine:
     """
     CPU-only experimental cognitive kernel.
 
-    v0.26 includes causal internal dynamics, bounded endogenous goals, a
+    v0.27 includes causal internal dynamics, bounded endogenous goals, a
     calibrated predictive self-model, prospective memory, evidence-grounded
     metacognition, explicit value arbitration, competing causal hypotheses,
     controlled self-intervention trials, a bounded recurrent global workspace,
@@ -826,8 +865,9 @@ class UnarchiEngine:
     probe planning, compact boundary-aware causal validity maps,
     validity-gated causal-context decision use, evidence-backed gate outcome
     calibration, immutable calibration-aware validity-map revisions,
-    lineage-checked active revision selection with auditable rollback, and
-    evidence-triggered active-revision degradation recommendations.
+    lineage-checked active revision selection with auditable rollback,
+    evidence-triggered active-revision degradation recommendations, and
+    explicit recommendation resolution with post-rollback validation gates.
     """
 
     state: UnarchiState = field(default_factory=UnarchiState)
@@ -925,6 +965,14 @@ class UnarchiEngine:
         ContextValidityDegradationWatch
     ] = field(default_factory=list)
     next_context_validity_degradation_watch_id: int = 1
+    context_validity_recommendation_resolutions: list[
+        ContextValidityRecommendationResolution
+    ] = field(default_factory=list)
+    next_context_validity_recommendation_resolution_id: int = 1
+    context_validity_rollback_validations: list[
+        ContextValidityRollbackValidation
+    ] = field(default_factory=list)
+    next_context_validity_rollback_validation_id: int = 1
     success_prediction_bias: float = 0.0
     uncertainty_prediction_bias: float = 0.0
     stress_prediction_bias: float = 0.0
@@ -5175,6 +5223,51 @@ class UnarchiEngine:
                     "for an ancestor"
                 )
 
+        if previous_map_id is not None and previous_map_id != selected.id:
+            accepted = next(
+                (
+                    item
+                    for item in reversed(
+                        self.context_validity_recommendation_resolutions
+                    )
+                    if item.hypothesis_id == hypothesis_id
+                    and item.decision == "accept"
+                    and item.rollback_selection_id is not None
+                ),
+                None,
+            )
+            if accepted is not None:
+                rollback_selection = next(
+                    (
+                        item
+                        for item in self.context_validity_map_selection_history
+                        if item.id == accepted.rollback_selection_id
+                    ),
+                    None,
+                )
+                if (
+                    rollback_selection is not None
+                    and rollback_selection.selected_map_id == previous_map_id
+                ):
+                    validation = next(
+                        (
+                            item
+                            for item in reversed(
+                                self.context_validity_rollback_validations
+                            )
+                            if item.resolution_id == accepted.id
+                        ),
+                        None,
+                    )
+                    if (
+                        validation is None
+                        or not validation.reactivation_allowed
+                    ):
+                        raise ValueError(
+                            "re-advance blocked until accepted rollback "
+                            "has improved post-rollback calibration"
+                        )
+
         clean_reason = reason.strip()[:500]
         if not clean_reason:
             raise ValueError("selection reason is required")
@@ -5212,6 +5305,13 @@ class UnarchiEngine:
                 (
                     item.id
                     for item in self.context_validity_region_calibrations
+                ),
+                default=0,
+            ),
+            decision_gate_watermark_id=max(
+                (
+                    item.id
+                    for item in self.context_validity_decision_gates
                 ),
                 default=0,
             ),
@@ -5301,6 +5401,13 @@ class UnarchiEngine:
                 (
                     item.id
                     for item in self.context_validity_region_calibrations
+                ),
+                default=0,
+            ),
+            decision_gate_watermark_id=max(
+                (
+                    item.id
+                    for item in self.context_validity_decision_gates
                 ),
                 default=0,
             ),
@@ -5530,6 +5637,284 @@ class UnarchiEngine:
             ),
             evidence_refs=(
                 f"context_validity_degradation_watch:{record.id}",
+                *record.evidence_refs[-4:],
+            ),
+        )
+        return record
+
+    def resolve_context_validity_degradation_watch(
+        self,
+        watch_id: int,
+        *,
+        decision: str,
+        reason: str,
+        evidence_refs: tuple[str, ...] | list[str] = (),
+    ) -> ContextValidityRecommendationResolution:
+        """
+        Record an explicit accept, defer, or dismiss decision for a watch.
+
+        Accept uses the existing ancestor-only rollback operation. Defer and
+        dismiss never move the active validity-map pointer.
+        """
+        watch = next(
+            (
+                item
+                for item in self.context_validity_degradation_watches
+                if item.id == watch_id
+            ),
+            None,
+        )
+        if watch is None:
+            raise ValueError("unknown context validity degradation watch")
+
+        normalized = decision.strip().casefold()
+        if normalized not in {"accept", "defer", "dismiss"}:
+            raise ValueError("resolution must be accept, defer, or dismiss")
+
+        terminal = next(
+            (
+                item
+                for item in reversed(
+                    self.context_validity_recommendation_resolutions
+                )
+                if item.watch_id == watch_id
+                and item.decision in {"accept", "dismiss"}
+            ),
+            None,
+        )
+        if terminal is not None:
+            raise ValueError("degradation recommendation already terminally resolved")
+
+        clean_reason = reason.strip()[:500]
+        if not clean_reason:
+            raise ValueError("resolution reason is required")
+        refs = tuple(
+            dict.fromkeys(
+                str(ref).strip()
+                for ref in evidence_refs
+                if str(ref).strip()
+            )
+        )
+
+        rollback_selection_id: int | None = None
+        if normalized == "accept":
+            if (
+                watch.status != "rollback_recommended"
+                or watch.recommended_map_id is None
+            ):
+                raise ValueError("watch does not contain a rollback recommendation")
+            active = self.active_context_causal_validity_map(
+                watch.hypothesis_id
+            )
+            if active is None or active.id != watch.active_map_id:
+                raise ValueError(
+                    "rollback recommendation is stale for the active map"
+                )
+            rollback = self.rollback_context_validity_map(
+                watch.hypothesis_id,
+                target_map_id=watch.recommended_map_id,
+                reason=(
+                    "accepted degradation-watch recommendation: "
+                    f"{clean_reason}"
+                ),
+                evidence_refs=(
+                    f"context_validity_degradation_watch:{watch.id}",
+                    *refs,
+                ),
+            )
+            rollback_selection_id = rollback.id
+
+        record = ContextValidityRecommendationResolution(
+            id=self.next_context_validity_recommendation_resolution_id,
+            watch_id=watch.id,
+            hypothesis_id=watch.hypothesis_id,
+            decision=normalized,
+            reason=clean_reason,
+            recommended_map_id=watch.recommended_map_id,
+            blocked_descendant_map_id=(
+                watch.active_map_id if normalized == "accept" else None
+            ),
+            rollback_selection_id=rollback_selection_id,
+            evidence_refs=tuple(
+                dict.fromkeys(
+                    (
+                        f"context_validity_degradation_watch:{watch.id}",
+                        *refs,
+                    )
+                )
+            ),
+        )
+        self.next_context_validity_recommendation_resolution_id += 1
+        self.context_validity_recommendation_resolutions.append(record)
+        if len(self.context_validity_recommendation_resolutions) > self.max_memory:
+            self.context_validity_recommendation_resolutions = (
+                self.context_validity_recommendation_resolutions[-self.max_memory:]
+            )
+
+        self.stage_global_workspace_item(
+            source="intervention",
+            content=(
+                f"context validity recommendation resolution={record.id}; "
+                f"watch={watch.id}; decision={record.decision}; "
+                f"rollback_selection={record.rollback_selection_id}"
+            ),
+            salience=0.70 if normalized == "accept" else 0.55,
+            evidence_refs=(
+                f"context_validity_recommendation_resolution:{record.id}",
+                *record.evidence_refs[-4:],
+            ),
+        )
+        return record
+
+    def validate_context_validity_rollback(
+        self,
+        resolution_id: int,
+        *,
+        min_samples: int = 3,
+        improvement_margin: float = 0.05,
+    ) -> ContextValidityRollbackValidation:
+        """
+        Validate an accepted rollback using only outcomes observed after rollback.
+
+        A descendant cannot be re-advanced until a validation record shows
+        positive, materially improved calibration on every degraded signature.
+        """
+        resolution = next(
+            (
+                item
+                for item in self.context_validity_recommendation_resolutions
+                if item.id == resolution_id
+            ),
+            None,
+        )
+        if resolution is None:
+            raise ValueError("unknown degradation recommendation resolution")
+        if (
+            resolution.decision != "accept"
+            or resolution.rollback_selection_id is None
+            or resolution.blocked_descendant_map_id is None
+        ):
+            raise ValueError("rollback validation requires an accepted resolution")
+
+        watch = next(
+            (
+                item
+                for item in self.context_validity_degradation_watches
+                if item.id == resolution.watch_id
+            ),
+            None,
+        )
+        rollback_selection = next(
+            (
+                item
+                for item in self.context_validity_map_selection_history
+                if item.id == resolution.rollback_selection_id
+            ),
+            None,
+        )
+        if watch is None or rollback_selection is None:
+            raise ValueError("accepted rollback evidence is incomplete")
+
+        active = self.active_context_causal_validity_map(
+            resolution.hypothesis_id
+        )
+        if (
+            active is None
+            or active.id != rollback_selection.selected_map_id
+        ):
+            raise ValueError("rollback validation requires rollback map to remain active")
+
+        min_samples = max(2, min(int(min_samples), 20))
+        margin = _clamp(improvement_margin, 0.01, 0.50)
+        degraded = set(watch.degraded_signatures)
+        gate_map = {
+            item.id: item
+            for item in self.context_validity_decision_gates
+            if item.validity_map_id == rollback_selection.selected_map_id
+            and item.id > rollback_selection.decision_gate_watermark_id
+            and item.environment_signature in degraded
+        }
+        outcomes = [
+            item
+            for item in self.context_validity_gate_outcomes
+            if item.gate_id in gate_map
+        ]
+        counts: dict[str, int] = {}
+        for outcome in outcomes:
+            signature = gate_map[outcome.gate_id].environment_signature
+            counts[signature] = counts.get(signature, 0) + 1
+
+        enough = bool(degraded) and all(
+            counts.get(signature, 0) >= min_samples
+            for signature in degraded
+        )
+        mean_advantage = (
+            sum(
+                item.gated_advantage_vs_alternative
+                for item in outcomes
+            )
+            / len(outcomes)
+            if outcomes
+            else 0.0
+        )
+        improvement = mean_advantage - watch.mean_active_advantage
+
+        if not enough:
+            status = "insufficient_post_rollback_evidence"
+            allowed = False
+        elif (
+            mean_advantage >= margin
+            and improvement >= margin
+        ):
+            status = "rollback_improved"
+            allowed = True
+        else:
+            status = "rollback_not_improved"
+            allowed = False
+
+        refs = [
+            f"context_validity_recommendation_resolution:{resolution.id}",
+            f"context_validity_degradation_watch:{watch.id}",
+            f"context_validity_map_selection:{rollback_selection.id}",
+        ]
+        refs.extend(
+            f"context_validity_gate_outcome:{item.id}"
+            for item in outcomes
+        )
+        record = ContextValidityRollbackValidation(
+            id=self.next_context_validity_rollback_validation_id,
+            resolution_id=resolution.id,
+            watch_id=watch.id,
+            hypothesis_id=resolution.hypothesis_id,
+            rollback_selection_id=rollback_selection.id,
+            rollback_map_id=rollback_selection.selected_map_id,
+            blocked_descendant_map_id=resolution.blocked_descendant_map_id,
+            observed_outcome_ids=tuple(sorted(item.id for item in outcomes)),
+            degraded_signatures=tuple(sorted(degraded)),
+            mean_rollback_advantage=round(mean_advantage, 6),
+            prior_degraded_advantage=watch.mean_active_advantage,
+            improvement_delta=round(improvement, 6),
+            status=status,
+            reactivation_allowed=allowed,
+            evidence_refs=tuple(dict.fromkeys(refs)),
+        )
+        self.next_context_validity_rollback_validation_id += 1
+        self.context_validity_rollback_validations.append(record)
+        if len(self.context_validity_rollback_validations) > self.max_memory:
+            self.context_validity_rollback_validations = (
+                self.context_validity_rollback_validations[-self.max_memory:]
+            )
+
+        self.stage_global_workspace_item(
+            source="intervention",
+            content=(
+                f"context validity rollback validation={record.id}; "
+                f"resolution={resolution.id}; status={record.status}; "
+                f"reactivation_allowed={record.reactivation_allowed}"
+            ),
+            salience=0.70 if allowed else 0.60,
+            evidence_refs=(
+                f"context_validity_rollback_validation:{record.id}",
                 *record.evidence_refs[-4:],
             ),
         )
