@@ -581,6 +581,47 @@ class UnarchiEngine:
             self.memory = self.memory[-self.max_memory:]
         return self.state
 
+    def export_state(self) -> dict[str, Any]:
+        """Return JSON-safe state for durable storage across process restarts."""
+        return {
+            "version": UNARCHI_VERSION,
+            "state": self.state.to_dict(),
+            "memory": [asdict(item) for item in self.memory],
+            "observation_history": list(self.observation_history),
+            "max_memory": self.max_memory,
+            "claims_phenomenal_consciousness": False,
+        }
+
+    @classmethod
+    def from_export(cls, payload: dict[str, Any]) -> "UnarchiEngine":
+        """Restore a previously exported UNARCHI engine without a model call."""
+        if payload.get("version") != UNARCHI_VERSION:
+            raise ValueError("unsupported UNARCHI state version")
+
+        state_payload = payload.get("state")
+        memory_payload = payload.get("memory")
+        history_payload = payload.get("observation_history")
+        if not isinstance(state_payload, dict):
+            raise ValueError("invalid UNARCHI state")
+        if not isinstance(memory_payload, list):
+            raise ValueError("invalid UNARCHI memory")
+        if not isinstance(history_payload, list):
+            raise ValueError("invalid UNARCHI observation history")
+
+        memory: list[Experience] = []
+        for item in memory_payload:
+            if not isinstance(item, dict):
+                raise ValueError("invalid UNARCHI experience")
+            memory.append(Experience(**item))
+
+        max_memory = max(16, min(int(payload.get("max_memory") or 256), 4096))
+        return cls(
+            state=UnarchiState(**state_payload),
+            memory=memory[-max_memory:],
+            observation_history=[str(item) for item in history_payload][-max_memory:],
+            max_memory=max_memory,
+        )
+
     def snapshot(self) -> dict[str, Any]:
         return {
             "version": UNARCHI_VERSION,
