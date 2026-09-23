@@ -42,23 +42,29 @@ class Settings(BaseSettings):
     model_balanced: str = "gpt-5.6-terra"
     model_premium: str = "gpt-5.6-sol"
     model_timeout_seconds: float = 60.0
-    model_max_output_tokens: int = 1200
+    model_max_output_tokens: int = 900
     ai_cost_governor_enabled: bool = True
-    ai_request_max_usd: float = 0.15
-    ai_daily_max_usd: float = 2.0
-    ai_monthly_max_usd: float = 30.0
-    ai_spend_warning_ratio: float = 0.8
-    ai_pdf_request_max_usd: float = 0.10
-    ai_pdf_max_total_usd: float = 0.25
-    ai_pdf_max_attempts: int = 3
-    ai_pdf_max_output_tokens: int = 3200
+    ai_request_max_usd: float = 0.04
+    ai_daily_max_usd: float = 1.0
+    ai_monthly_max_usd: float = 15.0
+    ai_spend_warning_ratio: float = 0.70
+    ai_conservation_ratio: float = 0.80
+    ai_pdf_request_max_usd: float = 0.04
+    ai_pdf_max_total_usd: float = 0.10
+    ai_pdf_max_attempts: int = 2
+    ai_pdf_max_output_tokens: int = 2200
+    ai_image_job_max_usd: float = 0.08
+    ai_video_job_max_usd: float = 0.40
+    ai_video_default_seconds: int = 4
+    ai_video_max_seconds: int = 6
+    ai_media_batch_preferred: bool = True
     ai_image_detail: str = "low"
     ai_pdf_detail: str = "low"
     ai_prompt_cache_enabled: bool = True
     ai_exact_token_preflight: bool = True
     project_estimated_cost_per_step_usd: float = 0.05
     knowledge_retrieval_limit: int = 6
-    knowledge_context_max_chars: int = 6000
+    knowledge_context_max_chars: int = 4500
     owner_push_vapid_public_key: str | None = None
     owner_push_vapid_private_key: str | None = None
     owner_push_vapid_subject: str | None = None
@@ -105,6 +111,10 @@ class Settings(BaseSettings):
             )
         if not 0 < self.ai_spend_warning_ratio < 1:
             raise ValueError("SELDRUNE_AI_SPEND_WARNING_RATIO must be between 0 and 1")
+        if not self.ai_spend_warning_ratio < self.ai_conservation_ratio < 1:
+            raise ValueError(
+                "SELDRUNE_AI_CONSERVATION_RATIO must be above the warning ratio and below 1"
+            )
         if self.ai_pdf_request_max_usd <= 0:
             raise ValueError("SELDRUNE_AI_PDF_REQUEST_MAX_USD must be positive")
         if self.ai_pdf_max_total_usd <= 0:
@@ -115,6 +125,16 @@ class Settings(BaseSettings):
             raise ValueError(
                 "SELDRUNE_AI_PDF_MAX_OUTPUT_TOKENS must be between 256 and 12000"
             )
+        if self.ai_image_job_max_usd <= 0:
+            raise ValueError("SELDRUNE_AI_IMAGE_JOB_MAX_USD must be positive")
+        if self.ai_video_job_max_usd <= 0:
+            raise ValueError("SELDRUNE_AI_VIDEO_JOB_MAX_USD must be positive")
+        if not 1 <= self.ai_video_default_seconds <= self.ai_video_max_seconds:
+            raise ValueError(
+                "SELDRUNE_AI_VIDEO_DEFAULT_SECONDS must be between 1 and the video maximum"
+            )
+        if not 1 <= self.ai_video_max_seconds <= 30:
+            raise ValueError("SELDRUNE_AI_VIDEO_MAX_SECONDS must be between 1 and 30")
         if self.ai_image_detail not in {"low", "high", "auto", "original"}:
             raise ValueError("SELDRUNE_AI_IMAGE_DETAIL is invalid")
         if self.ai_pdf_detail not in {"low", "high", "auto"}:
