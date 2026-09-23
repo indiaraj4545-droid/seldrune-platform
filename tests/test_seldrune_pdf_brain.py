@@ -159,3 +159,47 @@ def test_pdf_brain_builds_batch_replacement_plan_locally() -> None:
     assert operations[0]["replacement_text"] == "455000.00"
     assert operations[1]["target_text"] == "2105000.00"
     assert operations[1]["replacement_text"] == "2150000.00"
+
+
+def test_pdf_brain_parses_natural_from_to_instruction_with_page() -> None:
+    prediction = predict_pdf_plan(
+        "change the joining date from 2025-09-23 to 2026-09-23 on page 1"
+    )
+
+    assert prediction.usable is True
+    assert prediction.plan is not None
+    operation = prediction.plan["operations"][0]
+    assert operation["page"] == 1
+    assert operation["target_text"] == "2025-09-23"
+    assert operation["replacement_text"] == "2026-09-23"
+
+
+def test_pdf_brain_strips_common_field_label_before_old_value() -> None:
+    prediction = predict_pdf_plan(
+        "update annual salary 450000.00 to 455000.00 on page 2"
+    )
+
+    assert prediction.usable is True
+    assert prediction.plan is not None
+    operation = prediction.plan["operations"][0]
+    assert operation["page"] == 2
+    assert operation["target_text"] == "450000.00"
+    assert operation["replacement_text"] == "455000.00"
+
+
+def test_pdf_brain_natural_instruction_applies_without_external_ai() -> None:
+    source = _text_pdf("Joining date: 2025-09-23")
+
+    local = try_local_pdf_edit(
+        source,
+        "change the joining date from 2025-09-23 to 2026-09-23 on page 1",
+    )
+
+    assert local is not None
+    assert local.result.verification_score == 100
+    assert local.assessment.safe_to_return is True
+    output = pymupdf.open(stream=local.result.data, filetype="pdf")
+    text = output[0].get_text()
+    output.close()
+    assert "2026-09-23" in text
+    assert "2025-09-23" not in text

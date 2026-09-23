@@ -47,6 +47,10 @@ def _numeric_ratio(value: str) -> float:
     return sum(char.isdigit() for char in alnum) / len(alnum)
 
 
+def _numeric_key(value: str) -> str:
+    return "".join(char for char in value if char.isdigit())
+
+
 def _parse_tsv(tsv: str, *, width: int, height: int) -> list[_OCRWord]:
     words: list[_OCRWord] = []
     reader = csv.DictReader(io.StringIO(tsv), delimiter="\t")
@@ -121,7 +125,9 @@ def _find_matches(
     target_len = len(target_tokens)
     min_size = max(1, target_len - 1)
     max_size = min(len(page_tokens), target_len + 2)
-    allow_fuzzy = _numeric_ratio(target_norm) < 0.50
+    numeric_target = _numeric_ratio(target_norm) >= 0.50
+    target_numeric_key = _numeric_key(target) if numeric_target else ""
+    allow_fuzzy = not numeric_target
     matches: list[tuple[float, int, int, str]] = []
 
     for start in range(len(page_tokens)):
@@ -130,7 +136,19 @@ def _find_matches(
             if end > len(page_tokens):
                 break
             candidate = " ".join(page_tokens[start:end])
+            candidate_source = " ".join(
+                word.text for word in filtered_words[start:end]
+            )
             if candidate == target_norm:
+                score = 1.0
+            elif (
+                numeric_target
+                and target_numeric_key
+                and _numeric_key(candidate_source) == target_numeric_key
+            ):
+                # Formatting punctuation in scanned amounts/dates is often read
+                # differently by OCR. Matching the exact digit sequence preserves
+                # numeric safety while tolerating commas, slashes and currency marks.
                 score = 1.0
             elif allow_fuzzy:
                 score = SequenceMatcher(None, target_norm, candidate).ratio()
@@ -219,38 +237,41 @@ def locate_text_with_ocr(
             )
             width = pixmap.width
             height = pixmap.height
+            page_matches: list[OCRMatch] = []
             with tempfile.NamedTemporaryFile(suffix=".png") as handle:
                 handle.write(pixmap.tobytes("png"))
                 handle.flush()
-                try:
-                    result = subprocess.run(
-                        [
-                            "tesseract",
-                            handle.name,
-                            "stdout",
-                            "--psm",
-                            "6",
-                            "tsv",
-                        ],
-                        capture_output=True,
-                        text=True,
-                        timeout=timeout_seconds,
-                        check=False,
+                for psm in ("6", "11"):
+                    try:
+                        result = subprocess.run(
+                            [
+                                "tesseract",
+                                handle.name,
+                                "stdout",
+                                "--psm",
+                                psm,
+                                "tsv",
+                            ],
+                            capture_output=True,
+                            text=True,
+                            timeout=timeout_seconds,
+                            check=False,
+                        )
+                    except (OSError, subprocess.TimeoutExpired):
+                        continue
+                    if result.returncode != 0 or not result.stdout:
+                        continue
+                    words = _parse_tsv(result.stdout, width=width, height=height)
+                    page_matches = _find_matches(
+                        words,
+                        target,
+                        page=page_number,
+                        width=width,
+                        height=height,
                     )
-                except (OSError, subprocess.TimeoutExpired):
-                    continue
-            if result.returncode != 0 or not result.stdout:
-                continue
-            words = _parse_tsv(result.stdout, width=width, height=height)
-            matches.extend(
-                _find_matches(
-                    words,
-                    target,
-                    page=page_number,
-                    width=width,
-                    height=height,
-                )
-            )
+                    if page_matches:
+                        break
+            matches.extend(page_matches)
     finally:
         document.close()
 
