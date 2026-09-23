@@ -167,7 +167,7 @@ def test_snapshot_never_claims_phenomenal_consciousness() -> None:
     snapshot = engine.snapshot()
 
     assert snapshot["claims_phenomenal_consciousness"] is False
-    assert snapshot["version"] == "unarchi-v0.17"
+    assert snapshot["version"] == "unarchi-v0.18"
 
 
 def test_export_restore_preserves_identity_state_and_memory() -> None:
@@ -2958,3 +2958,139 @@ def test_context_causality_persists_and_is_explainable() -> None:
         ref.startswith("latent_context_hypothesis:")
         for ref in narrative.evidence_refs
     )
+
+
+
+def _observe_context_trial(
+    engine: UnarchiEngine,
+    hypothesis_id: int,
+    *,
+    from_context: str,
+    to_context: str,
+    observed_target_success_rate: float,
+    evidence_ref: str,
+):
+    trial = engine.propose_context_causality_intervention(
+        hypothesis_id,
+        from_context=from_context,
+        to_context=to_context,
+        controlled_signature="code=v1;load=normal;data=fixed",
+        min_samples=4,
+    )
+    return engine.observe_context_causality_intervention(
+        trial.id,
+        observed_target_success_rate=observed_target_success_rate,
+        observed_signature="code=v1;load=normal;data=fixed",
+        sample_count=4,
+        evidence_refs=(evidence_ref,),
+    )
+
+
+def test_context_causal_stability_requires_replication_and_reversal() -> None:
+    engine, hypothesis_id = _build_context_causality_test_engine()
+
+    forward_a = _observe_context_trial(
+        engine,
+        hypothesis_id,
+        from_context="production",
+        to_context="sandbox",
+        observed_target_success_rate=1.0,
+        evidence_ref="batch:forward:a",
+    )
+    forward_b = _observe_context_trial(
+        engine,
+        hypothesis_id,
+        from_context="production",
+        to_context="sandbox",
+        observed_target_success_rate=1.0,
+        evidence_ref="batch:forward:b",
+    )
+    reverse = _observe_context_trial(
+        engine,
+        hypothesis_id,
+        from_context="sandbox",
+        to_context="production",
+        observed_target_success_rate=0.0,
+        evidence_ref="batch:reverse:a",
+    )
+
+    assessment = engine.assess_context_causal_stability(
+        hypothesis_id,
+        forward_trial_ids=(forward_a.id, forward_b.id),
+        reverse_trial_ids=(reverse.id,),
+    )
+    hypothesis = next(
+        item
+        for item in engine.latent_context_hypotheses
+        if item.id == hypothesis_id
+    )
+    narrative = engine.build_metacognitive_narrative(
+        "context_causal_stability"
+    )
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    assert assessment.status == "replicated_reversible"
+    assert assessment.independent_forward_batches == 2
+    assert assessment.independent_reverse_batches == 1
+    assert assessment.forward_replication_rate == 1.0
+    assert assessment.reverse_replication_rate == 1.0
+    assert assessment.reversal_direction_followed is True
+    assert assessment.confidence >= 0.35
+    assert hypothesis.causal_status == "replicated_reversible"
+    assert restored.context_causal_stability_assessments == (
+        engine.context_causal_stability_assessments
+    )
+    assert restored.latent_context_hypotheses == (
+        engine.latent_context_hypotheses
+    )
+    assert restored.snapshot() == engine.snapshot()
+    assert narrative.unsupported_claims == 0
+    assert any(
+        ref.startswith("context_causal_stability_assessment:")
+        for ref in narrative.evidence_refs
+    )
+
+
+def test_context_causal_stability_rejects_reused_replication_evidence() -> None:
+    engine, hypothesis_id = _build_context_causality_test_engine()
+
+    forward_a = _observe_context_trial(
+        engine,
+        hypothesis_id,
+        from_context="production",
+        to_context="sandbox",
+        observed_target_success_rate=1.0,
+        evidence_ref="batch:shared",
+    )
+    forward_b = _observe_context_trial(
+        engine,
+        hypothesis_id,
+        from_context="production",
+        to_context="sandbox",
+        observed_target_success_rate=1.0,
+        evidence_ref="batch:shared",
+    )
+    reverse = _observe_context_trial(
+        engine,
+        hypothesis_id,
+        from_context="sandbox",
+        to_context="production",
+        observed_target_success_rate=0.0,
+        evidence_ref="batch:reverse",
+    )
+
+    assessment = engine.assess_context_causal_stability(
+        hypothesis_id,
+        forward_trial_ids=(forward_a.id, forward_b.id),
+        reverse_trial_ids=(reverse.id,),
+    )
+    hypothesis = next(
+        item
+        for item in engine.latent_context_hypotheses
+        if item.id == hypothesis_id
+    )
+
+    assert assessment.status == "insufficient_replication"
+    assert assessment.independent_forward_batches == 1
+    assert hypothesis.causal_status == "intervention_supported"
+    assert engine.snapshot()["replicated_reversible_context_count"] == 0
