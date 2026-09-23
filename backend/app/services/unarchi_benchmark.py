@@ -5,7 +5,7 @@ from typing import Any
 from backend.app.services.unarchi_engine import UnarchiEngine
 
 
-BENCHMARK_VERSION = "unarchi-ablation-v0.16"
+BENCHMARK_VERSION = "unarchi-ablation-v0.17"
 
 
 def _failure_sensitization() -> dict[str, Any]:
@@ -1237,6 +1237,134 @@ def _latent_context_hypothesis_discovery() -> dict[str, Any]:
         ),
     }
 
+
+def _context_causality_intervention_support() -> dict[str, Any]:
+    engine = UnarchiEngine()
+    goal = "validate release evidence"
+    action = "run automated release check"
+
+    for index in range(5):
+        engine.learn(
+            observation=f"Sandbox release validation {index}.",
+            goal=goal,
+            action=action,
+            outcome="correct evidence",
+            success=True,
+            reward=0.8,
+            predicted_success=0.55,
+        )
+        engine.learn(
+            observation=f"Production release validation {index}.",
+            goal=goal,
+            action=action,
+            outcome="invalid evidence escaped",
+            success=False,
+            reward=-0.8,
+            predicted_success=0.70,
+        )
+
+    parent = next(
+        item
+        for item in engine.consolidate_self_schema()
+        if item.kind == "mixed" and action in item.pattern
+    )
+    discovery = engine.discover_latent_context_hypotheses(parent.id)
+    hypothesis = next(
+        item
+        for item in engine.latent_context_hypotheses
+        if item.id == discovery.selected_hypothesis_id
+    )
+    observational_status = hypothesis.causal_status
+
+    confounded = engine.propose_context_causality_intervention(
+        hypothesis.id,
+        from_context="production",
+        to_context="sandbox",
+        controlled_signature="code=v1;load=normal;data=fixed",
+        min_samples=4,
+    )
+    confounded = engine.observe_context_causality_intervention(
+        confounded.id,
+        observed_target_success_rate=1.0,
+        observed_signature="code=v2;load=normal;data=fixed",
+        sample_count=4,
+        evidence_refs=("context_intervention:confounded",),
+    )
+    after_confounded = next(
+        item
+        for item in engine.latent_context_hypotheses
+        if item.id == hypothesis.id
+    )
+
+    clean = engine.propose_context_causality_intervention(
+        hypothesis.id,
+        from_context="production",
+        to_context="sandbox",
+        controlled_signature="code=v1;load=normal;data=fixed",
+        min_samples=4,
+    )
+    clean = engine.observe_context_causality_intervention(
+        clean.id,
+        observed_target_success_rate=1.0,
+        observed_signature="code=v1;load=normal;data=fixed",
+        sample_count=4,
+        evidence_refs=("context_intervention:clean",),
+    )
+    supported = next(
+        item
+        for item in engine.latent_context_hypotheses
+        if item.id == hypothesis.id
+    )
+
+    narrative = engine.build_metacognitive_narrative(
+        "context_causality"
+    )
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    return {
+        "name": "context_causality_intervention_support",
+        "expected_direction": (
+            "observational context remains unverified, confounding blocks "
+            "causal upgrading, and a controlled predicted intervention earns "
+            "intervention-supported status"
+        ),
+        "passed": (
+            observational_status == "unverified"
+            and confounded.status == "confounded"
+            and after_confounded.causal_status == "unverified"
+            and clean.status == "intervention_supported"
+            and clean.competing_variables_held_constant is True
+            and clean.predicted_direction_followed is True
+            and clean.causal_strength is not None
+            and clean.causal_strength >= 0.35
+            and supported.causal_status == "intervention_supported"
+            and any(
+                ref.startswith("context_causality_trial:")
+                for ref in supported.causal_evidence_refs
+            )
+            and restored.context_causality_trials
+            == engine.context_causality_trials
+            and restored.latent_context_hypotheses
+            == engine.latent_context_hypotheses
+            and narrative.unsupported_claims == 0
+            and bool(narrative.evidence_refs)
+        ),
+        "observational_status": observational_status,
+        "confounded_status": confounded.status,
+        "after_confounded_status": after_confounded.causal_status,
+        "clean_status": clean.status,
+        "held_constant": clean.competing_variables_held_constant,
+        "direction_followed": clean.predicted_direction_followed,
+        "causal_strength": clean.causal_strength,
+        "final_hypothesis_status": supported.causal_status,
+        "restart_preserved": (
+            restored.context_causality_trials
+            == engine.context_causality_trials
+            and restored.latent_context_hypotheses
+            == engine.latent_context_hypotheses
+        ),
+    }
+
 def run_unarchi_ablation_benchmark() -> dict[str, Any]:
     scenarios = [
         _failure_sensitization(),
@@ -1256,6 +1384,7 @@ def run_unarchi_ablation_benchmark() -> dict[str, Any]:
         _context_sensitive_self_schema_decomposition(),
         _context_transfer_boundary_learning(),
         _latent_context_hypothesis_discovery(),
+        _context_causality_intervention_support(),
     ]
     passed = sum(bool(item["passed"]) for item in scenarios)
     return {

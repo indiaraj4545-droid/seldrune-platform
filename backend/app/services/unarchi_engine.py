@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 
-UNARCHI_VERSION = "unarchi-v0.16"
+UNARCHI_VERSION = "unarchi-v0.17"
 _STOPWORDS = {
     "a",
     "an",
@@ -502,6 +502,34 @@ class LatentContextHypothesis:
     holdout_improvement: float
     decomposition_id: int | None
     evidence_refs: tuple[str, ...]
+    causal_status: str = "unverified"
+    causal_evidence_refs: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class ContextCausalityTrial:
+    id: int
+    hypothesis_id: int
+    from_context: str
+    to_context: str
+    controlled_signature: str
+    baseline_success_rate: float
+    predicted_target_success_rate: float
+    risk: float
+    min_samples: int
+    status: str = "planned"
+    observed_target_success_rate: float | None = None
+    observed_signature: str | None = None
+    sample_count: int = 0
+    competing_variables_held_constant: bool | None = None
+    predicted_direction_followed: bool | None = None
+    causal_strength: float | None = None
+    evidence_refs: tuple[str, ...] = ()
+    reversible_only: bool = True
+    paid_actions_allowed: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -576,14 +604,14 @@ class UnarchiEngine:
     """
     CPU-only experimental cognitive kernel.
 
-    v0.16 includes causal internal dynamics, bounded endogenous goals, a
+    v0.17 includes causal internal dynamics, bounded endogenous goals, a
     calibrated predictive self-model, prospective memory, evidence-grounded
     metacognition, explicit value arbitration, competing causal hypotheses,
     controlled self-intervention trials, a bounded recurrent global workspace,
     counterfactual future simulation with prediction-error feedback, a compact
     autobiographical self-schema, contradiction-driven revision, validated
-    context decomposition, transfer boundaries, and conservative latent
-    context-hypothesis discovery.
+    context decomposition, transfer boundaries, conservative latent context
+    discovery, and intervention-supported context causality evidence.
     """
 
     state: UnarchiState = field(default_factory=UnarchiState)
@@ -640,6 +668,10 @@ class UnarchiEngine:
         default_factory=list
     )
     next_latent_context_discovery_id: int = 1
+    context_causality_trials: list[ContextCausalityTrial] = field(
+        default_factory=list
+    )
+    next_context_causality_trial_id: int = 1
     success_prediction_bias: float = 0.0
     uncertainty_prediction_bias: float = 0.0
     stress_prediction_bias: float = 0.0
@@ -3443,6 +3475,214 @@ class UnarchiEngine:
 
 
 
+
+    def propose_context_causality_intervention(
+        self,
+        hypothesis_id: int,
+        *,
+        from_context: str,
+        to_context: str,
+        controlled_signature: str,
+        risk: float = 0.10,
+        min_samples: int = 3,
+    ) -> ContextCausalityTrial:
+        """
+        Plan a bounded intervention test for one selected latent context hypothesis.
+
+        The method records a protocol only. It never performs an external action.
+        """
+        hypothesis = next(
+            (
+                item
+                for item in self.latent_context_hypotheses
+                if item.id == hypothesis_id
+            ),
+            None,
+        )
+        if hypothesis is None:
+            raise ValueError("unknown latent context hypothesis")
+        if hypothesis.validation_status != "selected":
+            raise ValueError("context hypothesis must pass held-out validation")
+
+        from_label = from_context.strip().casefold()
+        to_label = to_context.strip().casefold()
+        signature = controlled_signature.strip()
+        if not from_label or not to_label or from_label == to_label:
+            raise ValueError("distinct context labels are required")
+        if not signature:
+            raise ValueError("controlled environment signature is required")
+
+        contextual = {
+            item.context_label: item
+            for item in self.active_contextual_self_schema(
+                parent_schema_id=hypothesis.parent_schema_id
+            )
+        }
+        if from_label not in contextual or to_label not in contextual:
+            raise ValueError("intervention contexts must be validated schemas")
+
+        baseline = contextual[from_label].success_rate
+        target = contextual[to_label].success_rate
+        if abs(target - baseline) < 0.25:
+            raise ValueError("context outcome contrast is too small to intervene")
+
+        trial = ContextCausalityTrial(
+            id=self.next_context_causality_trial_id,
+            hypothesis_id=hypothesis.id,
+            from_context=from_label,
+            to_context=to_label,
+            controlled_signature=signature[:300],
+            baseline_success_rate=baseline,
+            predicted_target_success_rate=target,
+            risk=round(_clamp(risk), 6),
+            min_samples=max(3, min(int(min_samples), 20)),
+            evidence_refs=(
+                f"latent_context_hypothesis:{hypothesis.id}",
+                f"self_schema_decomposition:{hypothesis.decomposition_id}",
+            ),
+        )
+        self.next_context_causality_trial_id += 1
+        self.context_causality_trials.append(trial)
+        if len(self.context_causality_trials) > self.max_memory:
+            self.context_causality_trials = self.context_causality_trials[
+                -self.max_memory:
+            ]
+        return trial
+
+    def observe_context_causality_intervention(
+        self,
+        trial_id: int,
+        *,
+        observed_target_success_rate: float,
+        observed_signature: str,
+        sample_count: int,
+        evidence_refs: tuple[str, ...] | list[str] = (),
+    ) -> ContextCausalityTrial:
+        """
+        Evaluate whether a controlled context intervention supports causality.
+
+        Exact controlled-signature equality is required. Confounded observations
+        cannot upgrade an observational context hypothesis.
+        """
+        trial = next(
+            (
+                item
+                for item in self.context_causality_trials
+                if item.id == trial_id
+            ),
+            None,
+        )
+        if trial is None:
+            raise ValueError("unknown context causality trial")
+        if trial.status != "planned":
+            raise ValueError("context causality trial has already been observed")
+
+        observed_rate = _clamp(observed_target_success_rate)
+        signature = observed_signature.strip()
+        if not signature:
+            raise ValueError("observed controlled signature is required")
+        sample_count = max(0, int(sample_count))
+
+        held_constant = signature == trial.controlled_signature
+        trial.observed_target_success_rate = round(observed_rate, 6)
+        trial.observed_signature = signature[:300]
+        trial.sample_count = sample_count
+        trial.competing_variables_held_constant = held_constant
+
+        expected_delta = (
+            trial.predicted_target_success_rate
+            - trial.baseline_success_rate
+        )
+        observed_delta = observed_rate - trial.baseline_success_rate
+        direction_followed = (
+            observed_delta * expected_delta > 0.0
+            and abs(observed_delta) >= 0.20
+        )
+        trial.predicted_direction_followed = direction_followed
+
+        target_error = abs(
+            observed_rate - trial.predicted_target_success_rate
+        )
+        sample_factor = min(1.0, sample_count / max(1, trial.min_samples))
+        strength = _clamp(
+            abs(observed_delta)
+            * (1.0 - target_error)
+            * sample_factor
+        )
+        trial.causal_strength = round(strength, 6)
+        provided_refs = tuple(str(ref) for ref in evidence_refs if str(ref))
+        trial.evidence_refs = tuple(
+            dict.fromkeys(trial.evidence_refs + provided_refs)
+        )
+
+        if not held_constant:
+            trial.status = "confounded"
+            return trial
+        if sample_count < trial.min_samples:
+            trial.status = "insufficient_evidence"
+            return trial
+
+        supported = direction_followed and strength >= 0.35
+        trial.status = (
+            "intervention_supported"
+            if supported
+            else "intervention_not_supported"
+        )
+
+        updated: list[LatentContextHypothesis] = []
+        for item in self.latent_context_hypotheses:
+            if item.id != trial.hypothesis_id:
+                updated.append(item)
+                continue
+            causal_refs = tuple(
+                dict.fromkeys(
+                    item.causal_evidence_refs
+                    + (f"context_causality_trial:{trial.id}",)
+                    + provided_refs
+                )
+            )
+            updated.append(
+                LatentContextHypothesis(
+                    id=item.id,
+                    parent_schema_id=item.parent_schema_id,
+                    positive_term=item.positive_term,
+                    negative_term=item.negative_term,
+                    positive_support=item.positive_support,
+                    negative_support=item.negative_support,
+                    positive_success_rate=item.positive_success_rate,
+                    negative_success_rate=item.negative_success_rate,
+                    rate_contrast=item.rate_contrast,
+                    validation_status=item.validation_status,
+                    holdout_improvement=item.holdout_improvement,
+                    decomposition_id=item.decomposition_id,
+                    evidence_refs=item.evidence_refs,
+                    causal_status=(
+                        "intervention_supported"
+                        if supported
+                        else "intervention_not_supported"
+                    ),
+                    causal_evidence_refs=causal_refs,
+                )
+            )
+        self.latent_context_hypotheses = updated
+
+        if supported:
+            self.stage_global_workspace_item(
+                source="intervention",
+                content=(
+                    f"context causality trial={trial.id}; "
+                    f"hypothesis={trial.hypothesis_id}; "
+                    f"context={trial.from_context}->{trial.to_context}; "
+                    f"strength={trial.causal_strength:.3f}"
+                ),
+                salience=max(0.60, trial.causal_strength or 0.0),
+                evidence_refs=(
+                    f"context_causality_trial:{trial.id}",
+                    *provided_refs[-4:],
+                ),
+            )
+        return trial
+
     def discover_latent_context_hypotheses(
         self,
         schema_id: int,
@@ -3685,6 +3925,8 @@ class UnarchiEngine:
                         holdout_improvement=item.holdout_improvement,
                         decomposition_id=applied.id,
                         evidence_refs=item.evidence_refs,
+                        causal_status=item.causal_status,
+                        causal_evidence_refs=item.causal_evidence_refs,
                     )
                 updated_hypotheses.append(item)
             self.latent_context_hypotheses = updated_hypotheses
@@ -4170,6 +4412,43 @@ class UnarchiEngine:
             details.append(detail)
 
         if focus in {
+            "context_causality",
+            "context_intervention",
+            "causal_context",
+        }:
+            if self.context_causality_trials:
+                trial = self.context_causality_trials[-1]
+                add(
+                    f"context_causality_trial:{trial.id}",
+                    (
+                        f"hypothesis={trial.hypothesis_id}; "
+                        f"context={trial.from_context}->{trial.to_context}; "
+                        f"status={trial.status}; "
+                        f"held_constant="
+                        f"{trial.competing_variables_held_constant}; "
+                        f"direction_followed="
+                        f"{trial.predicted_direction_followed}; "
+                        f"strength={trial.causal_strength}"
+                    ),
+                )
+                add(
+                    f"latent_context_hypothesis:{trial.hypothesis_id}",
+                    "observational context hypothesis under intervention test",
+                )
+                for ref in trial.evidence_refs[-4:]:
+                    add(
+                        ref,
+                        "evidence linked to the controlled context intervention",
+                    )
+                summary = (
+                    "The latest context-causality assessment separates held-out "
+                    "observational prediction from intervention support and "
+                    "rejects causal upgrading when competing variables changed."
+                )
+            else:
+                summary = "No context-causality intervention has been observed."
+
+        elif focus in {
             "latent_context",
             "context_discovery",
             "latent_context_discovery",
@@ -5020,6 +5299,12 @@ class UnarchiEngine:
             "next_latent_context_discovery_id": (
                 self.next_latent_context_discovery_id
             ),
+            "context_causality_trials": [
+                item.to_dict() for item in self.context_causality_trials
+            ],
+            "next_context_causality_trial_id": (
+                self.next_context_causality_trial_id
+            ),
             "success_prediction_bias": self.success_prediction_bias,
             "uncertainty_prediction_bias": self.uncertainty_prediction_bias,
             "stress_prediction_bias": self.stress_prediction_bias,
@@ -5069,6 +5354,10 @@ class UnarchiEngine:
             "latent_context_discoveries",
             [],
         )
+        context_causality_trials_payload = payload.get(
+            "context_causality_trials",
+            [],
+        )
         value_weights_payload = payload.get("value_weights", _default_value_weights())
         if not isinstance(state_payload, dict):
             raise ValueError("invalid UNARCHI state")
@@ -5114,6 +5403,8 @@ class UnarchiEngine:
             raise ValueError("invalid UNARCHI latent context hypotheses")
         if not isinstance(latent_context_discoveries_payload, list):
             raise ValueError("invalid UNARCHI latent context discoveries")
+        if not isinstance(context_causality_trials_payload, list):
+            raise ValueError("invalid UNARCHI context causality trials")
 
         memory: list[Experience] = []
         for item in memory_payload:
@@ -5322,6 +5613,9 @@ class UnarchiEngine:
             restored_item["evidence_refs"] = tuple(
                 restored_item.get("evidence_refs", ())
             )
+            restored_item["causal_evidence_refs"] = tuple(
+                restored_item.get("causal_evidence_refs", ())
+            )
             latent_context_hypotheses.append(
                 LatentContextHypothesis(**restored_item)
             )
@@ -5339,6 +5633,18 @@ class UnarchiEngine:
             )
             latent_context_discoveries.append(
                 LatentContextDiscovery(**restored_item)
+            )
+
+        context_causality_trials: list[ContextCausalityTrial] = []
+        for item in context_causality_trials_payload:
+            if not isinstance(item, dict):
+                raise ValueError("invalid UNARCHI context causality trial")
+            restored_item = dict(item)
+            restored_item["evidence_refs"] = tuple(
+                restored_item.get("evidence_refs", ())
+            )
+            context_causality_trials.append(
+                ContextCausalityTrial(**restored_item)
             )
 
         max_memory = max(16, min(int(payload.get("max_memory") or 256), 4096))
@@ -5482,6 +5788,15 @@ class UnarchiEngine:
                 )
                 + 1,
             ),
+            context_causality_trials=context_causality_trials[-max_memory:],
+            next_context_causality_trial_id=max(
+                int(payload.get("next_context_causality_trial_id") or 1),
+                max(
+                    (item.id for item in context_causality_trials),
+                    default=0,
+                )
+                + 1,
+            ),
             success_prediction_bias=float(
                 payload.get("success_prediction_bias") or 0.0
             ),
@@ -5556,6 +5871,16 @@ class UnarchiEngine:
             ),
             "latent_context_discovery_count": len(
                 self.latent_context_discoveries
+            ),
+            "context_causality_trial_count": len(
+                self.context_causality_trials
+            ),
+            "intervention_supported_context_count": len(
+                [
+                    item
+                    for item in self.latent_context_hypotheses
+                    if item.causal_status == "intervention_supported"
+                ]
             ),
             "observed_counterfactual_count": len(
                 [

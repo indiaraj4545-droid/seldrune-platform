@@ -926,3 +926,66 @@ The measurable target is causal context discrimination: an observationally
 useful context hypothesis should gain causal status only when a bounded
 intervention changes the candidate context while relevant competing variables
 are held fixed and the predicted outcome difference follows.
+
+
+## v0.17 context-causality intervention checkpoint
+
+UNARCHI v0.17 separates observational context prediction from bounded
+intervention support.
+
+A latent context hypothesis can be selected by v0.16 because it improves
+held-out prediction, but its causal status still begins as `unverified`.
+
+For one selected hypothesis, v0.17 can plan a reversible, zero-paid-action
+context intervention protocol that records:
+
+- source and target validated context labels;
+- the baseline and predicted target success rates;
+- a declared controlled-environment signature for competing variables;
+- bounded intervention risk;
+- a minimum evidence batch size.
+
+Planning the trial does not perform any external action.
+
+When intervention evidence is observed, UNARCHI checks:
+
+- whether the controlled-environment signature remained exactly unchanged;
+- whether the evidence batch reached the minimum sample count;
+- whether the observed success-rate shift moved in the predicted direction;
+- whether the shift was large enough to be meaningful;
+- whether the observed target rate stayed sufficiently close to the predicted
+  target rate.
+
+If competing variables changed, the trial is marked `confounded` and cannot
+upgrade the hypothesis. If the batch is too small, it is marked
+`insufficient_evidence`. If a clean intervention fails to follow the
+prediction, it is marked `intervention_not_supported`.
+
+Only a clean, sufficiently large, directionally correct intervention with
+bounded evidence strength upgrades the latent context hypothesis to
+`intervention_supported`.
+
+The deterministic v0.17 benchmark requires:
+
+held-out validated context hypothesis -> causal status unverified -> apparently
+successful but confounded intervention -> causal status remains unverified ->
+clean fixed-signature intervention -> predicted outcome shift -> hypothesis
+becomes intervention_supported -> export/restore -> identical causal evidence.
+
+The metacognitive narrative reconstructs the trial, controlled-variable status,
+predicted-direction result, and linked evidence references.
+
+This is intervention-supported functional causal evidence. It is not proof of
+real-world causation beyond the tested protocol, and it does not establish
+subjective identity, self-awareness, sentience, phenomenal consciousness, or
+qualia.
+
+## Next checkpoint: v0.18 replicated and reversible context causality
+
+The next research step should require intervention support to replicate across
+multiple independent batches and, where safe, reverse the context manipulation
+to test whether the outcome shift reverses as predicted.
+
+The measurable target is causal stability: replicated forward intervention plus
+a successful reversal test should strengthen confidence, while inconsistent
+replication should prevent escalation beyond intervention-supported status.

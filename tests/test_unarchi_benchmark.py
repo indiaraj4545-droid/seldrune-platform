@@ -4,8 +4,8 @@ from backend.app.services.unarchi_benchmark import run_unarchi_ablation_benchmar
 def test_unarchi_ablation_benchmark_passes_all_scenarios() -> None:
     result = run_unarchi_ablation_benchmark()
 
-    assert result["scenario_count"] == 17
-    assert result["passed_scenarios"] == 17
+    assert result["scenario_count"] == 18
+    assert result["passed_scenarios"] == 18
     assert result["pass_rate"] == 1.0
     assert result["claims_phenomenal_consciousness"] is False
 
@@ -257,3 +257,22 @@ def test_unarchi_benchmark_covers_latent_context_hypothesis_discovery() -> None:
         "rejected_validation"
     }
     assert discovery["restart_preserved"] is True
+
+
+
+def test_unarchi_benchmark_covers_context_causality_intervention() -> None:
+    result = run_unarchi_ablation_benchmark()
+    scenarios = {item["name"]: item for item in result["scenarios"]}
+
+    causal = scenarios["context_causality_intervention_support"]
+
+    assert causal["passed"] is True
+    assert causal["observational_status"] == "unverified"
+    assert causal["confounded_status"] == "confounded"
+    assert causal["after_confounded_status"] == "unverified"
+    assert causal["clean_status"] == "intervention_supported"
+    assert causal["held_constant"] is True
+    assert causal["direction_followed"] is True
+    assert causal["causal_strength"] >= 0.35
+    assert causal["final_hypothesis_status"] == "intervention_supported"
+    assert causal["restart_preserved"] is True
