@@ -1157,3 +1157,40 @@ def test_export_restore_preserves_causal_world_model() -> None:
     assert restored.next_hypothesis_id == engine.next_hypothesis_id
     assert restored.next_experiment_id == engine.next_experiment_id
     assert restored.snapshot() == engine.snapshot()
+
+
+def test_world_model_cannot_double_count_same_experiment_evidence() -> None:
+    engine = UnarchiEngine()
+    engine.add_causal_hypothesis(
+        statement="Cause A.",
+        predictions={"probe": "signal alpha"},
+    )
+    engine.add_causal_hypothesis(
+        statement="Cause B.",
+        predictions={"probe": "signal beta"},
+    )
+    experiment = engine.select_discriminating_experiment(
+        [{"test": "probe", "risk": 0.0, "reversible": True}]
+    )
+    engine.observe_discriminating_experiment(
+        experiment.id,
+        observed_evidence="signal alpha",
+    )
+    before = tuple(
+        item.confidence for item in engine.causal_hypotheses
+    )
+
+    try:
+        engine.observe_discriminating_experiment(
+            experiment.id,
+            observed_evidence="signal alpha",
+        )
+    except ValueError as exc:
+        assert "already been observed" in str(exc)
+    else:
+        raise AssertionError("experiment evidence must not be counted twice")
+
+    after = tuple(
+        item.confidence for item in engine.causal_hypotheses
+    )
+    assert after == before
