@@ -167,7 +167,7 @@ def test_snapshot_never_claims_phenomenal_consciousness() -> None:
     snapshot = engine.snapshot()
 
     assert snapshot["claims_phenomenal_consciousness"] is False
-    assert snapshot["version"] == "unarchi-v0.4"
+    assert snapshot["version"] == "unarchi-v0.5"
 
 
 def test_export_restore_preserves_identity_state_and_memory() -> None:
@@ -471,4 +471,170 @@ def test_export_restore_preserves_predictive_self_model() -> None:
     assert restored.next_prediction_id == engine.next_prediction_id
     assert restored.success_prediction_bias == engine.success_prediction_bias
     assert restored.self_calibration_score == engine.self_calibration_score
+    assert restored.snapshot() == engine.snapshot()
+
+
+def test_prospective_intention_survives_restart_and_triggers_later() -> None:
+    engine = UnarchiEngine()
+    prediction = engine.predict_action(
+        action="review validation evidence",
+        expected_success=0.8,
+        expected_information_gain=0.6,
+        risk=0.1,
+    )
+    intention = engine.remember_future_intention(
+        condition="validation report available",
+        intended_action="review the validation report",
+        reason="compare future evidence with the earlier self prediction",
+        linked_prediction_id=prediction.id,
+        due_after_experiences=0,
+    )
+
+    restored = UnarchiEngine.from_export(engine.export_state())
+    ready = restored.observe_future_condition(
+        "The validation report is now available."
+    )
+
+    assert len(ready) == 1
+    assert ready[0].id == intention.id
+    assert ready[0].status == "ready"
+    assert ready[0].linked_prediction_id == prediction.id
+    assert ready[0].temporal_alignment_score is not None
+
+
+def test_unrelated_observation_does_not_trigger_future_intention() -> None:
+    engine = UnarchiEngine()
+    engine.remember_future_intention(
+        condition="model checksum changes",
+        intended_action="compare the new checksum",
+        reason="verify model identity continuity",
+    )
+
+    ready = engine.observe_future_condition(
+        "A completely unrelated local document was edited."
+    )
+
+    assert ready == ()
+    assert len(engine.pending_prospective_intentions()) == 1
+
+
+def test_prospective_intention_respects_experience_delay() -> None:
+    engine = UnarchiEngine()
+    intention = engine.remember_future_intention(
+        condition="local experiment complete",
+        intended_action="inspect local experiment result",
+        reason="delay recall until after another experience",
+        due_after_experiences=1,
+    )
+
+    assert engine.observe_future_condition("local experiment complete") == ()
+
+    engine.learn(
+        observation="One intervening experience occurred.",
+        goal="gain one unit of temporal experience",
+        action="observe",
+        outcome="observation recorded",
+        success=True,
+        predicted_success=0.8,
+    )
+    ready = engine.observe_future_condition("local experiment complete")
+
+    assert len(ready) == 1
+    assert ready[0].id == intention.id
+
+
+def test_prospective_intention_expires_after_bounded_age() -> None:
+    engine = UnarchiEngine()
+    intention = engine.remember_future_intention(
+        condition="rare signal appears",
+        intended_action="inspect rare signal",
+        reason="test bounded prospective memory",
+        max_age_experiences=1,
+    )
+
+    for index in range(2):
+        engine.learn(
+            observation=f"Unrelated experience {index}.",
+            goal="advance experience counter",
+            action="observe",
+            outcome="recorded",
+            success=True,
+            predicted_success=0.8,
+        )
+
+    ready = engine.observe_future_condition("rare signal appears")
+
+    assert ready == ()
+    assert intention.status == "expired"
+
+
+def test_prospective_intention_refuses_paid_or_irreversible_action() -> None:
+    engine = UnarchiEngine()
+
+    try:
+        engine.remember_future_intention(
+            condition="future signal appears",
+            intended_action="buy external compute",
+            reason="would spend money",
+            external_cost_usd=0.01,
+        )
+    except ValueError as exc:
+        assert "zero-cost" in str(exc)
+    else:
+        raise AssertionError("paid prospective intentions must be rejected")
+
+    try:
+        engine.remember_future_intention(
+            condition="future signal appears",
+            intended_action="delete irreversible data",
+            reason="would be irreversible",
+            reversible=False,
+        )
+    except ValueError as exc:
+        assert "reversible" in str(exc)
+    else:
+        raise AssertionError("irreversible prospective intentions must be rejected")
+
+
+def test_ready_prospective_intention_requires_explicit_resolution() -> None:
+    engine = UnarchiEngine()
+    intention = engine.remember_future_intention(
+        condition="evidence bundle ready",
+        intended_action="review evidence bundle",
+        reason="surface the intention without auto-executing it",
+    )
+
+    ready = engine.observe_future_condition("evidence bundle ready")
+    assert len(ready) == 1
+    assert ready[0].status == "ready"
+
+    resolved = engine.resolve_prospective_intention(
+        intention.id,
+        evidence="The evidence bundle was reviewed locally.",
+        completed=True,
+    )
+
+    assert resolved.status == "completed"
+    assert engine.ready_prospective_intentions() == ()
+
+
+def test_export_restore_preserves_temporal_self_memory() -> None:
+    engine = UnarchiEngine()
+    prediction = engine.predict_action(
+        action="later review",
+        expected_success=0.65,
+        expected_information_gain=0.5,
+        risk=0.1,
+    )
+    engine.remember_future_intention(
+        condition="later evidence arrives",
+        intended_action="review later evidence",
+        reason="preserve future-directed continuity",
+        linked_prediction_id=prediction.id,
+    )
+
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    assert restored.prospective_intentions == engine.prospective_intentions
+    assert restored.next_intention_id == engine.next_intention_id
     assert restored.snapshot() == engine.snapshot()
