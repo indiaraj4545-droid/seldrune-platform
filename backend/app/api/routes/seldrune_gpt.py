@@ -747,7 +747,7 @@ def edit_seldrune_gpt_pdf(
                     f"{edit_result.verification_score}% content verification, "
                     f"{visual_summary}, and "
                     f"{selected_assessment.layout_integrity_score}% layout integrity. "
-                    (
+                    + (
                         "Local CPU OCR was used. "
                         if local_edit.ocr_used
                         else ""
