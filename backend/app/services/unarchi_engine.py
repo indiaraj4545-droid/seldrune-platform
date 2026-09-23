@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 
-UNARCHI_VERSION = "unarchi-v0.12"
+UNARCHI_VERSION = "unarchi-v0.13"
 _STOPWORDS = {
     "a",
     "an",
@@ -364,6 +364,39 @@ class SelfSchemaEntry:
 
 
 @dataclass(frozen=True)
+class SelfSchemaRevision:
+    id: int
+    schema_id: int
+    prior_kind: str
+    revised_kind: str
+    prior_confidence: float
+    revised_confidence: float
+    prior_success_rate: float
+    revised_success_rate: float
+    contradictory_evidence_refs: tuple[str, ...]
+    contradiction_ratio: float
+    status: str
+    reason: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class SelfSchemaRevisionComparison:
+    revised_action: str
+    frozen_action: str
+    revised_predicted_success: float
+    frozen_predicted_success: float
+    predicted_success_delta: float
+    choice_changed: bool
+    revision_causally_active: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class MetacognitiveNarrative:
     focus: str
     summary: str
@@ -416,12 +449,12 @@ class UnarchiEngine:
     """
     CPU-only experimental cognitive kernel.
 
-    v0.12 includes causal internal dynamics, bounded endogenous goals, a
+    v0.13 includes causal internal dynamics, bounded endogenous goals, a
     calibrated predictive self-model, prospective memory, evidence-grounded
     metacognition, explicit value arbitration, competing causal hypotheses,
     controlled self-intervention trials, a bounded recurrent global workspace,
-    counterfactual future simulation with prediction-error feedback, and a
-    compact autobiographical self-schema for longitudinal transfer.
+    counterfactual future simulation with prediction-error feedback, a compact
+    autobiographical self-schema, and contradiction-driven schema revision.
     """
 
     state: UnarchiState = field(default_factory=UnarchiState)
@@ -456,6 +489,8 @@ class UnarchiEngine:
     self_schema: list[SelfSchemaEntry] = field(default_factory=list)
     next_self_schema_id: int = 1
     max_self_schema_entries: int = 32
+    self_schema_revisions: list[SelfSchemaRevision] = field(default_factory=list)
+    next_self_schema_revision_id: int = 1
     success_prediction_bias: float = 0.0
     uncertainty_prediction_bias: float = 0.0
     stress_prediction_bias: float = 0.0
@@ -2718,6 +2753,216 @@ class UnarchiEngine:
             )
         )
 
+
+    def _matching_schema_experiences(
+        self,
+        schema: SelfSchemaEntry,
+        *,
+        similarity_threshold: float = 0.28,
+    ) -> list[tuple[int, Experience]]:
+        threshold = _clamp(similarity_threshold, 0.10, 0.90)
+        matches: list[tuple[int, Experience]] = []
+        for index, experience in enumerate(self.memory):
+            if experience.success is None:
+                continue
+            signature = f"{experience.goal} {experience.action}".strip()
+            if _similarity(signature, schema.pattern) >= threshold:
+                matches.append((index, experience))
+        return matches
+
+    def reconcile_self_schema_contradiction(
+        self,
+        schema_id: int,
+        *,
+        min_contradictory_evidence: int = 2,
+        similarity_threshold: float = 0.28,
+    ) -> SelfSchemaRevision:
+        """
+        Revise one established self-schema when new evidence contradicts it.
+
+        Only autobiographical experiences not already cited by the schema count as
+        new contradiction evidence. The schema is then rebuilt from the complete
+        evidence set, preventing selective retention of the old self-description.
+        """
+        target = next(
+            (item for item in self.self_schema if item.id == schema_id),
+            None,
+        )
+        if target is None:
+            raise ValueError("unknown self schema")
+        if target.status != "active":
+            raise ValueError("self schema is not active")
+        if target.kind not in {"capability", "limitation"}:
+            raise ValueError("only directional self schemas can be contradicted")
+
+        min_contradictory_evidence = max(
+            1,
+            min(int(min_contradictory_evidence), 12),
+        )
+        prior_refs = set(target.evidence_refs)
+        new_matches = [
+            (index, experience)
+            for index, experience in self._matching_schema_experiences(
+                target,
+                similarity_threshold=similarity_threshold,
+            )
+            if f"experience:{index}" not in prior_refs
+        ]
+        if target.kind == "capability":
+            contradictions = [
+                (index, experience)
+                for index, experience in new_matches
+                if experience.success is False
+            ]
+        else:
+            contradictions = [
+                (index, experience)
+                for index, experience in new_matches
+                if experience.success is True
+            ]
+
+        contradiction_refs = tuple(
+            f"experience:{index}" for index, _ in contradictions
+        )
+        new_evidence_count = len(new_matches)
+        contradiction_ratio = (
+            len(contradictions) / new_evidence_count
+            if new_evidence_count
+            else 0.0
+        )
+        prior_kind = target.kind
+        prior_confidence = target.confidence
+        prior_success_rate = target.success_rate
+
+        if len(contradictions) < min_contradictory_evidence:
+            revision = SelfSchemaRevision(
+                id=self.next_self_schema_revision_id,
+                schema_id=target.id,
+                prior_kind=prior_kind,
+                revised_kind=prior_kind,
+                prior_confidence=prior_confidence,
+                revised_confidence=prior_confidence,
+                prior_success_rate=prior_success_rate,
+                revised_success_rate=prior_success_rate,
+                contradictory_evidence_refs=contradiction_refs,
+                contradiction_ratio=round(contradiction_ratio, 6),
+                status="insufficient_evidence",
+                reason=(
+                    "Contradictory evidence did not reach the bounded revision "
+                    "threshold."
+                ),
+            )
+            self.next_self_schema_revision_id += 1
+            self.self_schema_revisions.append(revision)
+            return revision
+
+        self.consolidate_self_schema(
+            min_evidence=2,
+            similarity_threshold=similarity_threshold,
+        )
+        revised = next(
+            (item for item in self.self_schema if item.id == schema_id),
+            None,
+        )
+        if revised is None:
+            raise ValueError("self schema disappeared during reconciliation")
+
+        changed = (
+            revised.kind != prior_kind
+            or abs(revised.success_rate - prior_success_rate) >= 0.10
+            or abs(revised.confidence - prior_confidence) >= 0.05
+        )
+        revision = SelfSchemaRevision(
+            id=self.next_self_schema_revision_id,
+            schema_id=revised.id,
+            prior_kind=prior_kind,
+            revised_kind=revised.kind,
+            prior_confidence=prior_confidence,
+            revised_confidence=revised.confidence,
+            prior_success_rate=prior_success_rate,
+            revised_success_rate=revised.success_rate,
+            contradictory_evidence_refs=contradiction_refs,
+            contradiction_ratio=round(contradiction_ratio, 6),
+            status="revised" if changed else "confirmed",
+            reason=(
+                "New contradictory autobiographical evidence forced the schema "
+                "to be recomputed from the complete evidence set."
+            ),
+        )
+        self.next_self_schema_revision_id += 1
+        self.self_schema_revisions.append(revision)
+        if len(self.self_schema_revisions) > self.max_memory:
+            self.self_schema_revisions = self.self_schema_revisions[-self.max_memory:]
+
+        if changed:
+            self.stage_global_workspace_item(
+                source="self_schema",
+                content=(
+                    f"schema revision id={revision.id}; "
+                    f"kind={prior_kind}->{revised.kind}; "
+                    f"success_rate={prior_success_rate:.3f}"
+                    f"->{revised.success_rate:.3f}; "
+                    f"contradiction_ratio={contradiction_ratio:.3f}"
+                ),
+                salience=max(0.55, contradiction_ratio),
+                evidence_refs=(
+                    f"self_schema_revision:{revision.id}",
+                    *contradiction_refs,
+                ),
+            )
+        return revision
+
+    def compare_self_schema_revision_ablation(
+        self,
+        *,
+        schema_id: int,
+        candidates: list[dict[str, Any]],
+        context: str = "",
+        min_contradictory_evidence: int = 2,
+        similarity_threshold: float = 0.28,
+    ) -> SelfSchemaRevisionComparison:
+        """
+        Compare a corrigible self-schema with an otherwise identical frozen one.
+
+        Both copies contain the same new autobiographical evidence. Only the full
+        copy is allowed to reconcile the stale schema before predicting actions.
+        """
+        if not candidates:
+            raise ValueError("at least one candidate action is required")
+
+        revised_engine = deepcopy(self)
+        frozen_engine = deepcopy(self)
+        revised_engine.reconcile_self_schema_contradiction(
+            schema_id,
+            min_contradictory_evidence=min_contradictory_evidence,
+            similarity_threshold=similarity_threshold,
+        )
+        revised_choice = revised_engine.choose_predicted_action(
+            candidates,
+            context=context,
+            use_self_schema=True,
+        )
+        frozen_choice = frozen_engine.choose_predicted_action(
+            candidates,
+            context=context,
+            use_self_schema=True,
+        )
+        delta = (
+            revised_choice.predicted_success
+            - frozen_choice.predicted_success
+        )
+        choice_changed = revised_choice.action != frozen_choice.action
+        active = choice_changed or abs(delta) >= 0.05
+        return SelfSchemaRevisionComparison(
+            revised_action=revised_choice.action,
+            frozen_action=frozen_choice.action,
+            revised_predicted_success=revised_choice.predicted_success,
+            frozen_predicted_success=frozen_choice.predicted_success,
+            predicted_success_delta=round(delta, 6),
+            choice_changed=choice_changed,
+            revision_causally_active=active,
+        )
+
     def self_schema_adjustment(
         self,
         *,
@@ -2777,7 +3022,41 @@ class UnarchiEngine:
             refs.append(ref)
             details.append(detail)
 
-        if focus in {"self_schema", "schema", "identity"}:
+        if focus in {"schema_revision", "self_schema_revision", "corrigibility"}:
+            if self.self_schema_revisions:
+                revision = self.self_schema_revisions[-1]
+                add(
+                    f"self_schema_revision:{revision.id}",
+                    (
+                        f"schema_id={revision.schema_id}; "
+                        f"kind={revision.prior_kind}->{revision.revised_kind}; "
+                        f"confidence={revision.prior_confidence:.3f}"
+                        f"->{revision.revised_confidence:.3f}; "
+                        f"success_rate={revision.prior_success_rate:.3f}"
+                        f"->{revision.revised_success_rate:.3f}; "
+                        f"status={revision.status}"
+                    ),
+                )
+                for ref in revision.contradictory_evidence_refs:
+                    add(
+                        ref,
+                        (
+                            "new autobiographical evidence that contradicted "
+                            "the prior self-schema"
+                        ),
+                    )
+                add(
+                    f"self_schema:{revision.schema_id}",
+                    "current self-schema after contradiction reconciliation",
+                )
+                summary = (
+                    "The latest self-schema revision is reconstructed from the "
+                    "prior schema and the new contradictory autobiographical evidence."
+                )
+            else:
+                summary = "No self-schema contradiction revision has been recorded."
+
+        elif focus in {"self_schema", "schema", "identity"}:
             active = self.active_self_schema()
             if active:
                 for item in active[:3]:
@@ -3428,6 +3707,10 @@ class UnarchiEngine:
             "self_schema": [item.to_dict() for item in self.self_schema],
             "next_self_schema_id": self.next_self_schema_id,
             "max_self_schema_entries": self.max_self_schema_entries,
+            "self_schema_revisions": [
+                item.to_dict() for item in self.self_schema_revisions
+            ],
+            "next_self_schema_revision_id": self.next_self_schema_revision_id,
             "success_prediction_bias": self.success_prediction_bias,
             "uncertainty_prediction_bias": self.uncertainty_prediction_bias,
             "stress_prediction_bias": self.stress_prediction_bias,
@@ -3459,6 +3742,7 @@ class UnarchiEngine:
         workspace_cycles_payload = payload.get("global_workspace_cycles", [])
         counterfactuals_payload = payload.get("counterfactual_futures", [])
         self_schema_payload = payload.get("self_schema", [])
+        self_schema_revisions_payload = payload.get("self_schema_revisions", [])
         value_weights_payload = payload.get("value_weights", _default_value_weights())
         if not isinstance(state_payload, dict):
             raise ValueError("invalid UNARCHI state")
@@ -3492,6 +3776,8 @@ class UnarchiEngine:
             raise ValueError("invalid UNARCHI counterfactual futures")
         if not isinstance(self_schema_payload, list):
             raise ValueError("invalid UNARCHI self schema")
+        if not isinstance(self_schema_revisions_payload, list):
+            raise ValueError("invalid UNARCHI self schema revisions")
 
         memory: list[Experience] = []
         for item in memory_payload:
@@ -3634,6 +3920,16 @@ class UnarchiEngine:
             )
             self_schema.append(SelfSchemaEntry(**restored_item))
 
+        self_schema_revisions: list[SelfSchemaRevision] = []
+        for item in self_schema_revisions_payload:
+            if not isinstance(item, dict):
+                raise ValueError("invalid UNARCHI self schema revision")
+            restored_item = dict(item)
+            restored_item["contradictory_evidence_refs"] = tuple(
+                restored_item.get("contradictory_evidence_refs", ())
+            )
+            self_schema_revisions.append(SelfSchemaRevision(**restored_item))
+
         max_memory = max(16, min(int(payload.get("max_memory") or 256), 4096))
         max_active = max(
             1,
@@ -3725,6 +4021,11 @@ class UnarchiEngine:
                 4,
                 min(int(payload.get("max_self_schema_entries") or 32), 128),
             ),
+            self_schema_revisions=self_schema_revisions[-max_memory:],
+            next_self_schema_revision_id=max(
+                int(payload.get("next_self_schema_revision_id") or 1),
+                max((item.id for item in self_schema_revisions), default=0) + 1,
+            ),
             success_prediction_bias=float(
                 payload.get("success_prediction_bias") or 0.0
             ),
@@ -3781,6 +4082,7 @@ class UnarchiEngine:
             "counterfactual_future_count": len(self.counterfactual_futures),
             "self_schema_active_count": len(self.active_self_schema()),
             "self_schema_total_count": len(self.self_schema),
+            "self_schema_revision_count": len(self.self_schema_revisions),
             "observed_counterfactual_count": len(
                 [
                     item

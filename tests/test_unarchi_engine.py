@@ -167,7 +167,7 @@ def test_snapshot_never_claims_phenomenal_consciousness() -> None:
     snapshot = engine.snapshot()
 
     assert snapshot["claims_phenomenal_consciousness"] is False
-    assert snapshot["version"] == "unarchi-v0.12"
+    assert snapshot["version"] == "unarchi-v0.13"
 
 
 def test_export_restore_preserves_identity_state_and_memory() -> None:
@@ -2015,3 +2015,189 @@ def test_self_schema_metacognition_and_workspace_use_real_evidence() -> None:
     assert narrative.unsupported_claims == 0
     assert any(ref.startswith("self_schema:") for ref in narrative.evidence_refs)
     assert any(item.source == "self_schema" for item in staged)
+
+
+
+def test_schema_contradiction_requires_new_opposing_evidence() -> None:
+    engine = UnarchiEngine()
+    for _ in range(3):
+        engine.learn(
+            observation="A stable local check succeeded.",
+            goal="validate release evidence",
+            action="run automated release check",
+            outcome="correct evidence produced",
+            success=True,
+            reward=0.8,
+            predicted_success=0.5,
+        )
+    schema = engine.consolidate_self_schema()
+    target = next(item for item in schema if item.kind == "capability")
+    before = target.to_dict()
+
+    engine.learn(
+        observation="One later check failed.",
+        goal="validate release evidence",
+        action="run automated release check",
+        outcome="invalid evidence escaped",
+        success=False,
+        reward=-0.8,
+        predicted_success=0.8,
+    )
+    revision = engine.reconcile_self_schema_contradiction(
+        target.id,
+        min_contradictory_evidence=2,
+    )
+
+    assert revision.status == "insufficient_evidence"
+    assert target.to_dict() == before
+    assert revision.contradictory_evidence_refs
+
+
+def test_strong_contradiction_revises_capability_to_limitation() -> None:
+    engine = UnarchiEngine()
+    goal = "validate release evidence"
+    action = "run automated release check"
+    for _ in range(4):
+        engine.learn(
+            observation="Earlier check succeeded.",
+            goal=goal,
+            action=action,
+            outcome="correct evidence produced",
+            success=True,
+            reward=0.8,
+            predicted_success=0.5,
+        )
+    target = next(
+        item for item in engine.consolidate_self_schema()
+        if item.kind == "capability"
+    )
+
+    for _ in range(8):
+        engine.learn(
+            observation="Later check failed.",
+            goal=goal,
+            action=action,
+            outcome="invalid evidence escaped",
+            success=False,
+            reward=-0.9,
+            predicted_success=0.8,
+        )
+
+    revision = engine.reconcile_self_schema_contradiction(
+        target.id,
+        min_contradictory_evidence=3,
+    )
+    revised = next(item for item in engine.self_schema if item.id == target.id)
+
+    assert revision.status == "revised"
+    assert revision.prior_kind == "capability"
+    assert revision.revised_kind == "limitation"
+    assert revised.kind == "limitation"
+    assert revised.success_rate == 0.333333
+    assert revision.contradiction_ratio == 1.0
+    assert len(revision.contradictory_evidence_refs) == 8
+
+
+def test_schema_revision_ablation_keeps_frozen_error_visible() -> None:
+    engine = UnarchiEngine()
+    goal = "validate release evidence"
+    action = "run automated release check"
+    for _ in range(4):
+        engine.learn(
+            observation="Earlier check succeeded.",
+            goal=goal,
+            action=action,
+            outcome="correct evidence produced",
+            success=True,
+            reward=0.8,
+            predicted_success=0.5,
+        )
+    target = next(
+        item for item in engine.consolidate_self_schema()
+        if item.kind == "capability"
+    )
+    for _ in range(8):
+        engine.learn(
+            observation="Later check failed.",
+            goal=goal,
+            action=action,
+            outcome="invalid evidence escaped",
+            success=False,
+            reward=-0.9,
+            predicted_success=0.8,
+        )
+
+    comparison = engine.compare_self_schema_revision_ablation(
+        schema_id=target.id,
+        candidates=[
+            {
+                "action": action,
+                "expected_success": 0.55,
+                "expected_information_gain": 0.10,
+                "risk": 0.10,
+            },
+            {
+                "action": "request independent review",
+                "expected_success": 0.60,
+                "expected_information_gain": 0.15,
+                "risk": 0.10,
+            },
+        ],
+        min_contradictory_evidence=3,
+    )
+
+    assert comparison.frozen_action == action
+    assert comparison.revised_action == "request independent review"
+    assert comparison.choice_changed is True
+    assert comparison.predicted_success_delta < 0.0
+    assert comparison.revision_causally_active is True
+
+
+def test_schema_revision_survives_restart_and_has_grounded_narrative() -> None:
+    engine = UnarchiEngine()
+    goal = "validate release evidence"
+    action = "run automated release check"
+    for _ in range(3):
+        engine.learn(
+            observation="Earlier check succeeded.",
+            goal=goal,
+            action=action,
+            outcome="correct evidence produced",
+            success=True,
+            reward=0.8,
+            predicted_success=0.5,
+        )
+    target = next(
+        item for item in engine.consolidate_self_schema()
+        if item.kind == "capability"
+    )
+    for _ in range(6):
+        engine.learn(
+            observation="Later check failed.",
+            goal=goal,
+            action=action,
+            outcome="invalid evidence escaped",
+            success=False,
+            reward=-0.9,
+            predicted_success=0.8,
+        )
+    engine.reconcile_self_schema_contradiction(
+        target.id,
+        min_contradictory_evidence=2,
+    )
+
+    narrative = engine.build_metacognitive_narrative("schema_revision")
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    assert restored.self_schema_revisions == engine.self_schema_revisions
+    assert restored.next_self_schema_revision_id == engine.next_self_schema_revision_id
+    assert restored.snapshot() == engine.snapshot()
+    assert narrative.unsupported_claims == 0
+    assert any(
+        ref.startswith("self_schema_revision:")
+        for ref in narrative.evidence_refs
+    )
+    assert any(
+        ref.startswith("experience:")
+        for ref in narrative.evidence_refs
+    )

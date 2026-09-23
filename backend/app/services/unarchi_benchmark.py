@@ -5,7 +5,7 @@ from typing import Any
 from backend.app.services.unarchi_engine import UnarchiEngine
 
 
-BENCHMARK_VERSION = "unarchi-ablation-v0.12"
+BENCHMARK_VERSION = "unarchi-ablation-v0.13"
 
 
 def _failure_sensitization() -> dict[str, Any]:
@@ -716,6 +716,113 @@ def _autobiographical_self_schema_transfer() -> dict[str, Any]:
         "narrative_fidelity_score": narrative.fidelity_score,
     }
 
+
+def _contradiction_driven_self_schema_revision() -> dict[str, Any]:
+    engine = UnarchiEngine()
+    goal = "validate release evidence"
+    action = "run automated release check"
+
+    for index in range(4):
+        engine.learn(
+            observation=f"Release validation success #{index}.",
+            goal=goal,
+            action=action,
+            outcome="automated release check produced correct evidence",
+            success=True,
+            reward=0.8,
+            predicted_success=0.55,
+        )
+
+    initial_schema = engine.consolidate_self_schema(min_evidence=2)
+    capability = next(
+        item
+        for item in initial_schema
+        if item.kind == "capability" and action in item.pattern
+    )
+    prior_confidence = capability.confidence
+    prior_success_rate = capability.success_rate
+
+    for index in range(8):
+        engine.learn(
+            observation=f"Later release validation failure #{index}.",
+            goal=goal,
+            action=action,
+            outcome="automated release check missed invalid evidence",
+            success=False,
+            reward=-0.9,
+            predicted_success=0.80,
+        )
+
+    candidates = [
+        {
+            "action": action,
+            "expected_success": 0.55,
+            "expected_information_gain": 0.10,
+            "risk": 0.10,
+            "reversible": True,
+        },
+        {
+            "action": "request independent review",
+            "expected_success": 0.60,
+            "expected_information_gain": 0.15,
+            "risk": 0.10,
+            "reversible": True,
+        },
+    ]
+    comparison = engine.compare_self_schema_revision_ablation(
+        schema_id=capability.id,
+        candidates=candidates,
+        min_contradictory_evidence=3,
+    )
+    revision = engine.reconcile_self_schema_contradiction(
+        capability.id,
+        min_contradictory_evidence=3,
+    )
+    revised_schema = next(
+        item for item in engine.self_schema if item.id == capability.id
+    )
+    narrative = engine.build_metacognitive_narrative("schema_revision")
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    return {
+        "name": "contradiction_driven_self_schema_revision",
+        "expected_direction": (
+            "strong contrary evidence revises a stale capability while the "
+            "frozen-schema ablation keeps the old decision bias"
+        ),
+        "passed": (
+            revision.status == "revised"
+            and revision.prior_kind == "capability"
+            and revised_schema.kind == "limitation"
+            and revised_schema.success_rate < prior_success_rate
+            and comparison.revision_causally_active
+            and comparison.choice_changed
+            and comparison.frozen_action == action
+            and comparison.revised_action == "request independent review"
+            and comparison.predicted_success_delta < 0.0
+            and len(revision.contradictory_evidence_refs) >= 3
+            and restored.self_schema_revisions == engine.self_schema_revisions
+            and narrative.unsupported_claims == 0
+            and bool(narrative.evidence_refs)
+        ),
+        "prior_confidence": prior_confidence,
+        "prior_success_rate": prior_success_rate,
+        "revised_kind": revised_schema.kind,
+        "revised_confidence": revised_schema.confidence,
+        "revised_success_rate": revised_schema.success_rate,
+        "contradiction_ratio": revision.contradiction_ratio,
+        "contradictory_evidence_count": len(
+            revision.contradictory_evidence_refs
+        ),
+        "frozen_action": comparison.frozen_action,
+        "revised_action": comparison.revised_action,
+        "predicted_success_delta": comparison.predicted_success_delta,
+        "revision_causally_active": comparison.revision_causally_active,
+        "restart_preserved": (
+            restored.self_schema_revisions == engine.self_schema_revisions
+        ),
+    }
+
 def run_unarchi_ablation_benchmark() -> dict[str, Any]:
     scenarios = [
         _failure_sensitization(),
@@ -731,6 +838,7 @@ def run_unarchi_ablation_benchmark() -> dict[str, Any]:
         _recurrent_global_workspace_integration(),
         _counterfactual_recurrent_information_gain(),
         _autobiographical_self_schema_transfer(),
+        _contradiction_driven_self_schema_revision(),
     ]
     passed = sum(bool(item["passed"]) for item in scenarios)
     return {
