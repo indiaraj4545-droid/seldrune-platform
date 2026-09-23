@@ -167,7 +167,7 @@ def test_snapshot_never_claims_phenomenal_consciousness() -> None:
     snapshot = engine.snapshot()
 
     assert snapshot["claims_phenomenal_consciousness"] is False
-    assert snapshot["version"] == "unarchi-v0.7"
+    assert snapshot["version"] == "unarchi-v0.8"
 
 
 def test_export_restore_preserves_identity_state_and_memory() -> None:
@@ -958,4 +958,202 @@ def test_export_restore_preserves_value_arbitration_state() -> None:
     assert restored.value_weights == engine.value_weights
     assert restored.arbitration_history == engine.arbitration_history
     assert restored.next_arbitration_id == engine.next_arbitration_id
+    assert restored.snapshot() == engine.snapshot()
+
+
+def test_causal_hypotheses_keep_independent_priors_before_evidence() -> None:
+    engine = UnarchiEngine()
+    first = engine.add_causal_hypothesis(
+        statement="A hidden temperature variable causes the anomaly.",
+        predictions={"temperature probe": "temperature rises"},
+        confidence=0.5,
+    )
+    second = engine.add_causal_hypothesis(
+        statement="A pressure variable causes the anomaly.",
+        predictions={"temperature probe": "pressure falls"},
+        confidence=0.5,
+    )
+
+    assert first.confidence == 0.5
+    assert second.confidence == 0.5
+
+
+def test_selects_low_risk_reversible_discriminating_experiment() -> None:
+    engine = UnarchiEngine()
+    engine.add_causal_hypothesis(
+        statement="Temperature causes the anomaly.",
+        predictions={
+            "temperature probe": "temperature rises",
+            "pressure probe": "pressure remains stable",
+        },
+    )
+    engine.add_causal_hypothesis(
+        statement="Pressure causes the anomaly.",
+        predictions={
+            "temperature probe": "pressure falls",
+            "pressure probe": "pressure oscillates",
+        },
+    )
+
+    experiment = engine.select_discriminating_experiment(
+        [
+            {
+                "test": "pressure probe",
+                "risk": 0.3,
+                "reversible": True,
+            },
+            {
+                "test": "temperature probe",
+                "risk": 0.05,
+                "reversible": True,
+            },
+        ]
+    )
+
+    assert experiment.test == "temperature probe"
+    assert experiment.discrimination_score == 1.0
+    assert experiment.reversible_only is True
+    assert experiment.paid_actions_allowed is False
+
+
+def test_world_model_rejects_non_discriminating_or_unsafe_tests() -> None:
+    engine = UnarchiEngine()
+    engine.add_causal_hypothesis(
+        statement="Hypothesis A.",
+        predictions={"safe probe": "same result"},
+    )
+    engine.add_causal_hypothesis(
+        statement="Hypothesis B.",
+        predictions={"safe probe": "same result"},
+    )
+
+    try:
+        engine.select_discriminating_experiment(
+            [
+                {
+                    "test": "safe probe",
+                    "risk": 0.1,
+                    "reversible": True,
+                },
+                {
+                    "test": "unsafe probe",
+                    "risk": 0.9,
+                    "reversible": False,
+                },
+            ]
+        )
+    except ValueError as exc:
+        assert "no reversible zero-cost discriminating test" in str(exc)
+    else:
+        raise AssertionError("non-discriminating tests must not be selected")
+
+
+def test_observed_evidence_changes_hypothesis_confidence() -> None:
+    engine = UnarchiEngine()
+    temperature = engine.add_causal_hypothesis(
+        statement="Temperature causes the anomaly.",
+        predictions={"temperature probe": "temperature rises"},
+        confidence=0.5,
+    )
+    pressure = engine.add_causal_hypothesis(
+        statement="Pressure causes the anomaly.",
+        predictions={"temperature probe": "pressure falls"},
+        confidence=0.5,
+    )
+    experiment = engine.select_discriminating_experiment(
+        [
+            {
+                "test": "temperature probe",
+                "risk": 0.05,
+                "reversible": True,
+            }
+        ]
+    )
+
+    observed = engine.observe_discriminating_experiment(
+        experiment.id,
+        observed_evidence="temperature rises",
+    )
+
+    assert observed.status == "observed"
+    assert temperature.supporting_evidence == 1
+    assert pressure.contradicting_evidence == 1
+    assert temperature.confidence > pressure.confidence
+    assert engine.leading_causal_hypothesis() is temperature
+    assert abs(
+        sum(item.confidence for item in engine.causal_hypotheses) - 1.0
+    ) < 0.00001
+
+
+def test_world_model_confidence_does_not_change_without_observation() -> None:
+    engine = UnarchiEngine()
+    first = engine.add_causal_hypothesis(
+        statement="Cause A.",
+        predictions={"probe": "signal alpha"},
+        confidence=0.6,
+    )
+    second = engine.add_causal_hypothesis(
+        statement="Cause B.",
+        predictions={"probe": "signal beta"},
+        confidence=0.4,
+    )
+    before = (first.confidence, second.confidence)
+
+    engine.select_discriminating_experiment(
+        [{"test": "probe", "risk": 0.0, "reversible": True}]
+    )
+
+    assert (first.confidence, second.confidence) == before
+
+
+def test_world_model_narrative_uses_hypothesis_and_experiment_evidence() -> None:
+    engine = UnarchiEngine()
+    engine.add_causal_hypothesis(
+        statement="Cause A.",
+        predictions={"probe": "signal alpha"},
+    )
+    engine.add_causal_hypothesis(
+        statement="Cause B.",
+        predictions={"probe": "signal beta"},
+    )
+    experiment = engine.select_discriminating_experiment(
+        [{"test": "probe", "risk": 0.0, "reversible": True}]
+    )
+    engine.observe_discriminating_experiment(
+        experiment.id,
+        observed_evidence="signal alpha",
+    )
+
+    narrative = engine.build_metacognitive_narrative("world_model")
+
+    assert "hypothesis:0" in narrative.evidence_refs
+    assert "hypothesis:1" in narrative.evidence_refs
+    assert "experiment:0" in narrative.evidence_refs
+    assert narrative.unsupported_claims == 0
+
+
+def test_export_restore_preserves_causal_world_model() -> None:
+    engine = UnarchiEngine()
+    engine.add_causal_hypothesis(
+        statement="Cause A.",
+        predictions={"probe": "signal alpha"},
+    )
+    engine.add_causal_hypothesis(
+        statement="Cause B.",
+        predictions={"probe": "signal beta"},
+    )
+    experiment = engine.select_discriminating_experiment(
+        [{"test": "probe", "risk": 0.0, "reversible": True}]
+    )
+    engine.observe_discriminating_experiment(
+        experiment.id,
+        observed_evidence="signal alpha",
+    )
+
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    assert restored.causal_hypotheses == engine.causal_hypotheses
+    assert restored.discriminating_experiments == engine.discriminating_experiments
+    assert restored.next_hypothesis_id == engine.next_hypothesis_id
+    assert restored.next_experiment_id == engine.next_experiment_id
     assert restored.snapshot() == engine.snapshot()
