@@ -96,7 +96,7 @@ def test_cumulative_spend_guard_sums_agent_and_direct_gpt_costs() -> None:
         assert status["daily_remaining_usd"] == pytest.approx(0.2)
         assert status["monthly_remaining_usd"] == pytest.approx(4.2)
         assert status["near_limit"] is True
-        assert status["budget_mode"] == "economy"
+        assert status["budget_mode"] == "normal"
 
         enforce_ai_spend_budget(
             session,
