@@ -199,3 +199,44 @@ the prediction with the real observation.
 
 The measurable target is self-model calibration: predicted capability,
 uncertainty and state transitions should become more accurate with experience.
+
+
+## v0.4 predictive self-model checkpoint
+
+UNARCHI v0.4 adds explicit predictions about both external task success and
+internal consequences before a candidate action is chosen.
+
+For each candidate action the kernel can predict:
+
+- probability of success;
+- expected information gain;
+- resulting uncertainty;
+- resulting stress;
+- resulting agency;
+- resulting coherence;
+- a bounded utility score that penalizes risk and irreversibility.
+
+After the real outcome is observed, UNARCHI records calibration residuals and
+updates small bias terms in its self-model. This creates a measurable learning
+loop:
+
+prediction -> action -> observation -> calibration error -> self-model update.
+
+The v0.4 benchmark requires repeated outcomes to move later predictions toward
+observed reality. The entire mechanism is deterministic, CPU-only and does not
+require model training, a GPU or an OpenAI call.
+
+This is a functional predictive self-model. It is not evidence that the system
+possesses phenomenal consciousness.
+
+## Next checkpoint: v0.5 temporal self and prospective memory
+
+The next step should connect past autobiographical state, present self-state
+and predicted future state into a persistent temporal identity. UNARCHI should
+be able to remember an unresolved intention, recognize the future condition
+that makes it relevant, and compare its present self-model with the earlier
+prediction when that condition occurs.
+
+The measurable target is continuity across time: future behavior should depend
+on earlier internally generated intentions and predictions even across process
+restart, while remaining bounded by explicit resource and action constraints.
