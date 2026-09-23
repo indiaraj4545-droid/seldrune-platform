@@ -466,8 +466,10 @@ def test_unarchi_benchmark_covers_rollback_recommendation_resolution() -> None:
         resolution["initial_validation_status"]
         == "insufficient_post_rollback_evidence"
     )
-    assert resolution["improved_validation_status"] == "rollback_improved"
+    assert resolution["improved_validation_status"] == "rollback_recovery_passed"
     assert resolution["improvement_delta"] >= 0.05
+    assert resolution["blocked_after_recovery"] is True
+    assert resolution["holdout_status"] == "holdout_confirmed"
     assert resolution["readvance_action"] == "advance"
     assert resolution["restart_preserved"] is True
 
