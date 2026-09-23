@@ -6,7 +6,7 @@ from typing import Any
 from backend.app.services.unarchi_engine import UnarchiEngine
 
 
-BENCHMARK_VERSION = "unarchi-ablation-v0.29"
+BENCHMARK_VERSION = "unarchi-ablation-v0.30"
 
 
 def _failure_sensitization() -> dict[str, Any]:
@@ -3932,6 +3932,194 @@ def _post_reactivation_holdout_drift_monitoring() -> dict[str, Any]:
     }
 
 
+def _renewed_degradation_resolution() -> dict[str, Any]:
+    (
+        engine,
+        hypothesis_id,
+        base_map,
+        revision_two,
+        watch,
+        signature,
+        candidates,
+        action,
+    ) = _build_v27_recommendation_engine()
+
+    accepted = engine.resolve_context_validity_degradation_watch(
+        watch.id,
+        decision="accept",
+        reason="prepare renewed-degradation resolution benchmark",
+    )
+
+    for phase in ("recovery", "holdout"):
+        for index in range(3):
+            gate = engine.evaluate_active_context_validity_gated_decision(
+                hypothesis_id,
+                environment_signature=signature,
+                candidates=candidates,
+                context="production release",
+            )
+            engine.record_context_validity_gate_outcome(
+                gate.id,
+                actual_success_by_action={
+                    action: False,
+                    "request independent review": True,
+                },
+                evidence_refs=(f"resolution30:{phase}:{index}",),
+            )
+        if phase == "recovery":
+            recovery = engine.validate_context_validity_rollback(accepted.id)
+
+    holdout = engine.validate_context_validity_rollback_holdout(recovery.id)
+    engine.select_context_validity_map_revision(
+        hypothesis_id,
+        map_id=revision_two.id,
+        reason="reactivate after confirmed holdout for v0.30",
+        evidence_refs=(
+            f"context_validity_rollback_holdout_validation:{holdout.id}",
+        ),
+    )
+
+    for index in range(3):
+        gate = engine.evaluate_active_context_validity_gated_decision(
+            hypothesis_id,
+            environment_signature=signature,
+            candidates=candidates,
+            context="production release",
+        )
+        engine.record_context_validity_gate_outcome(
+            gate.id,
+            actual_success_by_action={
+                action: True,
+                "request independent review": False,
+            },
+            evidence_refs=(f"resolution30:renewed_negative:{index}",),
+        )
+    drift = engine.watch_reactivated_context_validity_drift(hypothesis_id)
+
+    deferred_engine = deepcopy(engine)
+    deferred = deferred_engine.resolve_reactivated_context_validity_drift(
+        drift.id,
+        decision="defer",
+        reason="collect another post-reactivation evidence batch",
+    )
+    deferred_active = deferred_engine.active_context_causal_validity_map(
+        hypothesis_id
+    )
+
+    dismissed_engine = deepcopy(engine)
+    dismissed = dismissed_engine.resolve_reactivated_context_validity_drift(
+        drift.id,
+        decision="dismiss",
+        reason="operator rejects renewed-degradation recommendation",
+    )
+    dismissed_active = dismissed_engine.active_context_causal_validity_map(
+        hypothesis_id
+    )
+
+    rollback = engine.resolve_reactivated_context_validity_drift(
+        drift.id,
+        decision="rollback_review",
+        reason="renewed degradation warrants return to validated ancestor",
+        evidence_refs=("resolution30:owner_review",),
+    )
+    rollback_active = engine.active_context_causal_validity_map(hypothesis_id)
+
+    stale_holdout_blocked = False
+    try:
+        engine.select_context_validity_map_revision(
+            hypothesis_id,
+            map_id=revision_two.id,
+            reason="old holdout must not authorize second reactivation",
+            evidence_refs=(
+                f"context_validity_rollback_holdout_validation:{holdout.id}",
+            ),
+        )
+    except ValueError as exc:
+        stale_holdout_blocked = "new evidence cycle" in str(exc)
+
+    terminal_blocked = False
+    try:
+        engine.resolve_reactivated_context_validity_drift(
+            drift.id,
+            decision="dismiss",
+            reason="should not reopen terminal rollback review",
+        )
+    except ValueError as exc:
+        terminal_blocked = "terminally resolved" in str(exc)
+
+    narrative = engine.build_metacognitive_narrative(
+        "context_validity_reactivation_resolution"
+    )
+    restored = UnarchiEngine.from_export(engine.export_state())
+    restored_active = restored.active_context_causal_validity_map(
+        hypothesis_id
+    )
+
+    return {
+        "name": "renewed_degradation_resolution",
+        "expected_direction": (
+            "defer and dismiss keep the reactivated descendant active; an "
+            "explicit rollback review returns to the prior validated rollback "
+            "map and stale holdout evidence cannot authorize another advance"
+        ),
+        "passed": (
+            drift.status == "renewed_degradation_detected"
+            and deferred.decision == "defer"
+            and deferred.rollback_selection_id is None
+            and deferred_active is not None
+            and deferred_active.id == revision_two.id
+            and dismissed.decision == "dismiss"
+            and dismissed.rollback_selection_id is None
+            and dismissed_active is not None
+            and dismissed_active.id == revision_two.id
+            and rollback.decision == "rollback_review"
+            and rollback.rollback_target_map_id == base_map.id
+            and rollback.rollback_selection_id is not None
+            and rollback.blocked_descendant_map_id == revision_two.id
+            and rollback.requires_new_evidence_cycle is True
+            and rollback_active is not None
+            and rollback_active.id == base_map.id
+            and stale_holdout_blocked
+            and terminal_blocked
+            and any(
+                item.id == revision_two.id
+                for item in engine.context_causal_validity_maps
+            )
+            and restored.context_validity_reactivation_drift_resolutions
+            == engine.context_validity_reactivation_drift_resolutions
+            and restored_active is not None
+            and restored_active.id == base_map.id
+            and narrative.unsupported_claims == 0
+            and bool(narrative.evidence_refs)
+        ),
+        "defer_pointer_unchanged": (
+            deferred_active is not None
+            and deferred_active.id == revision_two.id
+        ),
+        "dismiss_pointer_unchanged": (
+            dismissed_active is not None
+            and dismissed_active.id == revision_two.id
+        ),
+        "rollback_target_map_id": rollback.rollback_target_map_id,
+        "rollback_active_map_id": (
+            rollback_active.id if rollback_active is not None else None
+        ),
+        "requires_new_evidence_cycle": rollback.requires_new_evidence_cycle,
+        "stale_holdout_blocked": stale_holdout_blocked,
+        "terminal_resolution_blocked": terminal_blocked,
+        "descendant_preserved": any(
+            item.id == revision_two.id
+            for item in engine.context_causal_validity_maps
+        ),
+        "restart_preserved": (
+            restored.context_validity_reactivation_drift_resolutions
+            == engine.context_validity_reactivation_drift_resolutions
+            and restored_active is not None
+            and restored_active.id == base_map.id
+        ),
+    }
+
+
 def run_unarchi_ablation_benchmark() -> dict[str, Any]:
     scenarios = [
         _failure_sensitization(),
@@ -3964,6 +4152,7 @@ def run_unarchi_ablation_benchmark() -> dict[str, Any]:
         _rollback_recommendation_resolution(),
         _rollback_holdout_validation(),
         _post_reactivation_holdout_drift_monitoring(),
+        _renewed_degradation_resolution(),
     ]
     passed = sum(bool(item["passed"]) for item in scenarios)
     return {
