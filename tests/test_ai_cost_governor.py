@@ -3,6 +3,7 @@ import pytest
 from backend.app.core.config import Settings
 from backend.app.core.modeling import ModelProvider, ModelRequest
 from backend.app.services.ai_cost_governor import (
+    apply_budget_pressure,
     choose_cost_route,
     estimate_model_cost,
 )
@@ -37,7 +38,7 @@ def test_economy_router_uses_luna_for_simple_and_planning_work() -> None:
     assert chat.model == "gpt-5.6-luna"
     assert chat.tier == "economy"
     assert planner.model == "gpt-5.6-luna"
-    assert planner.request_budget_usd <= 0.05
+    assert planner.request_budget_usd <= 0.015
 
 
 def test_router_escalates_complex_work_without_defaulting_everything_to_sol() -> None:
@@ -62,10 +63,23 @@ def test_router_escalates_complex_work_without_defaulting_everything_to_sol() ->
         has_files=True,
     )
 
-    assert medium.model == "gpt-5.6-terra"
-    assert medium.tier == "balanced"
-    assert hard.model == "gpt-5.6-sol"
-    assert hard.tier == "premium"
+    assert medium.model == "gpt-5.6-luna"
+    assert medium.tier == "economy"
+    assert hard.model == "gpt-5.6-terra"
+    assert hard.tier == "balanced"
+
+    critical = choose_cost_route(
+        settings,
+        purpose="agent",
+        text=(
+            "Perform root cause analysis for a critical production security incident "
+            "in a distributed system architecture."
+        ),
+        has_files=True,
+        capabilities=["security"],
+    )
+    assert critical.model == "gpt-5.6-sol"
+    assert critical.tier == "premium"
 
 
 def test_pdf_retries_use_luna_then_terra_and_never_need_sol_by_default() -> None:
@@ -96,8 +110,8 @@ def test_pdf_retries_use_luna_then_terra_and_never_need_sol_by_default() -> None
     assert first.model == "gpt-5.6-luna"
     assert second.model == "gpt-5.6-luna"
     assert last.model == "gpt-5.6-terra"
-    assert first.max_output_tokens == 3200
-    assert second.max_output_tokens == 2200
+    assert first.max_output_tokens == 2200
+    assert second.max_output_tokens == 1400
 
 
 def test_known_model_cost_estimate_accounts_for_cache_discount() -> None:
@@ -145,3 +159,31 @@ def test_governor_can_be_disabled_for_explicit_legacy_behavior() -> None:
     assert route.model == "gpt-5.6-sol"
     assert route.tier == "configured"
     assert route.pdf_detail == "auto"
+
+
+def test_budget_pressure_forces_conservation_to_luna() -> None:
+    settings = _settings(
+        ai_spend_warning_ratio=0.70,
+        ai_conservation_ratio=0.80,
+    )
+    premium = choose_cost_route(
+        settings,
+        purpose="agent",
+        text=(
+            "Perform root cause analysis for a critical production security incident "
+            "in a distributed system architecture."
+        ),
+        has_files=True,
+        capabilities=["security"],
+    )
+
+    route = apply_budget_pressure(
+        settings,
+        premium,
+        monthly_utilization=0.85,
+    )
+
+    assert route.model == "gpt-5.6-luna"
+    assert route.tier == "conservation"
+    assert route.request_budget_usd <= 0.02
+    assert route.max_output_tokens <= 600
