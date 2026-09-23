@@ -163,3 +163,39 @@ The next experiment should test whether UNARCHI can create a bounded internal
 sub-goal from unresolved prediction error or information need, pursue a small
 reversible experiment, and retire that sub-goal when the information gap is
 reduced. Externally imposed safety and resource constraints remain authoritative.
+
+
+## v0.3 endogenous cognition checkpoint
+
+UNARCHI v0.3 adds internally generated bounded sub-goals. A sufficiently large
+information gap, uncertainty signal or prediction error can now produce a new
+question even when the user did not explicitly ask that sub-question.
+
+The mechanism is intentionally constrained:
+
+- at most a small number of active internal goals;
+- no paid external action from the UNARCHI kernel;
+- no irreversible investigation step;
+- each internal goal has a strict step budget;
+- similar unresolved questions are deduplicated;
+- the goal is retired when its information gap falls below threshold;
+- exhausted goals stop rather than recursively creating unlimited work;
+- internal goals survive export/restore with the rest of UNARCHI state.
+
+The benchmark now tests the full lifecycle:
+uncertainty -> endogenous question -> bounded reversible investigation ->
+information gain -> goal retirement.
+
+This is evidence of functional endogenous cognition, not evidence of phenomenal
+consciousness.
+
+## Next checkpoint: v0.4 predictive self-model
+
+The next research step should give UNARCHI explicit predictions about how its
+own internal state and task performance will change under candidate actions.
+The system should simulate multiple reversible alternatives, predict both
+external outcomes and internal consequences, choose an experiment, then compare
+the prediction with the real observation.
+
+The measurable target is self-model calibration: predicted capability,
+uncertainty and state transitions should become more accurate with experience.
