@@ -191,9 +191,9 @@ def choose_cost_route(
             has_files=has_files,
             capabilities=capabilities,
         )
-        if score <= 1:
+        if score <= 3:
             model, tier = economy, "economy"
-        elif score <= 3:
+        elif score <= 5:
             model, tier = balanced, "balanced"
         else:
             model, tier = premium, "premium"
@@ -201,17 +201,17 @@ def choose_cost_route(
     if purpose == "pdf":
         max_output = min(
             settings.ai_pdf_max_output_tokens,
-            3200 if attempt == 0 else 2200,
+            2200 if attempt == 0 else 1400,
         )
         budget = settings.ai_pdf_request_max_usd
     elif purpose == "planner":
-        max_output = min(settings.model_max_output_tokens, 1000)
-        budget = min(settings.ai_request_max_usd, 0.05)
+        max_output = min(settings.model_max_output_tokens, 700)
+        budget = min(settings.ai_request_max_usd, 0.015)
     else:
         max_output = settings.model_max_output_tokens
         budget = settings.ai_request_max_usd
 
-    effort = "low"
+    effort = "none"
     if tier == "balanced":
         effort = "low"
     elif tier in {"premium", "explicit"}:
@@ -225,4 +225,47 @@ def choose_cost_route(
         request_budget_usd=budget,
         image_detail=settings.ai_image_detail,
         pdf_detail=settings.ai_pdf_detail,
+    )
+
+
+def apply_budget_pressure(
+    settings: Settings,
+    route: CostRoute,
+    *,
+    monthly_utilization: float,
+) -> CostRoute:
+    """Progressively reduce AI spend as the monthly envelope is consumed."""
+    utilization = max(0.0, float(monthly_utilization))
+    if utilization < settings.ai_spend_warning_ratio:
+        return route
+
+    model = route.model
+    tier = route.tier
+    effort = route.reasoning_effort
+    max_output = route.max_output_tokens
+    budget = route.request_budget_usd
+
+    if utilization >= settings.ai_conservation_ratio:
+        if tier != "explicit":
+            model = settings.model_economy
+            tier = "conservation"
+            effort = "none"
+        max_output = min(max_output, 600 if route.pdf_detail == "low" else 900)
+        budget = min(budget, 0.02)
+    else:
+        if tier == "premium":
+            model = settings.model_balanced
+            tier = "balanced-conservation"
+            effort = "low"
+        max_output = min(max_output, 800)
+        budget = min(budget, 0.03)
+
+    return CostRoute(
+        model=model,
+        tier=tier,
+        reasoning_effort=effort,
+        max_output_tokens=max_output,
+        request_budget_usd=budget,
+        image_detail=route.image_detail,
+        pdf_detail=route.pdf_detail,
     )
