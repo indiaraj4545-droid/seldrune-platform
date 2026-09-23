@@ -4,8 +4,8 @@ from backend.app.services.unarchi_benchmark import run_unarchi_ablation_benchmar
 def test_unarchi_ablation_benchmark_passes_all_scenarios() -> None:
     result = run_unarchi_ablation_benchmark()
 
-    assert result["scenario_count"] == 13
-    assert result["passed_scenarios"] == 13
+    assert result["scenario_count"] == 14
+    assert result["passed_scenarios"] == 14
     assert result["pass_rate"] == 1.0
     assert result["claims_phenomenal_consciousness"] is False
 
@@ -169,3 +169,22 @@ def test_unarchi_benchmark_covers_autobiographical_self_schema_transfer() -> Non
     assert schema["schema_refs"]
     assert schema["restart_preserved"] is True
     assert schema["narrative_fidelity_score"] == 1.0
+
+
+
+def test_unarchi_benchmark_covers_contradiction_driven_schema_revision() -> None:
+    result = run_unarchi_ablation_benchmark()
+    scenarios = {item["name"]: item for item in result["scenarios"]}
+
+    revision = scenarios["contradiction_driven_self_schema_revision"]
+
+    assert revision["passed"] is True
+    assert revision["revised_kind"] == "limitation"
+    assert revision["revised_success_rate"] < revision["prior_success_rate"]
+    assert revision["contradiction_ratio"] == 1.0
+    assert revision["contradictory_evidence_count"] >= 3
+    assert revision["frozen_action"] == "run automated release check"
+    assert revision["revised_action"] == "request independent review"
+    assert revision["predicted_success_delta"] < 0.0
+    assert revision["revision_causally_active"] is True
+    assert revision["restart_preserved"] is True
