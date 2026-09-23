@@ -3709,18 +3709,13 @@ class UnarchiEngine:
                     evidence_refs=item.evidence_refs,
                     causal_status=(
                         item.causal_status
-                        if supported
-                        and item.causal_status in {
+                        if item.causal_status in {
                             "replicated_reversible",
                             "environment_invariant",
                         }
                         else "intervention_supported"
                         if supported
-                        or item.causal_status in {
-                            "intervention_supported",
-                            "replicated_reversible",
-                            "environment_invariant",
-                        }
+                        or item.causal_status == "intervention_supported"
                         else "intervention_not_supported"
                     ),
                     causal_evidence_refs=causal_refs,
@@ -3921,15 +3916,9 @@ class UnarchiEngine:
                 continue
             next_status = (
                 item.causal_status
-                if stable and item.causal_status == "environment_invariant"
+                if item.causal_status == "environment_invariant"
                 else "replicated_reversible"
                 if stable
-                else "intervention_supported"
-                if item.causal_status in {
-                    "intervention_supported",
-                    "replicated_reversible",
-                    "environment_invariant",
-                }
                 else item.causal_status
             )
             updated.append(
