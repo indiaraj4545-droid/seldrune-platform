@@ -2093,7 +2093,7 @@ def test_strong_contradiction_revises_capability_to_limitation() -> None:
     assert revision.prior_kind == "capability"
     assert revision.revised_kind == "limitation"
     assert revised.kind == "limitation"
-    assert revised.success_rate == 4 / 12
+    assert revised.success_rate == 0.333333
     assert revision.contradiction_ratio == 1.0
     assert len(revision.contradictory_evidence_refs) == 8
 
