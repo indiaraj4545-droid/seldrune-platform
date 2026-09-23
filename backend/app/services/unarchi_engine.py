@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 
-UNARCHI_VERSION = "unarchi-v0.19"
+UNARCHI_VERSION = "unarchi-v0.20"
 _STOPWORDS = {
     "a",
     "an",
@@ -576,6 +576,32 @@ class ContextCausalInvarianceAssessment:
         return asdict(self)
 
 
+@dataclass
+class ContextBoundaryDiscoveryPlan:
+    id: int
+    hypothesis_id: int
+    invariance_assessment_id: int
+    candidate_signatures: tuple[str, ...]
+    selected_signature: str
+    selected_risk: float
+    selected_information_gain: float
+    selected_priority_score: float
+    nearest_stable_distance: int
+    nearest_boundary_distance: int | None
+    changed_dimensions: tuple[str, ...]
+    status: str = "planned"
+    outcome_stability_assessment_id: int | None = None
+    outcome_status: str | None = None
+    uncertainty_reduction: float | None = None
+    evidence_refs: tuple[str, ...] = ()
+    reversible_only: bool = True
+    paid_actions_allowed: bool = False
+    external_execution_allowed: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 @dataclass(frozen=True)
 class LatentContextDiscovery:
     id: int
@@ -645,7 +671,7 @@ class UnarchiEngine:
     """
     CPU-only experimental cognitive kernel.
 
-    v0.19 includes causal internal dynamics, bounded endogenous goals, a
+    v0.20 includes causal internal dynamics, bounded endogenous goals, a
     calibrated predictive self-model, prospective memory, evidence-grounded
     metacognition, explicit value arbitration, competing causal hypotheses,
     controlled self-intervention trials, a bounded recurrent global workspace,
@@ -653,8 +679,9 @@ class UnarchiEngine:
     autobiographical self-schema, contradiction-driven revision, validated
     context decomposition, transfer boundaries, conservative latent context
     discovery, intervention-supported context causality evidence, replicated
-    reversible context-causality stability checks, and bounded causal-invariance
-    tests across distinct controlled environments.
+    reversible context-causality stability checks, bounded causal-invariance
+    tests across distinct controlled environments, and active low-risk boundary
+    probe planning with externally supplied outcome evidence.
     """
 
     state: UnarchiState = field(default_factory=UnarchiState)
@@ -723,6 +750,10 @@ class UnarchiEngine:
         ContextCausalInvarianceAssessment
     ] = field(default_factory=list)
     next_context_causal_invariance_assessment_id: int = 1
+    context_boundary_discovery_plans: list[
+        ContextBoundaryDiscoveryPlan
+    ] = field(default_factory=list)
+    next_context_boundary_discovery_plan_id: int = 1
     success_prediction_bias: float = 0.0
     uncertainty_prediction_bias: float = 0.0
     stress_prediction_bias: float = 0.0
@@ -4234,6 +4265,296 @@ class UnarchiEngine:
         )
         return record
 
+    def plan_context_boundary_discovery(
+        self,
+        hypothesis_id: int,
+        *,
+        invariance_assessment_id: int,
+        candidate_risks: dict[str, float],
+        max_risk: float = 0.25,
+        max_dimension_changes: int = 1,
+    ) -> ContextBoundaryDiscoveryPlan:
+        """
+        Rank bounded environment probes by expected boundary information.
+
+        This method only creates a plan. It never executes an intervention,
+        spends money, or calls an external model.
+        """
+        hypothesis = next(
+            (
+                item
+                for item in self.latent_context_hypotheses
+                if item.id == hypothesis_id
+            ),
+            None,
+        )
+        if hypothesis is None:
+            raise ValueError("unknown latent context hypothesis")
+
+        invariance = next(
+            (
+                item
+                for item in self.context_causal_invariance_assessments
+                if item.id == invariance_assessment_id
+            ),
+            None,
+        )
+        if invariance is None:
+            raise ValueError("unknown causal invariance assessment")
+        if invariance.hypothesis_id != hypothesis_id:
+            raise ValueError("invariance assessment belongs to another hypothesis")
+        if not candidate_risks:
+            raise ValueError("at least one candidate environment is required")
+
+        risk_limit = _clamp(max_risk, 0.0, 1.0)
+        dimension_limit = max(1, min(int(max_dimension_changes), 4))
+        tested = set(invariance.environment_signatures)
+        boundaries = set(invariance.boundary_signatures)
+        stable = tested - boundaries
+        if not stable:
+            raise ValueError("boundary discovery requires a stable environment")
+
+        def parse_signature(signature: str) -> dict[str, str]:
+            parsed: dict[str, str] = {}
+            for raw_part in signature.split(";"):
+                part = raw_part.strip()
+                if not part or "=" not in part:
+                    raise ValueError("environment signature must use key=value parts")
+                key, value = part.split("=", 1)
+                key = key.strip().casefold()
+                value = value.strip().casefold()
+                if not key or not value or key in parsed:
+                    raise ValueError("invalid environment signature")
+                parsed[key] = value
+            return parsed
+
+        parsed_tested = {
+            signature: parse_signature(signature) for signature in tested
+        }
+
+        def distance(left: dict[str, str], right: dict[str, str]) -> int:
+            keys = set(left) | set(right)
+            return sum(left.get(key) != right.get(key) for key in keys)
+
+        ranked: list[
+            tuple[
+                float,
+                float,
+                str,
+                int,
+                int | None,
+                tuple[str, ...],
+            ]
+        ] = []
+        accepted_candidates: list[str] = []
+        for raw_signature, raw_risk in candidate_risks.items():
+            signature = str(raw_signature).strip()
+            if not signature or signature in tested:
+                continue
+            risk = _clamp(float(raw_risk), 0.0, 1.0)
+            if risk > risk_limit:
+                continue
+
+            parsed = parse_signature(signature)
+            stable_distances = [
+                (
+                    distance(parsed, parsed_tested[item]),
+                    item,
+                )
+                for item in stable
+            ]
+            stable_distance, nearest_stable = min(
+                stable_distances,
+                key=lambda item: (item[0], item[1]),
+            )
+            boundary_distance: int | None = None
+            if boundaries:
+                boundary_distance = min(
+                    distance(parsed, parsed_tested[item])
+                    for item in boundaries
+                )
+
+            nearest_any = stable_distance
+            if boundary_distance is not None:
+                nearest_any = min(nearest_any, boundary_distance)
+            if nearest_any > dimension_limit:
+                continue
+
+            changed_dimensions = tuple(
+                sorted(
+                    key
+                    for key in set(parsed) | set(parsed_tested[nearest_stable])
+                    if parsed.get(key) != parsed_tested[nearest_stable].get(key)
+                )
+            )
+            if not changed_dimensions:
+                continue
+
+            locality = 1.0 / (1.0 + nearest_any)
+            if boundary_distance is None:
+                balance = 0.5
+                boundary_focus = 0.0
+            else:
+                balance = 1.0 / (
+                    1.0 + abs(stable_distance - boundary_distance)
+                )
+                boundary_focus = 1.0 / (1.0 + boundary_distance)
+            information_gain = _clamp(
+                (0.45 * balance)
+                + (0.35 * boundary_focus)
+                + (0.20 * locality)
+            )
+            priority = information_gain * (1.0 - risk)
+            accepted_candidates.append(signature)
+            ranked.append(
+                (
+                    priority,
+                    information_gain,
+                    signature,
+                    stable_distance,
+                    boundary_distance,
+                    changed_dimensions,
+                )
+            )
+
+        if not ranked:
+            raise ValueError("no bounded candidate environment passed the filters")
+
+        ranked.sort(
+            key=lambda item: (
+                item[0],
+                item[1],
+                -item[3],
+                item[2],
+            ),
+            reverse=True,
+        )
+        (
+            priority,
+            information_gain,
+            selected_signature,
+            stable_distance,
+            boundary_distance,
+            changed_dimensions,
+        ) = ranked[0]
+        selected_risk = _clamp(float(candidate_risks[selected_signature]))
+
+        plan = ContextBoundaryDiscoveryPlan(
+            id=self.next_context_boundary_discovery_plan_id,
+            hypothesis_id=hypothesis_id,
+            invariance_assessment_id=invariance.id,
+            candidate_signatures=tuple(sorted(accepted_candidates)),
+            selected_signature=selected_signature,
+            selected_risk=round(selected_risk, 6),
+            selected_information_gain=round(information_gain, 6),
+            selected_priority_score=round(priority, 6),
+            nearest_stable_distance=stable_distance,
+            nearest_boundary_distance=boundary_distance,
+            changed_dimensions=changed_dimensions,
+            evidence_refs=(
+                f"context_causal_invariance_assessment:{invariance.id}",
+                *invariance.evidence_refs[-6:],
+            ),
+        )
+        self.next_context_boundary_discovery_plan_id += 1
+        self.context_boundary_discovery_plans.append(plan)
+        if len(self.context_boundary_discovery_plans) > self.max_memory:
+            self.context_boundary_discovery_plans = (
+                self.context_boundary_discovery_plans[-self.max_memory:]
+            )
+
+        self.stage_global_workspace_item(
+            source="intervention",
+            content=(
+                f"context boundary plan={plan.id}; "
+                f"hypothesis={hypothesis_id}; "
+                f"selected={plan.selected_signature}; "
+                f"information_gain={plan.selected_information_gain:.3f}; "
+                f"risk={plan.selected_risk:.3f}"
+            ),
+            salience=max(0.55, plan.selected_information_gain),
+            evidence_refs=(
+                f"context_boundary_discovery_plan:{plan.id}",
+                *plan.evidence_refs[-4:],
+            ),
+        )
+        return plan
+
+    def observe_context_boundary_discovery(
+        self,
+        plan_id: int,
+        *,
+        stability_assessment_id: int,
+    ) -> ContextBoundaryDiscoveryPlan:
+        """
+        Attach externally supplied causal-stability evidence to a boundary plan.
+
+        Observation records evidence only; it does not execute the selected
+        environment probe.
+        """
+        plan = next(
+            (
+                item
+                for item in self.context_boundary_discovery_plans
+                if item.id == plan_id
+            ),
+            None,
+        )
+        if plan is None:
+            raise ValueError("unknown context boundary discovery plan")
+        if plan.status != "planned":
+            raise ValueError("context boundary discovery plan already resolved")
+
+        stability = next(
+            (
+                item
+                for item in self.context_causal_stability_assessments
+                if item.id == stability_assessment_id
+            ),
+            None,
+        )
+        if stability is None:
+            raise ValueError("unknown causal stability assessment")
+        if stability.hypothesis_id != plan.hypothesis_id:
+            raise ValueError("stability assessment belongs to another hypothesis")
+
+        trial_map = {item.id: item for item in self.context_causality_trials}
+        trial_ids = stability.forward_trial_ids + stability.reverse_trial_ids
+        trials = [trial_map.get(item_id) for item_id in trial_ids]
+        if not trials or any(item is None for item in trials):
+            raise ValueError("stability assessment references unknown trial")
+        signatures = {
+            item.controlled_signature
+            for item in trials
+            if item is not None
+        }
+        if signatures != {plan.selected_signature}:
+            raise ValueError("stability evidence does not match selected probe")
+
+        expanded = stability.status == "replicated_reversible"
+        plan.status = "resolved"
+        plan.outcome_stability_assessment_id = stability.id
+        plan.outcome_status = (
+            "expanded_valid_region" if expanded else "confirmed_boundary"
+        )
+        evidence_weight = (
+            stability.confidence if expanded else max(0.5, 1.0 - stability.confidence)
+        )
+        plan.uncertainty_reduction = round(
+            _clamp(plan.selected_information_gain * evidence_weight),
+            6,
+        )
+        plan.evidence_refs = tuple(
+            dict.fromkeys(
+                plan.evidence_refs
+                + (
+                    f"context_causal_stability_assessment:{stability.id}",
+                )
+                + stability.evidence_refs
+            )
+        )
+        return plan
+
     def discover_latent_context_hypotheses(
         self,
         schema_id: int,
@@ -4963,6 +5284,36 @@ class UnarchiEngine:
             details.append(detail)
 
         if focus in {
+            "context_boundary_discovery",
+            "boundary_discovery",
+            "active_boundary",
+        }:
+            if self.context_boundary_discovery_plans:
+                plan = self.context_boundary_discovery_plans[-1]
+                add(
+                    f"context_boundary_discovery_plan:{plan.id}",
+                    (
+                        f"hypothesis={plan.hypothesis_id}; "
+                        f"status={plan.status}; "
+                        f"selected={plan.selected_signature}; "
+                        f"risk={plan.selected_risk}; "
+                        f"information_gain={plan.selected_information_gain}; "
+                        f"priority={plan.selected_priority_score}; "
+                        f"outcome={plan.outcome_status}; "
+                        f"uncertainty_reduction={plan.uncertainty_reduction}"
+                    ),
+                )
+                for ref in plan.evidence_refs[-6:]:
+                    add(ref, "boundary-planning or supplied outcome evidence")
+                summary = (
+                    "The latest active-boundary record selects a low-risk "
+                    "environment probe for expected information gain without "
+                    "executing it, then links any later supplied stability result."
+                )
+            else:
+                summary = "No active context-boundary discovery plan exists."
+
+        elif focus in {
             "context_causal_invariance",
             "causal_invariance",
             "environment_invariance",
@@ -5932,6 +6283,13 @@ class UnarchiEngine:
             "next_context_causal_invariance_assessment_id": (
                 self.next_context_causal_invariance_assessment_id
             ),
+            "context_boundary_discovery_plans": [
+                item.to_dict()
+                for item in self.context_boundary_discovery_plans
+            ],
+            "next_context_boundary_discovery_plan_id": (
+                self.next_context_boundary_discovery_plan_id
+            ),
             "success_prediction_bias": self.success_prediction_bias,
             "uncertainty_prediction_bias": self.uncertainty_prediction_bias,
             "stress_prediction_bias": self.stress_prediction_bias,
@@ -5993,6 +6351,10 @@ class UnarchiEngine:
             "context_causal_invariance_assessments",
             [],
         )
+        context_boundary_discovery_plans_payload = payload.get(
+            "context_boundary_discovery_plans",
+            [],
+        )
         value_weights_payload = payload.get("value_weights", _default_value_weights())
         if not isinstance(state_payload, dict):
             raise ValueError("invalid UNARCHI state")
@@ -6044,6 +6406,8 @@ class UnarchiEngine:
             raise ValueError("invalid UNARCHI context causal stability assessments")
         if not isinstance(context_causal_invariance_assessments_payload, list):
             raise ValueError("invalid UNARCHI context causal invariance assessments")
+        if not isinstance(context_boundary_discovery_plans_payload, list):
+            raise ValueError("invalid UNARCHI context boundary discovery plans")
 
         memory: list[Experience] = []
         for item in memory_payload:
@@ -6333,6 +6697,28 @@ class UnarchiEngine:
                 ContextCausalInvarianceAssessment(**restored_item)
             )
 
+        context_boundary_discovery_plans: list[
+            ContextBoundaryDiscoveryPlan
+        ] = []
+        for item in context_boundary_discovery_plans_payload:
+            if not isinstance(item, dict):
+                raise ValueError(
+                    "invalid UNARCHI context boundary discovery plan"
+                )
+            restored_item = dict(item)
+            restored_item["candidate_signatures"] = tuple(
+                restored_item.get("candidate_signatures", ())
+            )
+            restored_item["changed_dimensions"] = tuple(
+                restored_item.get("changed_dimensions", ())
+            )
+            restored_item["evidence_refs"] = tuple(
+                restored_item.get("evidence_refs", ())
+            )
+            context_boundary_discovery_plans.append(
+                ContextBoundaryDiscoveryPlan(**restored_item)
+            )
+
         max_memory = max(16, min(int(payload.get("max_memory") or 256), 4096))
         max_active = max(
             1,
@@ -6521,6 +6907,23 @@ class UnarchiEngine:
                 )
                 + 1,
             ),
+            context_boundary_discovery_plans=(
+                context_boundary_discovery_plans[-max_memory:]
+            ),
+            next_context_boundary_discovery_plan_id=max(
+                int(
+                    payload.get("next_context_boundary_discovery_plan_id")
+                    or 1
+                ),
+                max(
+                    (
+                        item.id
+                        for item in context_boundary_discovery_plans
+                    ),
+                    default=0,
+                )
+                + 1,
+            ),
             success_prediction_bias=float(
                 payload.get("success_prediction_bias") or 0.0
             ),
@@ -6606,6 +7009,7 @@ class UnarchiEngine:
                     if item.causal_status in {
                         "intervention_supported",
                         "replicated_reversible",
+                        "environment_invariant",
                     }
                 ]
             ),
@@ -6630,6 +7034,16 @@ class UnarchiEngine:
                     item
                     for item in self.latent_context_hypotheses
                     if item.causal_status == "environment_invariant"
+                ]
+            ),
+            "context_boundary_discovery_plan_count": len(
+                self.context_boundary_discovery_plans
+            ),
+            "resolved_boundary_discovery_count": len(
+                [
+                    item
+                    for item in self.context_boundary_discovery_plans
+                    if item.status == "resolved"
                 ]
             ),
             "observed_counterfactual_count": len(
