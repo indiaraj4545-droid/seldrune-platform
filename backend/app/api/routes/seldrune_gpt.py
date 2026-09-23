@@ -27,6 +27,7 @@ from backend.app.models.seldrune_gpt_message import SeldruneGPTMessage
 from backend.app.models.task import Task
 from backend.app.models.tool_definition import ToolDefinition
 from backend.app.schemas.orchestration import AutonomousExecutionRequest, OrchestrationCreate
+from backend.app.services.ai_cost_governor import choose_cost_route
 from backend.app.services.audit import record_audit
 from backend.app.services.external_actions import default_external_action_catalog
 from backend.app.services.model_gateway import ModelGateway, ModelGatewayError
@@ -275,6 +276,9 @@ class SeldruneGPTPDFEditResponse(BaseModel):
     layout_integrity_score: int
     reconstruction_attempts: int = 1
     repair_passes: int = 0
+    estimated_ai_cost_usd: float | None = None
+    model_calls: int = 0
+    models_used: list[str] = Field(default_factory=list)
     verification_notes: list[str] = Field(default_factory=list)
 
 
@@ -440,6 +444,9 @@ class SeldruneGPTResponse(BaseModel):
     response_id: str | None
     input_tokens: int
     output_tokens: int
+    cached_input_tokens: int = 0
+    estimated_cost_usd: float | None = None
+    cost_tier: str = "configured"
     latency_ms: int
     provider: str
 
@@ -465,12 +472,12 @@ def seldrune_gpt(
                 SeldruneGPTMessage.user_id == current_user.id,
             )
             .order_by(SeldruneGPTMessage.created_at.desc())
-            .limit(12)
+            .limit(8)
         )
     )
     history.reverse()
     context_lines = [f"{item.role}: {item.content}" for item in history]
-    while sum(len(line) for line in context_lines) > 24000 and context_lines:
+    while sum(len(line) for line in context_lines) > 12000 and context_lines:
         context_lines.pop(0)
     context = "\\n".join(context_lines)
     attachment_context = (
@@ -517,26 +524,43 @@ def seldrune_gpt(
         + (", ".join(missing_provider_env) if missing_provider_env else "none")
         + "."
     )
+    route = choose_cost_route(
+        settings,
+        purpose="chat",
+        text=payload.message,
+        has_images=bool(input_images),
+        has_files=bool(input_files),
+    )
     request = ModelRequest(
         provider=ModelProvider.OPENAI,
-        model=settings.model_default,
+        model=route.model,
         input_text=input_text,
         instructions=(
             "You are Seldrune GPT, the reasoning interface inside the Seldrune STI "
-            "owner console. Help the owner analyze, design, and plan work. Do not claim "
-            f"The configured model identifier is {settings.model_default}. "
-            "When asked which model Seldrune is using, report that configured identifier exactly. "
-            "Seldrune STI is an AI-native governed virtual organization: it plans work, "
-            "coordinates agents and tools, records evidence, and preserves owner-controlled "
-            "approvals. When the owner asks you to perform work, explain that Execute order "
-            "can run the instruction through Seldrune's governed operator. Never imply that "
-            "chat text alone performed an action. Do not claim an external action occurred "
-            "unless Seldrune provides verified evidence. "
+            "owner console. Help the owner analyze, design, and plan work. "
+            f"The model selected for this request is {route.model}. "
+            "When asked which model is serving the current request, report that identifier "
+            "exactly. Seldrune uses an automatic cost governor, so different requests can "
+            "use different model tiers. Seldrune STI is an AI-native governed virtual "
+            "organization: it plans work, coordinates agents and tools, records evidence, "
+            "and preserves owner-controlled approvals. When the owner asks you to perform "
+            "work, explain that Execute order can run the instruction through Seldrune's "
+            "governed operator. Never imply that chat text alone performed an action. Do "
+            "not claim an external action occurred unless Seldrune provides verified "
+            "evidence. "
             + tool_runtime_context
         ),
-        max_output_tokens=settings.model_max_output_tokens,
+        max_output_tokens=route.max_output_tokens,
         input_images=input_images,
         input_files=input_files,
+        image_detail=route.image_detail,
+        pdf_detail=route.pdf_detail,
+        reasoning_effort=route.reasoning_effort,
+        prompt_cache_key=f"seldrune:{organization_id}:gpt",
+        max_estimated_cost_usd=route.request_budget_usd,
+        exact_token_preflight=(
+            bool(input_images or input_files) or len(input_text) > 8000
+        ),
     )
     try:
         result, _latency_ms = ModelGateway(settings).generate(request)
@@ -565,6 +589,12 @@ def seldrune_gpt(
             content=result.output_text,
             model=result.model,
             response_id=result.response_id,
+            input_tokens=result.usage.input_tokens,
+            output_tokens=result.usage.output_tokens,
+            cached_input_tokens=result.usage.cached_input_tokens,
+            estimated_cost_usd=result.usage.estimated_cost_usd,
+            cost_tier=route.tier,
+            model_calls=1,
         )
     )
     session.commit()
@@ -574,6 +604,9 @@ def seldrune_gpt(
         response_id=result.response_id,
         input_tokens=result.usage.input_tokens,
         output_tokens=result.usage.output_tokens,
+        cached_input_tokens=result.usage.cached_input_tokens,
+        estimated_cost_usd=result.usage.estimated_cost_usd,
+        cost_tier=route.tier,
         latency_ms=int(_latency_ms),
         provider=settings.model_provider,
     )
@@ -609,10 +642,15 @@ def edit_seldrune_gpt_pdf(
     try:
         inspection = inspect_pdf(pdf_bytes, payload.password)
         model_pdf_bytes = prepare_pdf_for_model(pdf_bytes, payload.password)
-        initial_page_renders = render_pdf_pages_for_model(
-            pdf_bytes,
-            payload.password,
-            max_pages=8,
+        initial_page_renders = (
+            render_pdf_pages_for_model(
+                pdf_bytes,
+                payload.password,
+                max_pages=4,
+                max_long_edge=1100,
+            )
+            if inspection.image_only_pages > 0
+            else ()
         )
     except PDFEditorError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -643,9 +681,17 @@ def edit_seldrune_gpt_pdf(
         f"image_only_pages={inspection.image_only_pages}; "
         f"form_fields={inspection.form_fields}."
     )
+    pdf_route = choose_cost_route(
+        settings,
+        purpose="pdf",
+        text=payload.instruction,
+        attempt=0,
+        has_images=bool(initial_images),
+        has_files=True,
+    )
     request = ModelRequest(
         provider=ModelProvider.OPENAI,
-        model=settings.model_default,
+        model=pdf_route.model,
         input_text=(
             "Edit the attached PDF according to this owner instruction:\n"
             f"{payload.instruction}\n\n{profile}\n"
@@ -677,15 +723,30 @@ def edit_seldrune_gpt_pdf(
             "repeated targets from the owner's context and occurrence. Never require a "
             "manual edit plan from the owner."
         ),
-        max_output_tokens=max(settings.model_max_output_tokens, 6000),
+        max_output_tokens=pdf_route.max_output_tokens,
         response_schema=_PDF_EDIT_SCHEMA,
         input_images=initial_images,
         input_files=input_files,
+        image_detail=pdf_route.image_detail,
+        pdf_detail=pdf_route.pdf_detail,
+        reasoning_effort=pdf_route.reasoning_effort,
+        prompt_cache_key=f"seldrune:{organization_id}:pdf:{payload.pdf.name}",
+        max_estimated_cost_usd=pdf_route.request_budget_usd,
+        exact_token_preflight=True,
     )
     try:
         result, _latency_ms = ModelGateway(settings).generate(request)
     except ModelGatewayError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    total_ai_cost = float(result.usage.estimated_cost_usd or 0.0)
+    final_model = result.model
+    final_response_id = result.response_id
+    total_input_tokens = result.usage.input_tokens
+    total_output_tokens = result.usage.output_tokens
+    total_cached_input_tokens = result.usage.cached_input_tokens
+    model_calls = 1
+    models_used: set[str] = {result.model}
 
     try:
         plan = json.loads(result.output_text)
@@ -705,7 +766,7 @@ def edit_seldrune_gpt_pdf(
     best_safe_plan = None
     best_safe_quality = -1
 
-    for attempt_index in range(5):
+    for attempt_index in range(settings.ai_pdf_max_attempts):
         reconstruction_attempts = attempt_index + 1
         candidate_result = None
         candidate_assessment = None
@@ -778,7 +839,13 @@ def edit_seldrune_gpt_pdf(
             candidate_diagnostics.append(str(exc))
 
         last_diagnostics = list(dict.fromkeys(candidate_diagnostics))
-        if attempt_index >= 4:
+        if attempt_index >= settings.ai_pdf_max_attempts - 1:
+            break
+        if total_ai_cost >= settings.ai_pdf_max_total_usd:
+            last_diagnostics.append(
+                "AI cost governor stopped additional PDF reconstruction attempts "
+                f"after USD {total_ai_cost:.4f} estimated spend"
+            )
             break
 
         rejection_text = (
@@ -798,13 +865,14 @@ def edit_seldrune_gpt_pdf(
         if not referenced_pages:
             referenced_pages = [
                 render.page_number for render in initial_page_renders
-            ]
+            ] or list(range(1, min(inspection.page_count, 4) + 1))
         try:
             retry_page_renders = render_pdf_pages_for_model(
                 pdf_bytes,
                 payload.password,
                 page_numbers=referenced_pages,
-                max_pages=10,
+                max_pages=4,
+                max_long_edge=1200,
             )
         except PDFEditorError:
             retry_page_renders = initial_page_renders
@@ -820,14 +888,27 @@ def edit_seldrune_gpt_pdf(
             str(render.page_number) for render in retry_page_renders
         ) or "none"
 
+        retry_route = choose_cost_route(
+            settings,
+            purpose="pdf",
+            text=payload.instruction,
+            attempt=attempt_index + 1,
+            has_images=bool(retry_images),
+            has_files=False,
+        )
+        remaining_pdf_budget = max(
+            0.001,
+            settings.ai_pdf_max_total_usd - total_ai_cost,
+        )
         retry_request = ModelRequest(
             provider=ModelProvider.OPENAI,
-            model=settings.model_default,
+            model=retry_route.model,
             input_text=(
-                "Create a complete replacement edit plan against the ORIGINAL attached PDF. "
-                "Start from the untouched original; do not layer on a previous candidate.\n"
+                "Create a complete replacement edit plan against the ORIGINAL PDF using "
+                "the attached page previews. Do not layer on a previous candidate.\n"
                 f"Owner instruction: {payload.instruction}\n\n"
                 f"Previous candidate diagnostics:\n- {rejection_text}\n\n"
+                f"Previous plan JSON:\n{json.dumps(candidate_plan, separators=(',', ':'))}\n\n"
                 f"{profile}\n"
                 "Rendered ORIGINAL page previews are attached after this text in page "
                 f"order: {retry_visual_pages}. For every missing/search-invisible target, "
@@ -849,18 +930,43 @@ def edit_seldrune_gpt_pdf(
                 "the exact bbox and typography visually. Return a complete new plan, not a "
                 "delta or repair plan. Do not change unrelated content."
             ),
-            max_output_tokens=max(settings.model_max_output_tokens, 6000),
+            max_output_tokens=retry_route.max_output_tokens,
             response_schema=_PDF_EDIT_SCHEMA,
             input_images=retry_images,
-            input_files=input_files,
+            input_files=(),
+            image_detail="high",
+            pdf_detail=retry_route.pdf_detail,
+            reasoning_effort=retry_route.reasoning_effort,
+            prompt_cache_key=(
+                f"seldrune:{organization_id}:pdf-repair:{payload.pdf.name}"
+            ),
+            max_estimated_cost_usd=min(
+                retry_route.request_budget_usd,
+                remaining_pdf_budget,
+            ),
+            exact_token_preflight=True,
         )
         try:
             retry_model_result, _retry_latency = ModelGateway(settings).generate(
                 retry_request
             )
+            model_calls += 1
+            models_used.add(retry_model_result.model)
+            final_model = retry_model_result.model
+            final_response_id = retry_model_result.response_id
+            total_ai_cost += float(
+                retry_model_result.usage.estimated_cost_usd or 0.0
+            )
+            total_input_tokens += retry_model_result.usage.input_tokens
+            total_output_tokens += retry_model_result.usage.output_tokens
+            total_cached_input_tokens += (
+                retry_model_result.usage.cached_input_tokens
+            )
             candidate_plan = json.loads(retry_model_result.output_text)
         except (ModelGatewayError, json.JSONDecodeError) as exc:
             last_diagnostics.append(f"AI re-planning failed: {exc}")
+            if "cost governor" in str(exc).casefold():
+                break
 
     if edit_result is None and best_safe_result is not None:
         edit_result = best_safe_result
@@ -920,7 +1026,10 @@ def edit_seldrune_gpt_pdf(
             "reconstruction_attempts": reconstruction_attempts,
             "repair_passes": repair_passes,
             "warnings": edit_result.warnings[:20],
-            "model": result.model,
+            "model": final_model,
+            "models_used": sorted(models_used),
+            "model_calls": model_calls,
+            "estimated_ai_cost_usd": round(total_ai_cost, 8),
         },
     )
     session.add(
@@ -948,8 +1057,14 @@ def edit_seldrune_gpt_pdf(
                     else "."
                 )
             ),
-            model=result.model,
-            response_id=result.response_id,
+            model=final_model,
+            response_id=final_response_id,
+            input_tokens=total_input_tokens,
+            output_tokens=total_output_tokens,
+            cached_input_tokens=total_cached_input_tokens,
+            estimated_cost_usd=round(total_ai_cost, 8),
+            cost_tier="adaptive",
+            model_calls=model_calls,
         )
     )
     session.commit()
@@ -960,8 +1075,8 @@ def edit_seldrune_gpt_pdf(
         summary=summary,
         applied_edits=edit_result.applied_edits,
         warnings=edit_result.warnings,
-        model=result.model,
-        response_id=result.response_id,
+        model=final_model,
+        response_id=final_response_id,
         document_type=edit_result.inspection.document_type,
         page_count=edit_result.inspection.page_count,
         native_text_pages=edit_result.inspection.native_text_pages,
@@ -973,6 +1088,9 @@ def edit_seldrune_gpt_pdf(
         layout_integrity_score=selected_assessment.layout_integrity_score,
         reconstruction_attempts=reconstruction_attempts,
         repair_passes=repair_passes,
+        estimated_ai_cost_usd=round(total_ai_cost, 8),
+        model_calls=model_calls,
+        models_used=sorted(models_used),
         verification_notes=edit_result.verification_notes,
     )
 

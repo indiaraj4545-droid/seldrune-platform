@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from backend.app.models.agent import Agent
 from backend.app.models.model_invocation import ModelInvocation
 from backend.app.models.organization_kernel import OrganizationProject
+from backend.app.models.seldrune_gpt_message import SeldruneGPTMessage
 from backend.app.models.orchestration import OrchestrationRun, OrchestrationStep
 from backend.app.models.task import Task
 from backend.app.services.outcome_verification import assess_command_outcome
@@ -39,16 +40,6 @@ def build_owner_dashboard(session: Session, organization_id: UUID) -> dict[str, 
         else []
     )
     tasks = [task for step in steps if (task := session.get(Task, step.task_id)) is not None]
-    task_ids = [task.id for task in tasks]
-    invocations = (
-        list(
-            session.scalars(
-                select(ModelInvocation).where(ModelInvocation.task_id.in_(task_ids))
-            )
-        )
-        if task_ids
-        else []
-    )
     organization_agents = list(
         session.scalars(
             select(Agent).where(Agent.organization_id == organization_id)
@@ -63,6 +54,14 @@ def build_owner_dashboard(session: Session, organization_id: UUID) -> dict[str, 
         session.scalars(
             select(ModelInvocation).where(
                 ModelInvocation.organization_id == organization_id
+            )
+        )
+    )
+    gpt_messages = list(
+        session.scalars(
+            select(SeldruneGPTMessage).where(
+                SeldruneGPTMessage.organization_id == organization_id,
+                SeldruneGPTMessage.role == "assistant",
             )
         )
     )
@@ -244,10 +243,34 @@ def build_owner_dashboard(session: Session, organization_id: UUID) -> dict[str, 
             "overcommitted": committed_budget > allocated_budget,
         },
         "usage": {
-            "model_invocations": len(invocations),
-            "total_tokens": sum(item.total_tokens for item in invocations),
+            "model_invocations": (
+                len(organization_invocations)
+                + sum(item.model_calls for item in gpt_messages)
+            ),
+            "agent_model_invocations": len(organization_invocations),
+            "direct_gpt_model_calls": sum(
+                item.model_calls for item in gpt_messages
+            ),
+            "total_tokens": (
+                sum(item.total_tokens for item in organization_invocations)
+                + sum(
+                    item.input_tokens + item.output_tokens
+                    for item in gpt_messages
+                )
+            ),
+            "cached_input_tokens": sum(
+                item.cached_input_tokens for item in gpt_messages
+            ),
             "estimated_cost_usd": round(
-                sum(item.estimated_cost_usd or 0 for item in invocations), 6
+                sum(
+                    item.estimated_cost_usd or 0
+                    for item in organization_invocations
+                )
+                + sum(
+                    item.estimated_cost_usd or 0
+                    for item in gpt_messages
+                ),
+                6,
             ),
         },
         "recent_commands": [
