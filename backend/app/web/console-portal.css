@@ -1107,6 +1107,7 @@ html[data-portal-motion="reduced"] *::after{animation:none!important;scroll-beha
 }
 
 /* WORK / OPERATIONS */
+#portal-panel-operations #cognitive-mission,
 #portal-panel-operations #sti-runtime,
 #portal-panel-operations #action-inbox,
 #portal-panel-operations #commands{

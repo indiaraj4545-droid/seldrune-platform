@@ -1,0 +1,151 @@
+.cognitive-mission {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.cognitive-mission-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.cognitive-mission-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .65rem;
+}
+
+.mission-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: .85rem;
+}
+
+.mission-summary-card {
+  padding: 1rem;
+  border: 1px solid rgba(255, 255, 255, .09);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, .035);
+}
+
+.mission-summary-card small,
+.mission-stream small,
+.mission-stage small {
+  display: block;
+  opacity: .7;
+}
+
+.mission-summary-card strong {
+  display: block;
+  margin-top: .35rem;
+  font-size: 1.35rem;
+}
+
+.mission-progress-shell {
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .08);
+}
+
+.mission-progress-bar {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #5ad7ff, #a678ff);
+  transition: width .25s ease;
+}
+
+.mission-workstreams {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .85rem;
+}
+
+.mission-stream {
+  padding: 1rem;
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 16px;
+  background: rgba(12, 18, 28, .52);
+}
+
+.mission-stream-top,
+.mission-stage-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.mission-stream.paused {
+  border-color: rgba(255, 191, 71, .35);
+}
+
+.mission-ready {
+  display: grid;
+  gap: .7rem;
+}
+
+.mission-stage {
+  padding: .9rem 1rem;
+  border-left: 3px solid rgba(90, 215, 255, .7);
+  border-radius: 10px;
+  background: rgba(90, 215, 255, .055);
+}
+
+.mission-stage[data-status="completed"] {
+  border-left-color: rgba(70, 219, 157, .72);
+  opacity: .82;
+}
+
+.mission-stage[data-status="paused"] {
+  border-left-color: rgba(255, 191, 71, .75);
+}
+
+.mission-stage[data-status="blocked"] {
+  border-left-color: rgba(255, 255, 255, .2);
+}
+
+.mission-stage p {
+  margin: .4rem 0 0;
+  opacity: .82;
+}
+
+.mission-dependency {
+  margin-top: .45rem;
+  font-size: .82rem;
+  opacity: .68;
+}
+
+.mission-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  padding: .24rem .55rem;
+  border-radius: 999px;
+  font-size: .78rem;
+  background: rgba(255, 255, 255, .07);
+}
+
+.mission-pill.ready {
+  background: rgba(70, 219, 157, .13);
+}
+
+.mission-pill.paused {
+  background: rgba(255, 191, 71, .13);
+}
+
+#mission-sync-status {
+  margin: 0;
+  opacity: .78;
+}
+
+@media (max-width: 900px) {
+  .mission-summary-grid,
+  .mission-workstreams {
+    grid-template-columns: 1fr;
+  }
+
+  .cognitive-mission-head {
+    flex-direction: column;
+  }
+}
