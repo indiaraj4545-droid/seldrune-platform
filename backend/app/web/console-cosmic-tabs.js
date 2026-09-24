@@ -220,6 +220,7 @@
     move("#seldrune-gpt", "operator");
     move("#command", "operator");
 
+    move("#cognitive-mission", "operations");
     move("#sti-runtime", "operations");
     move("#action-inbox", "operations");
     move("#commands", "operations");
