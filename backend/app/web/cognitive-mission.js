@@ -86,18 +86,20 @@
     if (!root) return;
     root.replaceChildren();
 
-    const pending = (mission.stages || []).filter(
-      stage => stage.status !== 'completed'
-    );
-    if (!pending.length) {
+    const stages = [...(mission.stages || [])].sort((left, right) => {
+      const leftComplete = left.status === 'completed' ? 1 : 0;
+      const rightComplete = right.status === 'completed' ? 1 : 0;
+      return leftComplete - rightComplete;
+    });
+    if (!stages.length) {
       const empty = document.createElement('div');
       empty.className = 'empty';
-      empty.textContent = 'All roadmap milestones are complete.';
+      empty.textContent = 'No roadmap milestones are defined.';
       root.append(empty);
       return;
     }
 
-    pending.forEach(stage => {
+    stages.forEach(stage => {
       const status = stageStatus(stage);
       const card = document.createElement('article');
       card.className = 'mission-stage';
@@ -124,9 +126,13 @@
 
       const dependency = document.createElement('div');
       dependency.className = 'mission-dependency';
-      dependency.textContent = stage.depends_on.length
+      const dependencyText = stage.depends_on.length
         ? `Depends on: ${stage.depends_on.join(', ')}`
         : 'No dependencies';
+      const evidenceText = (stage.evidence_refs || []).length
+        ? ` · Evidence: ${stage.evidence_refs.join(', ')}`
+        : '';
+      dependency.textContent = dependencyText + evidenceText;
 
       card.append(top, objective, dependency);
       root.append(card);
@@ -154,7 +160,7 @@
   }
 
   async function syncMission() {
-    if (missionState.syncing || !window.location.hash && !document.body) return;
+    if (missionState.syncing) return;
     missionState.syncing = true;
     const button = byId('mission-refresh');
     if (button) button.disabled = true;
