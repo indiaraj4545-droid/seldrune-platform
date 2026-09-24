@@ -45,6 +45,7 @@ def test_portal_controller_defines_owner_workspaces_and_fixed_home():
         assert f'["{workspace}",' in js
     assert "OWNER PORTAL" in js
     assert 'move("#seldrune-gpt", "operator")' in js
+    assert 'move("#cognitive-mission", "operations")' in js
     assert 'move("#sti-runtime", "operations")' in js
     assert 'move("#face-v01-mission", "media")' in js
     assert 'move("#tool-control", "tools")' in js
@@ -90,6 +91,7 @@ def test_every_owner_workspace_uses_portal_visual_system():
     for selector in (
         '#portal-panel-operator #seldrune-gpt',
         '#portal-panel-operator #command',
+        '#portal-panel-operations #cognitive-mission',
         '#portal-panel-operations #sti-runtime',
         '#portal-panel-operations #action-inbox',
         '#portal-panel-media #face-v01-mission',
