@@ -50,12 +50,23 @@ def sync_development_mission(
         organization_id=organization_id,
         actor_user_id=current_user.id,
     )
+    queued = queue_parallel_ready_stages(
+        session,
+        organization_id=organization_id,
+        actor_user_id=current_user.id,
+        master_task=task,
+    )
     return {
         **mission,
         "organization_id": str(organization_id),
         "master_task_id": str(task.id),
         "master_task_status": task.status,
         "created": created,
+        "auto_queued_count": len(queued),
+        "auto_queued_stage_ids": [
+            (item.input_data or {}).get("cognitive_mission_stage_id")
+            for item in queued
+        ],
     }
 
 
