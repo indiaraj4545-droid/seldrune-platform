@@ -567,7 +567,6 @@ _validate_definitions()
 
 def build_development_mission() -> dict[str, Any]:
     workstreams = {item.id: item for item in WORKSTREAMS}
-    stages = {item.id: item for item in STAGES}
     completed = {
         stage.id for stage in STAGES if stage.status == "completed"
     }
