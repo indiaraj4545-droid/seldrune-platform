@@ -92,6 +92,11 @@
   background: rgba(90, 215, 255, .055);
 }
 
+.mission-stage[data-status="completed"] {
+  border-left-color: rgba(70, 219, 157, .72);
+  opacity: .82;
+}
+
 .mission-stage[data-status="paused"] {
   border-left-color: rgba(255, 191, 71, .75);
 }
