@@ -6,8 +6,12 @@ import re
 from typing import Any
 
 
-UNARCHI_VERSION = "unarchi-v0.32"
-_LEGACY_UNARCHI_VERSIONS = {"unarchi-v0.31", "unarchi-v0.30"}
+UNARCHI_VERSION = "unarchi-v0.33"
+_LEGACY_UNARCHI_VERSIONS = {
+    "unarchi-v0.32",
+    "unarchi-v0.31",
+    "unarchi-v0.30",
+}
 _STOPWORDS = {
     "a",
     "an",
@@ -215,6 +219,26 @@ class CausalHypothesis:
     supporting_evidence: int = 0
     contradicting_evidence: int = 0
     status: str = "active"
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class CausalHypothesisArbitration:
+    id: int
+    context: str
+    candidate_ids: tuple[int, ...]
+    ranked_scores: tuple[tuple[int, float], ...]
+    evidence_counts: tuple[tuple[int, int], ...]
+    support_ratios: tuple[tuple[int, float], ...]
+    uncertainties: tuple[tuple[int, float], ...]
+    context_validity: tuple[tuple[int, float], ...]
+    predicted_consequences: tuple[tuple[int, str], ...]
+    selected_ids: tuple[int, ...]
+    status: str
+    reason: str
+    evidence_refs: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -982,7 +1006,7 @@ class UnarchiEngine:
     """
     CPU-only experimental cognitive kernel.
 
-    v0.32 includes causal internal dynamics, bounded endogenous goals, a
+    v0.33 includes causal internal dynamics, bounded endogenous goals, a
     calibrated predictive self-model, prospective memory, evidence-grounded
     metacognition, explicit value arbitration, competing causal hypotheses,
     controlled self-intervention trials, a bounded recurrent global workspace,
@@ -1003,7 +1027,9 @@ class UnarchiEngine:
     plus renewed recovery and independent holdout cycles that carry immutable
     episode identities, bind each recurrence to its newest confirmed holdout,
     and forbid evidence or reactivation authorization from leaking across
-    repeated degradation/recovery episodes.
+    repeated degradation/recovery episodes, plus evidence-grounded arbitration
+    across multiple competing causal hypotheses with fail-closed evidence floors,
+    explicit uncertainty/context/consequence exposure, and bounded combinations.
     """
 
     state: UnarchiState = field(default_factory=UnarchiState)
@@ -1020,6 +1046,10 @@ class UnarchiEngine:
     arbitration_history: list[ArbitrationRecord] = field(default_factory=list)
     next_arbitration_id: int = 1
     causal_hypotheses: list[CausalHypothesis] = field(default_factory=list)
+    causal_hypothesis_arbitrations: list[CausalHypothesisArbitration] = field(
+        default_factory=list
+    )
+    next_causal_hypothesis_arbitration_id: int = 1
     discriminating_experiments: list[DiscriminatingExperiment] = field(
         default_factory=list
     )
@@ -2230,6 +2260,187 @@ class UnarchiEngine:
         total = sum(max(item.confidence, 0.001) for item in active)
         for item in active:
             item.confidence = round(max(item.confidence, 0.001) / total, 6)
+
+    def arbitrate_causal_hypotheses(
+        self,
+        *,
+        context: str,
+        consequence_test: str | None = None,
+        context_validity: dict[int, float] | None = None,
+        max_selected: int = 2,
+        combination_margin: float = 0.08,
+        minimum_evidence: int = 1,
+        evidence_refs: tuple[str, ...] = (),
+    ) -> CausalHypothesisArbitration:
+        """
+        Rank active causal hypotheses from explicit evidence instead of insertion order.
+
+        Arbitration is read-only with respect to hypothesis confidence. It exposes
+        support, contradictions, uncertainty, context validity and predicted
+        consequences. If no candidate reaches the evidence floor, it fails closed.
+        """
+        clean_context = context.strip()
+        if not clean_context:
+            raise ValueError("arbitration context is required")
+        if max_selected < 1 or max_selected > 3:
+            raise ValueError("max_selected must be between 1 and 3")
+        if not 0.0 <= combination_margin <= 0.50:
+            raise ValueError("combination_margin must be between 0 and 0.50")
+        if minimum_evidence < 1:
+            raise ValueError("minimum_evidence must be at least 1")
+
+        active = [item for item in self.causal_hypotheses if item.status == "active"]
+        if len(active) < 2:
+            raise ValueError("at least two active hypotheses are required")
+
+        validity = context_validity or {}
+        normalized_test = (consequence_test or "").strip().casefold()
+        rows: list[dict[str, Any]] = []
+        for hypothesis in active:
+            evidence_count = (
+                hypothesis.supporting_evidence + hypothesis.contradicting_evidence
+            )
+            support_ratio = (
+                (hypothesis.supporting_evidence + 1.0)
+                / (evidence_count + 2.0)
+            )
+            uncertainty = _clamp(1.0 - hypothesis.confidence)
+            context_score = _clamp(float(validity.get(hypothesis.id, 0.5)))
+            predicted_consequence = ""
+            if normalized_test:
+                predicted_consequence = next(
+                    (
+                        prediction
+                        for test, prediction in hypothesis.predictions
+                        if test.casefold() == normalized_test
+                    ),
+                    "",
+                )
+            consequence_coverage = 1.0 if predicted_consequence else (
+                0.5 if not normalized_test else 0.0
+            )
+            contradiction_burden = (
+                hypothesis.contradicting_evidence / evidence_count
+                if evidence_count
+                else 0.0
+            )
+            score = _clamp(
+                (hypothesis.confidence * 0.45)
+                + (support_ratio * 0.20)
+                + (context_score * 0.20)
+                + (consequence_coverage * 0.10)
+                - (contradiction_burden * 0.15)
+            )
+            rows.append(
+                {
+                    "hypothesis": hypothesis,
+                    "evidence_count": evidence_count,
+                    "support_ratio": support_ratio,
+                    "uncertainty": uncertainty,
+                    "context_score": context_score,
+                    "predicted_consequence": predicted_consequence,
+                    "score": score,
+                }
+            )
+
+        rows.sort(
+            key=lambda row: (
+                -round(float(row["score"]), 12),
+                -int(row["evidence_count"]),
+                -round(float(row["hypothesis"].confidence), 12),
+                row["hypothesis"].statement.casefold(),
+            )
+        )
+        eligible = [
+            row
+            for row in rows
+            if int(row["evidence_count"]) >= minimum_evidence
+        ]
+
+        selected_ids: tuple[int, ...] = ()
+        status = "insufficient_evidence"
+        reason = (
+            "No active hypothesis reached the explicit evidence floor; "
+            "downstream causal selection is withheld."
+        )
+        if eligible:
+            top_score = float(eligible[0]["score"])
+            selected = [eligible[0]]
+            for row in eligible[1:]:
+                if len(selected) >= max_selected:
+                    break
+                if (top_score - float(row["score"])) <= combination_margin:
+                    selected.append(row)
+                else:
+                    break
+            selected_ids = tuple(row["hypothesis"].id for row in selected)
+            if len(selected_ids) > 1:
+                status = "combined"
+                reason = (
+                    "Multiple evidence-supported hypotheses remain within the "
+                    "bounded arbitration margin."
+                )
+            else:
+                status = "selected"
+                reason = (
+                    "One evidence-supported hypothesis has the strongest "
+                    "context-weighted arbitration score."
+                )
+
+        refs = tuple(
+            str(ref).strip()[:300]
+            for ref in evidence_refs
+            if str(ref).strip()
+        )
+        refs += tuple(
+            (
+                f"causal_hypothesis:{row['hypothesis'].id}:"
+                f"support={row['hypothesis'].supporting_evidence}:"
+                f"contradiction={row['hypothesis'].contradicting_evidence}"
+            )
+            for row in rows
+        )
+
+        record = CausalHypothesisArbitration(
+            id=self.next_causal_hypothesis_arbitration_id,
+            context=clean_context[:400],
+            candidate_ids=tuple(row["hypothesis"].id for row in rows),
+            ranked_scores=tuple(
+                (row["hypothesis"].id, round(float(row["score"]), 6))
+                for row in rows
+            ),
+            evidence_counts=tuple(
+                (row["hypothesis"].id, int(row["evidence_count"]))
+                for row in rows
+            ),
+            support_ratios=tuple(
+                (row["hypothesis"].id, round(float(row["support_ratio"]), 6))
+                for row in rows
+            ),
+            uncertainties=tuple(
+                (row["hypothesis"].id, round(float(row["uncertainty"]), 6))
+                for row in rows
+            ),
+            context_validity=tuple(
+                (row["hypothesis"].id, round(float(row["context_score"]), 6))
+                for row in rows
+            ),
+            predicted_consequences=tuple(
+                (row["hypothesis"].id, str(row["predicted_consequence"])[:300])
+                for row in rows
+            ),
+            selected_ids=selected_ids,
+            status=status,
+            reason=reason,
+            evidence_refs=refs,
+        )
+        self.next_causal_hypothesis_arbitration_id += 1
+        self.causal_hypothesis_arbitrations.append(record)
+        if len(self.causal_hypothesis_arbitrations) > self.max_memory:
+            self.causal_hypothesis_arbitrations = (
+                self.causal_hypothesis_arbitrations[-self.max_memory:]
+            )
+        return record
 
     def select_discriminating_experiment(
         self,
@@ -9706,6 +9917,12 @@ class UnarchiEngine:
             "causal_hypotheses": [
                 item.to_dict() for item in self.causal_hypotheses
             ],
+            "causal_hypothesis_arbitrations": [
+                item.to_dict() for item in self.causal_hypothesis_arbitrations
+            ],
+            "next_causal_hypothesis_arbitration_id": (
+                self.next_causal_hypothesis_arbitration_id
+            ),
             "discriminating_experiments": [
                 item.to_dict() for item in self.discriminating_experiments
             ],
@@ -9914,6 +10131,10 @@ class UnarchiEngine:
         intentions_payload = payload.get("prospective_intentions", [])
         arbitration_payload = payload.get("arbitration_history", [])
         hypotheses_payload = payload.get("causal_hypotheses", [])
+        hypothesis_arbitrations_payload = payload.get(
+            "causal_hypothesis_arbitrations",
+            [],
+        )
         experiments_payload = payload.get("discriminating_experiments", [])
         interventions_payload = payload.get("intervention_trials", [])
         workspace_items_payload = payload.get("global_workspace_items", [])
@@ -10198,6 +10419,35 @@ class UnarchiEngine:
                 tuple(pair) for pair in restored_item.get("predictions", ())
             )
             causal_hypotheses.append(CausalHypothesis(**restored_item))
+
+        causal_hypothesis_arbitrations: list[CausalHypothesisArbitration] = []
+        for item in hypothesis_arbitrations_payload:
+            if not isinstance(item, dict):
+                raise ValueError("invalid UNARCHI causal hypothesis arbitration")
+            restored_item = dict(item)
+            for key in (
+                "ranked_scores",
+                "evidence_counts",
+                "support_ratios",
+                "uncertainties",
+                "context_validity",
+                "predicted_consequences",
+            ):
+                restored_item[key] = tuple(
+                    tuple(pair) for pair in restored_item.get(key, ())
+                )
+            restored_item["candidate_ids"] = tuple(
+                restored_item.get("candidate_ids", ())
+            )
+            restored_item["selected_ids"] = tuple(
+                restored_item.get("selected_ids", ())
+            )
+            restored_item["evidence_refs"] = tuple(
+                restored_item.get("evidence_refs", ())
+            )
+            causal_hypothesis_arbitrations.append(
+                CausalHypothesisArbitration(**restored_item)
+            )
 
         discriminating_experiments: list[DiscriminatingExperiment] = []
         for item in experiments_payload:
@@ -10784,6 +11034,17 @@ class UnarchiEngine:
                 max((item.id for item in arbitration_history), default=0) + 1,
             ),
             causal_hypotheses=causal_hypotheses[-max_memory:],
+            causal_hypothesis_arbitrations=(
+                causal_hypothesis_arbitrations[-max_memory:]
+            ),
+            next_causal_hypothesis_arbitration_id=max(
+                int(payload.get("next_causal_hypothesis_arbitration_id") or 1),
+                max(
+                    (item.id for item in causal_hypothesis_arbitrations),
+                    default=0,
+                )
+                + 1,
+            ),
             discriminating_experiments=discriminating_experiments[-max_memory:],
             next_hypothesis_id=max(
                 int(payload.get("next_hypothesis_id") or 1),
@@ -11216,6 +11477,9 @@ class UnarchiEngine:
             "value_weights": dict(self.value_weights),
             "arbitration_count": len(self.arbitration_history),
             "causal_hypothesis_count": len(self.causal_hypotheses),
+            "causal_hypothesis_arbitration_count": len(
+                self.causal_hypothesis_arbitrations
+            ),
             "discriminating_experiment_count": len(
                 self.discriminating_experiments
             ),

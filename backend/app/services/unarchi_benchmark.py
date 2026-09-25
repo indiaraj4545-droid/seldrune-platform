@@ -6,7 +6,7 @@ from typing import Any
 from backend.app.services.unarchi_engine import UnarchiEngine
 
 
-BENCHMARK_VERSION = "unarchi-ablation-v0.32"
+BENCHMARK_VERSION = "unarchi-ablation-v0.33"
 
 
 def _failure_sensitization() -> dict[str, Any]:
@@ -4630,6 +4630,87 @@ def _repeated_episode_isolation() -> dict[str, Any]:
         ),
     }
 
+
+def _multi_hypothesis_arbitration() -> dict[str, Any]:
+    engine = UnarchiEngine()
+    temperature = engine.add_causal_hypothesis(
+        statement="Temperature drives the release anomaly.",
+        predictions={"release-check": "latency rises with temperature"},
+        confidence=0.62,
+    )
+    pressure = engine.add_causal_hypothesis(
+        statement="Queue pressure drives the release anomaly.",
+        predictions={"release-check": "latency rises with queue pressure"},
+        confidence=0.48,
+    )
+    instrumentation = engine.add_causal_hypothesis(
+        statement="Instrumentation overhead drives the release anomaly.",
+        predictions={"release-check": "latency rises with tracing enabled"},
+        confidence=0.58,
+    )
+    temperature.supporting_evidence = 3
+    pressure.supporting_evidence = 1
+    pressure.contradicting_evidence = 2
+    instrumentation.supporting_evidence = 2
+
+    record = engine.arbitrate_causal_hypotheses(
+        context="production release under controlled load",
+        consequence_test="release-check",
+        context_validity={
+            temperature.id: 0.95,
+            pressure.id: 0.45,
+            instrumentation.id: 0.70,
+        },
+        max_selected=2,
+        combination_margin=0.05,
+        evidence_refs=("v033:controlled-release-evidence",),
+    )
+
+    empty_engine = UnarchiEngine()
+    empty_engine.add_causal_hypothesis(
+        statement="Unevidenced A.",
+        predictions={"probe": "A"},
+        confidence=0.9,
+    )
+    empty_engine.add_causal_hypothesis(
+        statement="Unevidenced B.",
+        predictions={"probe": "B"},
+        confidence=0.1,
+    )
+    fail_closed = empty_engine.arbitrate_causal_hypotheses(
+        context="no evidence",
+        consequence_test="probe",
+    )
+
+    restored = UnarchiEngine.from_export(engine.export_state())
+    restored_record = restored.causal_hypothesis_arbitrations[-1]
+
+    return {
+        "name": "multi_hypothesis_arbitration",
+        "expected_direction": (
+            "competing causal models are ranked by explicit support, "
+            "contradictions, uncertainty, context validity and predicted "
+            "consequences rather than insertion order"
+        ),
+        "passed": (
+            record.status == "selected"
+            and record.selected_ids == (temperature.id,)
+            and record.ranked_scores[0][0] == temperature.id
+            and fail_closed.status == "insufficient_evidence"
+            and fail_closed.selected_ids == ()
+            and restored_record == record
+        ),
+        "status": record.status,
+        "selected_ids": record.selected_ids,
+        "top_hypothesis_id": record.ranked_scores[0][0],
+        "temperature_id": temperature.id,
+        "pressure_id": pressure.id,
+        "instrumentation_id": instrumentation.id,
+        "fail_closed_status": fail_closed.status,
+        "fail_closed_selected_ids": fail_closed.selected_ids,
+        "restart_preserved": restored_record == record,
+    }
+
 def run_unarchi_ablation_benchmark() -> dict[str, Any]:
     scenarios = [
         _failure_sensitization(),
@@ -4665,6 +4746,7 @@ def run_unarchi_ablation_benchmark() -> dict[str, Any]:
         _renewed_degradation_resolution(),
         _renewed_degradation_recovery_cycle(),
         _repeated_episode_isolation(),
+        _multi_hypothesis_arbitration(),
     ]
     passed = sum(bool(item["passed"]) for item in scenarios)
     return {

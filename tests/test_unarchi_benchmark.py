@@ -4,8 +4,8 @@ from backend.app.services.unarchi_benchmark import run_unarchi_ablation_benchmar
 def test_unarchi_ablation_benchmark_passes_all_scenarios() -> None:
     result = run_unarchi_ablation_benchmark()
 
-    assert result["scenario_count"] == 33
-    assert result["passed_scenarios"] == 33
+    assert result["scenario_count"] == 34
+    assert result["passed_scenarios"] == 34
     assert result["pass_rate"] == 1.0
     assert result["claims_phenomenal_consciousness"] is False
 
@@ -571,3 +571,19 @@ def test_unarchi_benchmark_covers_v032_repeated_episode_isolation() -> None:
     assert episode["recovery_holdout_overlap"] is False
     assert episode["readvance_action"] == "advance"
     assert episode["restart_preserved"] is True
+
+
+def test_unarchi_benchmark_covers_v033_multi_hypothesis_arbitration() -> None:
+    result = run_unarchi_ablation_benchmark()
+    scenarios = {item["name"]: item for item in result["scenarios"]}
+
+    arbitration = scenarios["multi_hypothesis_arbitration"]
+
+    assert result["version"] == "unarchi-ablation-v0.33"
+    assert arbitration["passed"] is True
+    assert arbitration["status"] == "selected"
+    assert arbitration["selected_ids"] == (arbitration["temperature_id"],)
+    assert arbitration["top_hypothesis_id"] == arbitration["temperature_id"]
+    assert arbitration["fail_closed_status"] == "insufficient_evidence"
+    assert arbitration["fail_closed_selected_ids"] == ()
+    assert arbitration["restart_preserved"] is True
