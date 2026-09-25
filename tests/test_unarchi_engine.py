@@ -167,7 +167,7 @@ def test_snapshot_never_claims_phenomenal_consciousness() -> None:
     snapshot = engine.snapshot()
 
     assert snapshot["claims_phenomenal_consciousness"] is False
-    assert snapshot["version"] == "unarchi-v0.32"
+    assert snapshot["version"] == "unarchi-v0.33"
 
 
 def test_export_restore_preserves_identity_state_and_memory() -> None:
@@ -5572,3 +5572,127 @@ def test_v032_repeated_episode_isolation_uses_latest_confirmed_holdout() -> None
     assert restored.context_validity_renewed_recovery_validations[-1].episode_id == 2
     assert restored.context_validity_renewed_holdout_validations[-1].episode_id == 2
     assert restored.snapshot()["renewed_episode_count"] == 2
+
+
+def test_v033_arbitration_ranks_explicit_evidence_not_insertion_order() -> None:
+    engine = UnarchiEngine()
+    first = engine.add_causal_hypothesis(
+        statement="First-added model.",
+        predictions={"release-check": "latency rises"},
+        confidence=0.44,
+    )
+    strongest = engine.add_causal_hypothesis(
+        statement="Evidence-supported model.",
+        predictions={"release-check": "latency remains stable"},
+        confidence=0.66,
+    )
+    third = engine.add_causal_hypothesis(
+        statement="Alternative model.",
+        predictions={"release-check": "latency falls"},
+        confidence=0.51,
+    )
+    first.supporting_evidence = 1
+    first.contradicting_evidence = 2
+    strongest.supporting_evidence = 4
+    strongest.contradicting_evidence = 0
+    third.supporting_evidence = 2
+    third.contradicting_evidence = 1
+
+    record = engine.arbitrate_causal_hypotheses(
+        context="production release",
+        consequence_test="release-check",
+        context_validity={
+            first.id: 0.60,
+            strongest.id: 0.95,
+            third.id: 0.70,
+        },
+        max_selected=1,
+    )
+
+    assert record.status == "selected"
+    assert record.selected_ids == (strongest.id,)
+    assert record.ranked_scores[0][0] == strongest.id
+    assert dict(record.evidence_counts)[strongest.id] == 4
+    assert dict(record.uncertainties)[strongest.id] < dict(record.uncertainties)[first.id]
+    assert dict(record.predicted_consequences)[strongest.id] == "latency remains stable"
+
+
+def test_v033_arbitration_fails_closed_without_observed_evidence() -> None:
+    engine = UnarchiEngine()
+    engine.add_causal_hypothesis(
+        statement="Model A.",
+        predictions={"probe": "A"},
+        confidence=0.8,
+    )
+    engine.add_causal_hypothesis(
+        statement="Model B.",
+        predictions={"probe": "B"},
+        confidence=0.2,
+    )
+
+    record = engine.arbitrate_causal_hypotheses(
+        context="unobserved context",
+        consequence_test="probe",
+    )
+
+    assert record.status == "insufficient_evidence"
+    assert record.selected_ids == ()
+    assert "withheld" in record.reason
+
+
+def test_v033_arbitration_can_preserve_bounded_competing_models() -> None:
+    engine = UnarchiEngine()
+    alpha = engine.add_causal_hypothesis(
+        statement="Alpha causal model.",
+        predictions={"probe": "signal alpha"},
+        confidence=0.55,
+    )
+    beta = engine.add_causal_hypothesis(
+        statement="Beta causal model.",
+        predictions={"probe": "signal beta"},
+        confidence=0.54,
+    )
+    alpha.supporting_evidence = 3
+    beta.supporting_evidence = 3
+
+    record = engine.arbitrate_causal_hypotheses(
+        context="ambiguous but evidence-supported context",
+        consequence_test="probe",
+        context_validity={alpha.id: 0.8, beta.id: 0.8},
+        max_selected=2,
+        combination_margin=0.05,
+    )
+
+    assert record.status == "combined"
+    assert set(record.selected_ids) == {alpha.id, beta.id}
+    assert len(record.selected_ids) == 2
+
+
+def test_v033_arbitration_survives_export_restore() -> None:
+    engine = UnarchiEngine()
+    alpha = engine.add_causal_hypothesis(
+        statement="Alpha.",
+        predictions={"probe": "alpha"},
+        confidence=0.7,
+    )
+    beta = engine.add_causal_hypothesis(
+        statement="Beta.",
+        predictions={"probe": "beta"},
+        confidence=0.3,
+    )
+    alpha.supporting_evidence = 2
+    beta.supporting_evidence = 1
+    beta.contradicting_evidence = 1
+
+    arbitration = engine.arbitrate_causal_hypotheses(
+        context="restart persistence",
+        consequence_test="probe",
+        context_validity={alpha.id: 0.9, beta.id: 0.5},
+        evidence_refs=("benchmark:v033",),
+    )
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    assert restored.snapshot()["version"] == "unarchi-v0.33"
+    assert restored.causal_hypothesis_arbitrations == engine.causal_hypothesis_arbitrations
+    assert restored.causal_hypothesis_arbitrations[-1].id == arbitration.id
+    assert restored.snapshot()["causal_hypothesis_arbitration_count"] == 1
