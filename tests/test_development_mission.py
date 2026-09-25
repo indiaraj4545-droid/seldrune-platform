@@ -570,7 +570,7 @@ def test_one_go_verified_tool_receipt_unlocks_next_dependency(
     report = executed.json()
     assert report["tasks_verified"] == 1
     assert report["tasks_unverified"] == 0
-    assert report["ending_percentage"] == 62.9
+    assert report["ending_percentage"] == 63.6
     assert report["stage_results"][0]["stage_id"] == "unarchi_v33"
     assert report["stage_results"][0]["disposition"] == "verified"
     assert report["stage_results"][0]["reason"] == "verified_tool_receipt"
@@ -581,15 +581,15 @@ def test_one_go_verified_tool_receipt_unlocks_next_dependency(
     )
     assert mission.status_code == 200
     payload = mission.json()
-    assert payload["overall_percentage"] == 62.9
+    assert payload["overall_percentage"] == 63.6
     stages = {
         item["id"]: item
         for item in payload["stages"]
     }
     assert stages["unarchi_v33"]["status"] == "completed"
     assert stages["unarchi_v33"]["completion_source"] == "runtime_verified"
-    assert stages["unarchi_v33"]["ready"] is True
-    assert "unarchi_v33" in payload["parallel_ready_stage_ids"]
+    assert stages["unarchi_v34"]["ready"] is True
+    assert "unarchi_v34" in payload["parallel_ready_stage_ids"]
 
 
 def test_one_go_respects_autonomous_execution_governance(
