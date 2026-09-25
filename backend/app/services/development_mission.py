@@ -113,9 +113,15 @@ STAGES = (
         "Arbitrate multiple competing causal models with explicit evidence.",
         "unarchi",
         3,
-        "pending",
+        "completed",
         ("unarchi_v32",),
         ("reasoning", "analysis"),
+        evidence_refs=(
+            "pr:317",
+            "git:main:9a9b3f835e4fef1a5b4034a492cc04cefed5d048",
+            "railway:028baae2-998c-4c71-83c7-759f74276485",
+            "benchmark:multi_hypothesis_arbitration",
+        ),
     ),
     StageDefinition(
         "unarchi_v34",
