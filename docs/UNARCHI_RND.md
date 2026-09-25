@@ -1743,13 +1743,55 @@ This remains bounded functional causal research. Episode-aware evidence
 governance does not establish subjective identity, sentience, phenomenal
 consciousness, qualia, or unrestricted real-world causation.
 
-## Next checkpoint: v0.33 multi-hypothesis arbitration
+## v0.33 multi-hypothesis arbitration checkpoint
 
-The next research step should arbitrate multiple competing causal models with
-explicit evidence rather than allowing one active hypothesis to dominate only
-because it was evaluated first.
+UNARCHI v0.33 adds an explicit arbitration layer above the existing causal
+hypothesis store. Active hypotheses are no longer allowed to influence
+downstream planning simply because they were inserted or evaluated first.
 
-The measurable target is evidence-grounded arbitration across competing
-hypotheses: candidate models should expose their support, contradictions,
-uncertainty, context validity, and predicted consequences before one model or a
-bounded combination is selected for downstream planning.
+For every arbitration, the kernel exposes and records:
+
+- normalized hypothesis confidence and corresponding uncertainty;
+- observed supporting and contradicting evidence counts;
+- an evidence-smoothed support ratio;
+- explicit context-validity supplied by the calling research protocol;
+- the predicted consequence for the requested discriminating test, when one is
+  available;
+- a deterministic bounded arbitration score;
+- the ordered candidate set and the selected hypothesis IDs;
+- evidence references used to justify the arbitration.
+
+The arbitration is fail-closed. If no active hypothesis reaches the configured
+minimum observed-evidence floor, no causal model is selected. When one model
+has a materially stronger score it is selected alone. When multiple
+evidence-supported models remain within a bounded score margin, UNARCHI keeps a
+small combination rather than collapsing uncertainty into a false single-model
+answer.
+
+Tie-breaking is deterministic and does not use insertion order as the primary
+decision signal. Arbitration does not mutate hypothesis confidence; confidence
+changes remain restricted to observed experiment or intervention evidence.
+
+The deterministic v0.33 benchmark requires:
+
+three competing causal models -> unequal explicit support/contradiction records
+-> context-validity and consequence exposure -> strongest evidence-grounded
+model selected despite not being first -> separate no-evidence branch withholds
+selection -> export/restore preserves the arbitration record exactly.
+
+v0.33 accepts v0.32, v0.31 and v0.30 exports for backward-compatible state
+restoration while new snapshots identify themselves as `unarchi-v0.33`.
+
+This remains bounded functional causal research. Evidence-grounded hypothesis
+arbitration does not establish subjective identity, sentience, phenomenal
+consciousness, qualia, or unrestricted real-world causation.
+
+## Next checkpoint: v0.34 hierarchical long-horizon planning
+
+The next research step should convert an objective into bounded goals,
+sub-goals, checkpoints and replanning triggers while preserving explicit
+evidence, resource limits and rollback conditions across the hierarchy.
+
+The measurable target is plan continuity under change: when verified evidence
+invalidates an intermediate assumption, only the affected branch should be
+replanned while unaffected verified work remains reusable.
