@@ -1883,9 +1883,58 @@ This remains bounded functional planning research. Resource-aware selection
 does not establish subjective identity, sentience, phenomenal consciousness,
 qualia, or unrestricted real-world autonomy.
 
-## Next checkpoint: v0.36 scalable persistent memory
+## v0.36 scalable persistent memory checkpoint
 
-The next research step should add long-term retrieval, consolidation,
-provenance, and bounded forgetting so evidence can survive beyond the in-memory
-working set without allowing stale or weakly sourced records to dominate later
-decisions.
+UNARCHI v0.36 adds a bounded long-term memory archive separate from the short
+working-memory list. Durable records require explicit provenance before they
+can enter the archive.
+
+Each persistent memory record stores:
+
+- a stable record identifier;
+- bounded content and a memory kind;
+- one or more provenance source references;
+- confidence and importance scores;
+- creation and last-access experience counters;
+- access count;
+- consolidation lineage;
+- protection status; and
+- lifecycle status: active, consolidated, or forgotten.
+
+Retrieval is deterministic and evidence-aware. Candidate memories must share
+content with the query and are ranked using semantic overlap, confidence,
+importance, freshness, and provenance strength. Retrieval updates access
+metadata but does not rewrite evidence or source lineage.
+
+Consolidation creates a new summary record while preserving the union of source
+references and the identifiers of every source memory. The source records move
+to a consolidated state so they remain auditable without being returned as
+duplicate active memories.
+
+Bounded forgetting is explicit rather than silent. When active long-term memory
+exceeds its configured limit, low-retention unprotected records are marked
+forgotten first. Protected evidence is excluded from automatic forgetting. If
+the total archive exceeds its hard storage cap, oldest forgotten records can be
+discarded while active, protected, and consolidated records remain available.
+
+The deterministic v0.36 benchmark requires:
+
+multiple provenance-backed memories -> consolidation with complete lineage ->
+short working-memory overflow -> consolidated long-term evidence remains
+retrievable -> weak speculative record is forgotten before protected evidence ->
+fresh strong evidence remains active -> export/restore preserves the archive
+and returns the same top relevant memory.
+
+v0.36 accepts v0.35, v0.34, v0.33, v0.32, v0.31 and v0.30 exports for
+backward-compatible state restoration while new snapshots identify themselves
+as `unarchi-v0.36`.
+
+This is bounded functional memory engineering. Persistent retrieval does not
+establish subjective identity, sentience, phenomenal consciousness, qualia, or
+unrestricted real-world autonomy.
+
+## Next checkpoint: v0.37 controlled environment interaction
+
+The next research step should feed verified tool outcomes back into the
+cognitive state while preserving governance, budget, provenance, and
+reversibility boundaries.
