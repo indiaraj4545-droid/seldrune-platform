@@ -8,9 +8,13 @@ from backend.app.services.unarchi_multimodal import (
     ingest_multimodal_observation,
     normalize_multimodal_observation,
 )
+from backend.app.services.unarchi_orchestration import (
+    CognitiveRouteCandidate,
+    select_cognitive_route,
+)
 
 
-BENCHMARK_VERSION = "unarchi-ablation-v0.38"
+BENCHMARK_VERSION = "unarchi-ablation-v0.39"
 
 
 def _failure_sensitization() -> dict[str, Any]:
@@ -5298,6 +5302,101 @@ def _multimodal_observation_normalization() -> dict[str, Any]:
         "top_retrieval_kind": hits[0].kind if hits else None,
     }
 
+
+def _model_and_skill_orchestration() -> dict[str, Any]:
+    candidates = (
+        CognitiveRouteCandidate(
+            kind="model",
+            identifier="openai:reasoning-large",
+            capabilities=("text", "reasoning", "structured_output"),
+            estimated_cost_usd=0.18,
+            confidence=0.96,
+            recent_verified_success_rate=0.93,
+            recent_verified_samples=6,
+            lifetime_verified_success_rate=0.91,
+            evidence_refs=("model-evidence:large:1", "receipt:large:1"),
+        ),
+        CognitiveRouteCandidate(
+            kind="model",
+            identifier="compatible:reasoning-small",
+            capabilities=("text", "reasoning", "structured_output"),
+            estimated_cost_usd=0.03,
+            confidence=0.88,
+            recent_verified_success_rate=0.90,
+            recent_verified_samples=5,
+            lifetime_verified_success_rate=0.86,
+            evidence_refs=("model-evidence:small:1", "receipt:small:1"),
+        ),
+        CognitiveRouteCandidate(
+            kind="tool",
+            identifier="internal-json-validate",
+            capabilities=("structured_output", "validation"),
+            estimated_cost_usd=0.0,
+            confidence=0.99,
+            recent_verified_success_rate=1.0,
+            recent_verified_samples=12,
+            lifetime_verified_success_rate=0.99,
+            evidence_refs=("tool-run:json:1", "receipt:json:1"),
+        ),
+    )
+    reasoning = select_cognitive_route(
+        candidates=candidates,
+        required_capabilities=("text", "reasoning"),
+        max_cost_usd=0.20,
+        minimum_confidence=0.75,
+    )
+    validation = select_cognitive_route(
+        candidates=candidates,
+        required_capabilities=("structured_output", "validation"),
+        max_cost_usd=0.05,
+        minimum_confidence=0.75,
+    )
+
+    rejected_without_provenance = False
+    try:
+        select_cognitive_route(
+            candidates=(
+                CognitiveRouteCandidate(
+                    kind="model",
+                    identifier="unverified-cheap",
+                    capabilities=("text", "reasoning"),
+                    estimated_cost_usd=0.0,
+                    confidence=0.99,
+                    recent_verified_success_rate=1.0,
+                    recent_verified_samples=8,
+                    evidence_refs=(),
+                ),
+            ),
+            required_capabilities=("text", "reasoning"),
+            max_cost_usd=0.10,
+        )
+    except ValueError:
+        rejected_without_provenance = True
+
+    return {
+        "name": "model_and_skill_orchestration",
+        "expected_direction": (
+            "model and tool routes are compared with capability, confidence, "
+            "verified outcomes, cost, and provenance without executing them"
+        ),
+        "passed": (
+            reasoning.selected_identifier == "compatible:reasoning-small"
+            and reasoning.selected_kind == "model"
+            and reasoning.evidence_refs
+            and validation.selected_identifier == "internal-json-validate"
+            and validation.selected_kind == "tool"
+            and validation.evidence_refs
+            and rejected_without_provenance
+        ),
+        "reasoning_route": reasoning.selected_identifier,
+        "reasoning_kind": reasoning.selected_kind,
+        "validation_route": validation.selected_identifier,
+        "validation_kind": validation.selected_kind,
+        "rejected_without_provenance": rejected_without_provenance,
+        "reasoning_score": reasoning.score,
+        "validation_score": validation.score,
+    }
+
 def run_unarchi_ablation_benchmark() -> dict[str, Any]:
     scenarios = [
         _failure_sensitization(),
@@ -5339,6 +5438,7 @@ def run_unarchi_ablation_benchmark() -> dict[str, Any]:
         _persistent_memory_retrieval_consolidation(),
         _verified_tool_feedback_loop(),
         _multimodal_observation_normalization(),
+        _model_and_skill_orchestration(),
     ]
     passed = sum(bool(item["passed"]) for item in scenarios)
     return {

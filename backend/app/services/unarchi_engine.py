@@ -6,8 +6,9 @@ import re
 from typing import Any
 
 
-UNARCHI_VERSION = "unarchi-v0.38"
+UNARCHI_VERSION = "unarchi-v0.39"
 _LEGACY_UNARCHI_VERSIONS = {
+    "unarchi-v0.38",
     "unarchi-v0.37",
     "unarchi-v0.36",
     "unarchi-v0.35",
