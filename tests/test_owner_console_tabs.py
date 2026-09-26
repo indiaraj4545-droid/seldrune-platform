@@ -44,7 +44,7 @@ def test_creation_forge_routes_typed_projects_through_the_cognitive_operator():
     script = (WEB / "seldrune-gpt.js").read_text()
     styles = (WEB / "seldrune-gpt-studio.css").read_text()
 
-    for mode in ("any", "app", "game", "song", "video"):
+    for mode in ("any", "app", "game", "song", "video", "visual"):
         assert f'data-creation-mode="{mode}"' in html
         assert f"    {mode}: {{" in script
     assert 'id="seldrune-gpt-creation-status"' in html

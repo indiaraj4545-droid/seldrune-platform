@@ -54,6 +54,11 @@
       guidance: 'Create an original video package for the request: script, storyboard, shot list, and edit cues. If an enabled video-generation tool is present, render video and include its receipt. If not, return the text assets and clearly label the video as not rendered.',
       status: 'Video · script and storyboard can be returned as text; rendered video requires an enabled video-generation provider.',
     },
+    visual: {
+      label: 'Visual / 3D',
+      guidance: 'Create an original visual or 3D asset package for the request: art direction, composition, asset list, and a ready-to-use generation prompt. If an enabled image or 3D generation tool is present, render the asset and include its receipt. If not, return the design package and clearly label it not rendered.',
+      status: 'Visual / 3D · art direction can be returned as text; a rendered asset requires an enabled image or 3D generation provider.',
+    },
   };
 
   function setCreationMode(mode) {
