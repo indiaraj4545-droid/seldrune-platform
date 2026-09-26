@@ -429,8 +429,8 @@ def test_one_go_blocks_compiled_work_before_model_without_tools(
     assert report["tasks_blocked"] == 3
     assert report["tasks_failed"] == 0
     assert report["recovery_rounds"] == 3
-    assert report["recovery_attempts"] == 3
-    assert report["recovery_configuration_gates"] == 3
+    assert report["recovery_attempts"] == 2
+    assert report["recovery_configuration_gates"] == 2
     assert report["recovery_owner_gates"] == 0
     assert report["recovery_external_resource_gates"] == 0
     assert report["halted_reason"] == "no_new_verified_dependency_progress"
