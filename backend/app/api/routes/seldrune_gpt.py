@@ -43,7 +43,12 @@ from backend.app.services.ai_spend_guard import (
 from backend.app.services.audit import record_audit
 from backend.app.services.external_actions import default_external_action_catalog
 from backend.app.services.model_gateway import ModelGateway, ModelGatewayError
-from backend.app.services.model_provider_registry import model_provider_statuses
+from backend.app.services.model_provider_registry import (
+    configured_model_provider_vaults,
+    get_model_provider_credential,
+    model_provider_statuses,
+)
+from backend.app.services.secret_vault import SecretVaultError
 from backend.app.services.owner_action_compiler import required_external_tool_actions
 from backend.app.services.pdf_editor import (
     PDFEditorError,
@@ -491,17 +496,43 @@ def seldrune_gpt(
 
     provider_config = {
         item["provider"]: item
-        for item in model_provider_statuses(settings)
+        for item in model_provider_statuses(
+            settings,
+            vault_configured=configured_model_provider_vaults(
+                session,
+                organization_id=organization_id,
+            ),
+        )
     }.get(selected_provider.value, {})
     if not provider_config.get("configured"):
         hint = provider_config.get("configuration_hint") or "provider credentials"
+        connection_hint = (
+            "Connect it in Seldrune Connections or configure its key on the Seldrune server."
+            if selected_provider.value in {"openai", "gemini", "anthropic"}
+            else f"Set {hint} on the Seldrune server."
+        )
         raise HTTPException(
             status_code=503,
             detail=(
                 f"{provider_config.get('label', selected_provider.value)} is not configured. "
-                f"Set {hint} on the Seldrune server."
+                f"{connection_hint}"
             ),
         )
+
+    try:
+        provider_api_key = get_model_provider_credential(
+            session,
+            organization_id=organization_id,
+            provider=selected_provider.value,
+        )
+    except SecretVaultError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "The saved model-provider key could not be opened. "
+                "Reconnect this provider in Seldrune Connections."
+            ),
+        ) from exc
 
     input_images, input_files, attachment_names = _model_attachments(
         payload.attachments
@@ -677,7 +708,14 @@ def seldrune_gpt(
         ),
     )
     try:
-        result, _latency_ms = ModelGateway(settings).generate(request)
+        result, _latency_ms = ModelGateway(
+            settings,
+            api_key_overrides=(
+                {selected_provider: provider_api_key}
+                if provider_api_key
+                else {}
+            ),
+        ).generate(request)
     except ModelGatewayError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     session.add(
@@ -1432,7 +1470,13 @@ def seldrune_gpt_capabilities(
         evidence="Every order receives a durable command id, execution report, and audit trail.",
         registered_tools=sorted(tool.slug for tool in tools),
         provider_readiness=provider_readiness,
-        model_providers=model_provider_statuses(settings),
+        model_providers=model_provider_statuses(
+            settings,
+            vault_configured=configured_model_provider_vaults(
+                session,
+                organization_id=organization_id,
+            ),
+        ),
         configuration_hints=configuration_hints,
         cost_policy={
             "monthly_hard_limit_usd": settings.ai_monthly_max_usd,
