@@ -6,7 +6,7 @@ from typing import Any
 from backend.app.services.unarchi_engine import UnarchiEngine
 
 
-BENCHMARK_VERSION = "unarchi-ablation-v0.33"
+BENCHMARK_VERSION = "unarchi-ablation-v0.34"
 
 
 def _failure_sensitization() -> dict[str, Any]:
@@ -4711,6 +4711,149 @@ def _multi_hypothesis_arbitration() -> dict[str, Any]:
         "restart_preserved": restored_record == record,
     }
 
+
+def _hierarchical_long_horizon_planning() -> dict[str, Any]:
+    engine = UnarchiEngine()
+    plan = engine.create_hierarchical_plan(
+        objective="deliver a verified release across multiple dependent branches",
+        branches=[
+            {
+                "title": "Foundation",
+                "checkpoint": "foundation contract verified",
+                "assumption": "existing interfaces remain compatible",
+                "replan_trigger": "interface evidence contradicts compatibility",
+                "rollback_condition": "foundation verification fails",
+                "resource_limit": 25,
+                "children": [
+                    {
+                        "title": "Integration",
+                        "checkpoint": "integration suite passes",
+                        "assumption": "provider contract remains stable",
+                        "replan_trigger": "provider contract changes",
+                        "rollback_condition": "integration regression appears",
+                        "resource_limit": 20,
+                    }
+                ],
+            },
+            {
+                "title": "Independent validation",
+                "checkpoint": "independent validation receipt exists",
+                "assumption": "validation environment is representative",
+                "replan_trigger": "environment mismatch is measured",
+                "rollback_condition": "validation evidence is invalid",
+                "resource_limit": 20,
+            },
+        ],
+        total_resource_limit=80,
+        evidence_refs=("v034:objective",),
+    )
+    foundation_id, validation_id = plan.root_node_ids
+
+    validation_checkpoint = engine.record_hierarchical_checkpoint(
+        plan.id,
+        validation_id,
+        checkpoint_passed=True,
+        assumption_valid=True,
+        resource_used=10,
+        observation="independent validation receipt confirms the branch",
+        evidence_refs=("v034:validation-green",),
+    )
+    invalidation_checkpoint = engine.record_hierarchical_checkpoint(
+        plan.id,
+        foundation_id,
+        checkpoint_passed=False,
+        assumption_valid=False,
+        resource_used=15,
+        observation="verified evidence contradicts interface compatibility",
+        evidence_refs=("v034:interface-break",),
+    )
+
+    replan = engine.replan_hierarchical_branch(
+        plan.id,
+        foundation_id,
+        replacement_branches=[
+            {
+                "title": "Compatibility adapter",
+                "checkpoint": "adapter contract verified",
+                "assumption": "adapter isolates the interface break",
+                "replan_trigger": "adapter isolation fails",
+                "rollback_condition": "adapter checkpoint fails",
+                "resource_limit": 30,
+                "children": [
+                    {
+                        "title": "Adapter integration",
+                        "checkpoint": "adapter integration passes",
+                        "assumption": "downstream behavior remains stable",
+                        "replan_trigger": "downstream regression is measured",
+                        "rollback_condition": "adapter introduces regression",
+                        "resource_limit": 10,
+                    }
+                ],
+            }
+        ],
+        reason="replan only the branch invalidated by verified evidence",
+        evidence_refs=("v034:interface-break", "v034:replan-review"),
+    )
+
+    preserved = next(
+        node
+        for node in engine.hierarchical_plan_nodes
+        if node.id == validation_id
+    )
+    old_foundation = next(
+        node
+        for node in engine.hierarchical_plan_nodes
+        if node.id == foundation_id
+    )
+    restored = UnarchiEngine.from_export(engine.export_state())
+    restored_plan = restored.hierarchical_plans[-1]
+    restored_preserved = next(
+        node
+        for node in restored.hierarchical_plan_nodes
+        if node.id == validation_id
+    )
+
+    return {
+        "name": "hierarchical_long_horizon_planning",
+        "expected_direction": (
+            "verified evidence invalidates only one intermediate branch, "
+            "that branch is replaced within its released resource budget, "
+            "and unrelated verified work remains reusable"
+        ),
+        "passed": (
+            validation_checkpoint.status == "verified"
+            and invalidation_checkpoint.status == "invalidated"
+            and validation_id in replan.preserved_verified_node_ids
+            and foundation_id in replan.affected_node_ids
+            and old_foundation.status == "superseded"
+            and preserved.status == "verified"
+            and preserved.id == validation_id
+            and replan.replacement_node_ids
+            and replan.replacement_resource_limit
+            <= replan.released_resource_limit
+            and foundation_id not in plan.node_ids
+            and validation_id in plan.node_ids
+            and restored_plan == plan
+            and restored_preserved.status == "verified"
+            and restored.hierarchical_plan_replans[-1] == replan
+        ),
+        "plan_id": plan.id,
+        "initial_node_count": 3,
+        "active_node_count_after_replan": len(plan.node_ids),
+        "invalidated_node_id": foundation_id,
+        "preserved_verified_node_id": validation_id,
+        "preserved_verified_status": preserved.status,
+        "affected_node_ids": replan.affected_node_ids,
+        "replacement_node_ids": replan.replacement_node_ids,
+        "released_resource_limit": replan.released_resource_limit,
+        "replacement_resource_limit": replan.replacement_resource_limit,
+        "restart_preserved": (
+            restored_plan == plan
+            and restored.hierarchical_plan_replans[-1] == replan
+            and restored_preserved.status == "verified"
+        ),
+    }
+
 def run_unarchi_ablation_benchmark() -> dict[str, Any]:
     scenarios = [
         _failure_sensitization(),
@@ -4747,6 +4890,7 @@ def run_unarchi_ablation_benchmark() -> dict[str, Any]:
         _renewed_degradation_recovery_cycle(),
         _repeated_episode_isolation(),
         _multi_hypothesis_arbitration(),
+        _hierarchical_long_horizon_planning(),
     ]
     passed = sum(bool(item["passed"]) for item in scenarios)
     return {
