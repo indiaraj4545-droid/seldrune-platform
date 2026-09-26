@@ -279,9 +279,15 @@ STAGES = (
         "Weight recent verified performance above stale lifetime reputation.",
         "model_bus",
         10,
-        "pending",
+        "completed",
         ("model_orchestrator_core", "model_router_unified"),
         ("reasoning", "analytics"),
+        evidence_refs=(
+            "pr:335",
+            "git:main:cdf4e13cc15b07c7a56bf764e1f563877f1cafbd",
+            "railway:5b8e50d9-9aae-4c39-afe5-7c7014c59b2f",
+            "code:backend/app/services/model_router_recency.py",
+        ),
     ),
     StageDefinition(
         "model_verifier_fallback",
