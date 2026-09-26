@@ -145,9 +145,15 @@ STAGES = (
         "Treat money, compute, latency, risk, and uncertainty as planning variables.",
         "unarchi",
         3,
-        "pending",
+        "completed",
         ("unarchi_v34",),
         ("planning", "cost-control"),
+        evidence_refs=(
+            "pr:323",
+            "git:main:a6d0023aed5565b2a7b4d65c48950950d4f7ab4e",
+            "railway:dd8ec4b9-853d-4ce0-8f13-22cfe37f9d3f",
+            "benchmark:resource_aware_cognition",
+        ),
     ),
     StageDefinition(
         "unarchi_v36",
