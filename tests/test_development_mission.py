@@ -168,10 +168,10 @@ def test_development_mission_calculates_evidence_weighted_progress() -> None:
     }
 
     assert mission["version"] == "cognitive-execution-v2"
-    assert mission["overall_percentage"] == 69.4
-    assert mission["remaining_percentage"] == 30.6
+    assert mission["overall_percentage"] == 71.0
+    assert mission["remaining_percentage"] == 29.0
     assert workstreams["unarchi"]["percentage"] == 97.0
-    assert workstreams["model_bus"]["percentage"] == 75.0
+    assert workstreams["model_bus"]["percentage"] == 85.0
     assert workstreams["console"]["percentage"] == 90.0
     assert workstreams["live_media"]["percentage"] == 25.0
     assert workstreams["live_media"]["paused"] is True
@@ -185,11 +185,15 @@ def test_development_mission_calculates_evidence_weighted_progress() -> None:
     assert stages["unarchi_v38"]["status"] == "completed"
     assert stages["unarchi_v38"]["completion_source"] == "roadmap_evidence"
     assert "pr:332" in stages["unarchi_v38"]["evidence_refs"]
-    assert stages["unarchi_v39"]["dependencies_complete"] is False
+    assert stages["model_router_recency"]["status"] == "completed"
+    assert stages["model_router_recency"]["completion_source"] == "roadmap_evidence"
+    assert "pr:335" in stages["model_router_recency"]["evidence_refs"]
+    assert stages["unarchi_v39"]["dependencies_complete"] is True
     assert set(mission["parallel_ready_stage_ids"]) == {
-        "model_router_recency",
+        "unarchi_v39",
         "model_verifier_fallback",
         "local_model_pool",
+        "console_observability",
         "pdf_local_labels",
         "provider_connectors",
     }
@@ -213,12 +217,13 @@ def test_mission_sync_persists_one_master_and_queues_ready_wave(
     assert first.status_code == 200
     payload = first.json()
     assert payload["created"] is True
-    assert payload["overall_percentage"] == 69.4
-    assert payload["auto_queued_count"] == 5
+    assert payload["overall_percentage"] == 71.0
+    assert payload["auto_queued_count"] == 6
     assert set(payload["auto_queued_stage_ids"]) == {
-        "model_router_recency",
+        "unarchi_v39",
         "model_verifier_fallback",
         "local_model_pool",
+        "console_observability",
         "pdf_local_labels",
         "provider_connectors",
     }
@@ -250,20 +255,20 @@ def test_mission_sync_persists_one_master_and_queues_ready_wave(
         for item in rows
         if item["input_data"].get("cognitive_mission_stage_id")
     ]
-    assert len(stages) == 5
+    assert len(stages) == 6
     assert not any(
         item["input_data"].get("workstream") == "live_media"
         for item in stages
     )
 
-    model_router_recency = next(
+    unarchi_v39 = next(
         item
         for item in stages
-        if item["input_data"]["cognitive_mission_stage_id"] == "model_router_recency"
+        if item["input_data"]["cognitive_mission_stage_id"] == "unarchi_v39"
     )
-    contract = model_router_recency["input_data"]["compiled_execution_contract"]
+    contract = unarchi_v39["input_data"]["compiled_execution_contract"]
     assert contract["version"] == "stage-compiler-v1"
-    assert contract["stage_id"] == "model_router_recency"
+    assert contract["stage_id"] == "unarchi_v39"
     assert contract["profile"] == "repository-engineering"
     assert contract["executable_now"] is False
     assert contract["evidence_contract"] == {
@@ -347,9 +352,10 @@ def test_mission_queue_ready_is_idempotent(client: TestClient) -> None:
     assert queued.status_code == 200
     assert queued.json()["queued_count"] == 0
     assert set(queued.json()["ready_stage_ids"]) == {
-        "model_router_recency",
+        "unarchi_v39",
         "model_verifier_fallback",
         "local_model_pool",
+        "console_observability",
         "pdf_local_labels",
         "provider_connectors",
     }
@@ -433,17 +439,17 @@ def test_one_go_blocks_compiled_work_before_model_without_tools(
     assert executed.status_code == 200
     report = executed.json()
     assert report["controller_version"] == "one-go-v1"
-    assert report["starting_percentage"] == 69.4
-    assert report["ending_percentage"] == 69.4
+    assert report["starting_percentage"] == 71.0
+    assert report["ending_percentage"] == 71.0
     assert report["waves_executed"] == 1
     assert report["tasks_executed"] == 0
     assert report["tasks_verified"] == 0
     assert report["tasks_unverified"] == 0
-    assert report["tasks_blocked"] == 5
+    assert report["tasks_blocked"] == 6
     assert report["tasks_failed"] == 0
     assert report["recovery_rounds"] == 3
-    assert report["recovery_attempts"] == 4
-    assert report["recovery_configuration_gates"] == 4
+    assert report["recovery_attempts"] == 5
+    assert report["recovery_configuration_gates"] == 5
     assert report["recovery_owner_gates"] == 0
     assert report["recovery_external_resource_gates"] == 0
     assert report["halted_reason"] == "no_new_verified_dependency_progress"
@@ -457,25 +463,25 @@ def test_one_go_blocks_compiled_work_before_model_without_tools(
         by_stage["pdf_local_labels"]["reason"]
         == "owner-gated_requires_explicit_execution"
     )
-    assert by_stage["model_router_recency"]["disposition"] == "blocked"
-    assert by_stage["model_router_recency"]["reason"].startswith(
+    assert by_stage["unarchi_v39"]["disposition"] == "blocked"
+    assert by_stage["unarchi_v39"]["reason"].startswith(
         "compiled_tools_unavailable:"
     )
     assert (
-        by_stage["model_router_recency"]["contract_execution"]["executed_steps"]
+        by_stage["unarchi_v39"]["contract_execution"]["executed_steps"]
         == 0
     )
-    assert by_stage["model_router_recency"]["compiled_contract_version"] == "stage-compiler-v1"
-    assert by_stage["model_router_recency"]["compiled_profile"] == "repository-engineering"
-    assert by_stage["model_router_recency"]["compiled_executable_now"] is False
-    assert by_stage["model_router_recency"]["compiled_blocking_reasons"]
+    assert by_stage["unarchi_v39"]["compiled_contract_version"] == "stage-compiler-v1"
+    assert by_stage["unarchi_v39"]["compiled_profile"] == "repository-engineering"
+    assert by_stage["unarchi_v39"]["compiled_executable_now"] is False
+    assert by_stage["unarchi_v39"]["compiled_blocking_reasons"]
 
     mission = client.get(
         f"{base}/development-mission",
         headers=headers,
     )
     assert mission.status_code == 200
-    assert mission.json()["overall_percentage"] == 69.4
+    assert mission.json()["overall_percentage"] == 71.0
     assert mission.json()["one_go_execution"]["tasks_verified"] == 0
 
     invocations = client.get(
@@ -502,13 +508,13 @@ def test_one_go_verified_tool_receipt_respects_next_dependency_gate(
 
     tasks = client.get(f"{base}/tasks", headers=headers)
     assert tasks.status_code == 200
-    model_router_recency = next(
+    unarchi_v39 = next(
         item
         for item in tasks.json()
-        if item["input_data"].get("cognitive_mission_stage_id") == "model_router_recency"
+        if item["input_data"].get("cognitive_mission_stage_id") == "unarchi_v39"
     )
     assigned = client.post(
-        f"{base}/tasks/{model_router_recency['id']}/assign",
+        f"{base}/tasks/{unarchi_v39['id']}/assign",
         headers=headers,
         json={"agent_id": agent["id"]},
     )
@@ -529,7 +535,7 @@ def test_one_go_verified_tool_receipt_respects_next_dependency_gate(
     assert tool.status_code == 201
 
     with session_factory() as session:
-        task = session.get(Task, UUID(model_router_recency["id"]))
+        task = session.get(Task, UUID(unarchi_v39["id"]))
         assert task is not None
         task.input_data = {
             **(task.input_data or {}),
@@ -545,7 +551,7 @@ def test_one_go_verified_tool_receipt_respects_next_dependency_gate(
         headers=headers,
         json={
             "tool_id": tool.json()["id"],
-            "task_id": model_router_recency["id"],
+            "task_id": unarchi_v39["id"],
             "input_data": {"message": "verified mission evidence"},
         },
     )
@@ -554,13 +560,13 @@ def test_one_go_verified_tool_receipt_respects_next_dependency_gate(
     assert run["status"] == "succeeded"
 
     running = client.post(
-        f"{base}/tasks/{model_router_recency['id']}/transition",
+        f"{base}/tasks/{unarchi_v39['id']}/transition",
         headers=headers,
         json={"status": "running"},
     )
     assert running.status_code == 200
     succeeded = client.post(
-        f"{base}/tasks/{model_router_recency['id']}/transition",
+        f"{base}/tasks/{unarchi_v39['id']}/transition",
         headers=headers,
         json={
             "status": "succeeded",
@@ -585,8 +591,8 @@ def test_one_go_verified_tool_receipt_respects_next_dependency_gate(
     report = executed.json()
     assert report["tasks_verified"] == 1
     assert report["tasks_unverified"] == 0
-    assert report["ending_percentage"] == 71.0
-    assert report["stage_results"][0]["stage_id"] == "model_router_recency"
+    assert report["ending_percentage"] == 71.3
+    assert report["stage_results"][0]["stage_id"] == "unarchi_v39"
     assert report["stage_results"][0]["disposition"] == "verified"
     assert report["stage_results"][0]["reason"] == "verified_tool_receipt"
 
@@ -596,7 +602,7 @@ def test_one_go_verified_tool_receipt_respects_next_dependency_gate(
     )
     assert mission.status_code == 200
     payload = mission.json()
-    assert payload["overall_percentage"] == 71.0
+    assert payload["overall_percentage"] == 71.3
     stages = {
         item["id"]: item
         for item in payload["stages"]
@@ -608,10 +614,12 @@ def test_one_go_verified_tool_receipt_respects_next_dependency_gate(
     assert stages["unarchi_v38"]["status"] == "completed"
     assert stages["unarchi_v38"]["completion_source"] == "roadmap_evidence"
     assert stages["model_router_recency"]["status"] == "completed"
-    assert stages["model_router_recency"]["completion_source"] == "runtime_verified"
-    assert stages["unarchi_v39"]["ready"] is True
-    assert stages["unarchi_v39"]["dependencies_complete"] is True
-    assert "unarchi_v39" in payload["parallel_ready_stage_ids"]
+    assert stages["model_router_recency"]["completion_source"] == "roadmap_evidence"
+    assert stages["unarchi_v39"]["status"] == "completed"
+    assert stages["unarchi_v39"]["completion_source"] == "runtime_verified"
+    assert stages["unarchi_v40"]["ready"] is True
+    assert stages["unarchi_v40"]["dependencies_complete"] is True
+    assert "unarchi_v40" in payload["parallel_ready_stage_ids"]
 
 
 def test_one_go_respects_autonomous_execution_governance(
