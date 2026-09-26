@@ -29,6 +29,9 @@ def test_gpt_operator_remains_truth_gated_and_multimodal():
     assert 'id="seldrune-gpt-dropzone"' in html
     assert 'id="seldrune-gpt-attachments"' in html
     assert 'id="seldrune-gpt-mode"' in html
+    assert 'id="seldrune-gpt-capabilities"' in html
+    assert 'id="seldrune-gpt-open-tools"' in html
+    assert "Run with Seldrune" in html
 
 
 def test_portal_controller_defines_owner_workspaces_and_fixed_home():
@@ -44,6 +47,8 @@ def test_portal_controller_defines_owner_workspaces_and_fixed_home():
     ):
         assert f'["{workspace}",' in js
     assert "OWNER PORTAL" in js
+    assert "portal-quick-orders" not in js
+    assert "Open GPT" in js
     assert 'move("#seldrune-gpt", "operator")' in js
     assert 'move("#cognitive-mission", "operations")' in js
     assert 'move("#sti-runtime", "operations")' in js
