@@ -81,7 +81,7 @@ def test_v038_ingestion_is_idempotent_and_survives_restart() -> None:
         "temperature configured limit telemetry"
     )
 
-    assert restored.snapshot()["version"] == "unarchi-v0.38"
+    assert restored.snapshot()["version"] == "unarchi-v0.39"
     assert len(restored.observation_history) == history_size
     assert hits
     assert hits[0].record_id == first.id
