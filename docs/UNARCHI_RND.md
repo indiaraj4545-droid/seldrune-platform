@@ -1841,13 +1841,51 @@ This is bounded functional planning research. It does not establish subjective
 identity, sentience, phenomenal consciousness, qualia, or unrestricted
 real-world autonomy.
 
-## Next checkpoint: v0.35 resource-aware cognition
+## v0.35 resource-aware cognition checkpoint
 
-The next research step should make money, compute, latency, risk, and
-uncertainty first-class planning variables so plans can explicitly trade
-resource consumption against expected information and task value.
+UNARCHI v0.35 makes money, compute, latency, risk, and uncertainty explicit
+bounded planning variables instead of leaving resource pressure implicit.
 
-The measurable target is bounded resource allocation: when two feasible plan
-branches offer similar expected value, the lower-cost branch should be preferred
-unless measured information gain or reliability justifies the additional
-resource use.
+Each resource-aware decision receives:
+
+- an explicit money budget;
+- a compute budget;
+- a latency ceiling;
+- maximum risk and uncertainty;
+- candidate expected value;
+- measured information gain;
+- measured reliability; and
+- optional evidence references for the measurements.
+
+The selector is fail-closed against hard budget violations. A candidate that
+exceeds money, compute, latency, risk, or uncertainty limits is excluded before
+ranking, even when its expected value is high.
+
+Among feasible candidates, v0.35 computes a bounded resource burden and
+value-adjusted score. When multiple options have similar expected value, the
+lower-resource option is preferred unless measured information gain or
+reliability exceeds the configured premium-justification threshold and the
+higher-resource option also has the stronger bounded score.
+
+The deterministic v0.35 benchmark therefore requires:
+
+similar-value low-cost and high-cost branches -> low-cost branch selected ->
+over-budget high-value branch rejected -> separate comparison where the
+higher-cost branch has materially stronger measured information gain and
+reliability -> premium branch selected -> export/restore preserves both
+decisions exactly.
+
+v0.35 accepts v0.34, v0.33, v0.32, v0.31 and v0.30 exports for
+backward-compatible state restoration while new snapshots identify themselves
+as `unarchi-v0.35`.
+
+This remains bounded functional planning research. Resource-aware selection
+does not establish subjective identity, sentience, phenomenal consciousness,
+qualia, or unrestricted real-world autonomy.
+
+## Next checkpoint: v0.36 scalable persistent memory
+
+The next research step should add long-term retrieval, consolidation,
+provenance, and bounded forgetting so evidence can survive beyond the in-memory
+working set without allowing stale or weakly sourced records to dominate later
+decisions.
