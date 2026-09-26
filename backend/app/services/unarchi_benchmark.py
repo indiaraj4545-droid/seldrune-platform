@@ -14,7 +14,7 @@ from backend.app.services.unarchi_orchestration import (
 )
 
 
-BENCHMARK_VERSION = "unarchi-ablation-v0.39"
+BENCHMARK_VERSION = "unarchi-ablation-v0.40"
 
 
 def _failure_sensitization() -> dict[str, Any]:
@@ -5397,6 +5397,130 @@ def _model_and_skill_orchestration() -> dict[str, Any]:
         "validation_score": validation.score,
     }
 
+
+def _full_cognitive_validation() -> dict[str, Any]:
+    critical = (
+        _renewed_degradation_recovery_cycle(),
+        _repeated_episode_isolation(),
+        _multi_hypothesis_arbitration(),
+        _hierarchical_long_horizon_planning(),
+        _resource_aware_cognition(),
+        _persistent_memory_retrieval_consolidation(),
+        _verified_tool_feedback_loop(),
+        _multimodal_observation_normalization(),
+        _model_and_skill_orchestration(),
+    )
+    critical_by_name = {item["name"]: item for item in critical}
+
+    engine = UnarchiEngine()
+    baseline = engine.export_state()
+
+    tool_claim_rejected = False
+    try:
+        engine.ingest_verified_tool_outcome(
+            tool_slug="unverified-tool",
+            receipt_id="invalid-v040",
+            tool_run_id="00000000-0000-0000-0000-000000000040",
+            goal="reject unverified tool claims",
+            output_summary="unsupported",
+            verification_reason="model_claim_only",
+            source_refs=(
+                "receipt:invalid-v040",
+                "tool-run:00000000-0000-0000-0000-000000000040",
+            ),
+        )
+    except ValueError:
+        tool_claim_rejected = engine.export_state() == baseline
+
+    multimodal_claim_rejected = False
+    try:
+        normalize_multimodal_observation(
+            modality="image",
+            media_type="image/png",
+            source_name="adversarial.png",
+            source_bytes=b"unverified-v040",
+            summary="Unverified visual claim.",
+            confidence=0.99,
+            verification_reason="model_claim_only",
+            source_refs=("claim:v040:image",),
+            transformation_lineage=("caption:v1",),
+        )
+    except ValueError:
+        multimodal_claim_rejected = engine.export_state() == baseline
+
+    orchestration_claim_rejected = False
+    try:
+        select_cognitive_route(
+            candidates=(
+                CognitiveRouteCandidate(
+                    kind="model",
+                    identifier="unproven-route",
+                    capabilities=("text", "reasoning"),
+                    estimated_cost_usd=0.0,
+                    confidence=1.0,
+                    recent_verified_success_rate=1.0,
+                    recent_verified_samples=20,
+                    evidence_refs=(),
+                ),
+            ),
+            required_capabilities=("text", "reasoning"),
+            max_cost_usd=0.05,
+        )
+    except ValueError:
+        orchestration_claim_rejected = True
+
+    engine.cycle(
+        observation="A bounded validation episode begins.",
+        goal="confirm restart continuity",
+        expected_success=0.70,
+        risk=0.10,
+        generate_internal_goal=False,
+    )
+    restored = UnarchiEngine.from_export(engine.export_state())
+    restart_preserved = restored.snapshot() == engine.snapshot()
+
+    required_names = {
+        "renewed_degradation_recovery_cycle",
+        "repeated_episode_isolation",
+        "multi_hypothesis_arbitration",
+        "hierarchical_long_horizon_planning",
+        "resource_aware_cognition",
+        "persistent_memory_retrieval_consolidation",
+        "verified_tool_feedback_loop",
+        "multimodal_observation_normalization",
+        "model_and_skill_orchestration",
+    }
+    critical_passed = (
+        set(critical_by_name) == required_names
+        and all(bool(item["passed"]) for item in critical)
+    )
+
+    return {
+        "name": "full_cognitive_validation",
+        "expected_direction": (
+            "critical long-horizon, recovery, memory, verified-feedback, "
+            "multimodal, and orchestration checkpoints pass together while "
+            "fresh unverified claims fail closed"
+        ),
+        "passed": (
+            critical_passed
+            and tool_claim_rejected
+            and multimodal_claim_rejected
+            and orchestration_claim_rejected
+            and restart_preserved
+            and restored.snapshot()["version"] == "unarchi-v0.40"
+        ),
+        "critical_scenario_count": len(critical),
+        "critical_passed": critical_passed,
+        "critical_names": tuple(item["name"] for item in critical),
+        "tool_claim_rejected": tool_claim_rejected,
+        "multimodal_claim_rejected": multimodal_claim_rejected,
+        "orchestration_claim_rejected": orchestration_claim_rejected,
+        "restart_preserved": restart_preserved,
+        "claims_v1_general_intelligence": False,
+        "claims_phenomenal_consciousness": False,
+    }
+
 def run_unarchi_ablation_benchmark() -> dict[str, Any]:
     scenarios = [
         _failure_sensitization(),
@@ -5439,6 +5563,7 @@ def run_unarchi_ablation_benchmark() -> dict[str, Any]:
         _verified_tool_feedback_loop(),
         _multimodal_observation_normalization(),
         _model_and_skill_orchestration(),
+        _full_cognitive_validation(),
     ]
     passed = sum(bool(item["passed"]) for item in scenarios)
     return {
