@@ -1,7 +1,7 @@
 (() => {
   const WORKSPACES = [
     ["home", "Home", "⌂"],
-    ["operator", "GPT", "✦"],
+    ["operator", "Seldrune GPT", "✦"],
     ["operations", "Work", "⌘"],
     ["media", "Media", "◉"],
     ["intelligence", "Insights", "⬡"],
@@ -11,7 +11,7 @@
 
   const DESCRIPTIONS = {
     home: "Your simple launch point for Seldrune.",
-    operator: "Chat, upload files, edit PDFs, and issue owner orders.",
+    operator: "Chat, upload files, edit PDFs, and run tasks through Seldrune.",
     operations: "See active work, approvals, and execution progress.",
     media: "Open Seldrune Face and LiveShift controls.",
     intelligence: "Review evidence, incidents, agents, and audit signals.",
@@ -43,7 +43,7 @@
         <button type="button" id="portal-back-button" class="owner-back-button ghost"
                 aria-label="Go to previous Seldrune page" hidden>← Back</button>
         <button type="button" class="owner-command-button"
-                data-open-portal="operator">New order</button>
+                data-open-portal="operator">Open GPT</button>
         <div class="cosmic-runtime-pill" id="portal-runtime-pill">
           <strong id="portal-runtime-state">● CHECKING</strong>
           <small id="cosmic-runtime-model">Seldrune runtime</small>
@@ -110,13 +110,6 @@
         <b>→</b>
       </button>
 
-      <button class="portal-quick-card portal-quick-orders" type="button"
-              data-open-portal="operator" data-focus-target="#command" data-depth=".8">
-        <span class="portal-quick-icon">⌘</span>
-        <span><strong>Orders</strong><small>Run executive work</small></span>
-        <b>→</b>
-      </button>
-
       <article class="portal-gateway-card" data-depth="1.35">
         <div class="portal-gateway-copy">
           <span>SELDRUNE OWNER PORTAL</span>
@@ -161,8 +154,8 @@
 
       <article class="portal-status-card" data-depth=".55">
         <span>System</span>
-        <strong id="portal-tools-value">Governed</strong>
-        <small>Provider actions stay receipt-backed and credential-aware.</small>
+        <strong id="portal-tools-value">Cognitive</strong>
+        <small>Configured tools run with receipts; sensitive actions ask once for confirmation.</small>
         <button type="button" class="ghost" data-open-portal="operations">View work</button>
       </article>`;
     panels.get("home")?.querySelector(".owner-portal-heading")?.after(home);
@@ -258,7 +251,7 @@
     footer.className = "cosmic-footer owner-portal-footer";
     footer.innerHTML =
       "<span>SELDRUNE · OWNER PORTAL</span>" +
-      "<span>Execution truth · governed actions · evidence first</span>";
+      "<span>Cognitive execution · active tools · evidence first</span>";
     root.after(footer);
 
     let currentWorkspace = "home";
@@ -397,7 +390,7 @@
         detail.textContent = "Approvals or reviews are waiting for you.";
       } else if (running > 0) {
         value.textContent = `${running} running`;
-        detail.textContent = "Seldrune is actively executing governed work.";
+        detail.textContent = "Seldrune is actively executing an owner request.";
       } else {
         value.textContent = "Clear";
         detail.textContent = "No measured owner intervention is currently required.";
