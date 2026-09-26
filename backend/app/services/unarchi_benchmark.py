@@ -6,7 +6,7 @@ from typing import Any
 from backend.app.services.unarchi_engine import UnarchiEngine
 
 
-BENCHMARK_VERSION = "unarchi-ablation-v0.36"
+BENCHMARK_VERSION = "unarchi-ablation-v0.37"
 
 
 def _failure_sensitization() -> dict[str, Any]:
@@ -5067,6 +5067,86 @@ def _persistent_memory_retrieval_consolidation() -> dict[str, Any]:
         ),
     }
 
+
+def _verified_tool_feedback_loop() -> dict[str, Any]:
+    engine = UnarchiEngine()
+    before_experience_count = engine.state.experience_count
+    refs = (
+        "receipt:gateway-receipt-v037",
+        "tool-run:00000000-0000-0000-0000-000000000037",
+    )
+    first = engine.ingest_verified_tool_outcome(
+        tool_slug="internal-json-validate",
+        receipt_id="gateway-receipt-v037",
+        tool_run_id="00000000-0000-0000-0000-000000000037",
+        goal="validate a bounded generated configuration",
+        output_summary='{"valid":true,"type":"object"}',
+        verification_reason="verified_tool_receipt",
+        source_refs=refs,
+        predicted_success=0.65,
+    )
+    after_first = engine.state.experience_count
+    replay = engine.ingest_verified_tool_outcome(
+        tool_slug="internal-json-validate",
+        receipt_id="gateway-receipt-v037",
+        tool_run_id="00000000-0000-0000-0000-000000000037",
+        goal="validate a bounded generated configuration",
+        output_summary='{"valid":true,"type":"object"}',
+        verification_reason="verified_tool_receipt",
+        source_refs=refs,
+        predicted_success=0.65,
+    )
+
+    rejected_without_state_change = False
+    state_before_rejection = engine.export_state()
+    try:
+        engine.ingest_verified_tool_outcome(
+            tool_slug="internal-json-validate",
+            receipt_id="unsupported-v037",
+            tool_run_id="00000000-0000-0000-0000-000000000038",
+            goal="reject unsupported model-only tool claims",
+            output_summary='{"valid":true}',
+            verification_reason="model_claim_only",
+            source_refs=(
+                "receipt:unsupported-v037",
+                "tool-run:00000000-0000-0000-0000-000000000038",
+            ),
+        )
+    except ValueError:
+        rejected_without_state_change = engine.export_state() == state_before_rejection
+
+    restored = UnarchiEngine.from_export(engine.export_state())
+    durable = next(
+        item
+        for item in restored.persistent_memory
+        if item.id == first.persistent_memory_id
+    )
+
+    return {
+        "name": "verified_tool_feedback_loop",
+        "expected_direction": (
+            "only repository-verified tool receipts update cognitive state; "
+            "receipt replay is idempotent; provenance survives restart"
+        ),
+        "passed": (
+            after_first == before_experience_count + 1
+            and replay == first
+            and engine.state.experience_count == after_first
+            and len(engine.verified_tool_outcomes) == 1
+            and rejected_without_state_change
+            and restored.verified_tool_outcomes == engine.verified_tool_outcomes
+            and durable.kind == "verified_tool_outcome"
+            and set(refs).issubset(set(durable.source_refs))
+        ),
+        "experience_delta": after_first - before_experience_count,
+        "replay_idempotent": replay == first,
+        "rejected_without_state_change": rejected_without_state_change,
+        "restart_preserved": (
+            restored.verified_tool_outcomes == engine.verified_tool_outcomes
+        ),
+        "durable_source_refs": durable.source_refs,
+    }
+
 def run_unarchi_ablation_benchmark() -> dict[str, Any]:
     scenarios = [
         _failure_sensitization(),
@@ -5106,6 +5186,7 @@ def run_unarchi_ablation_benchmark() -> dict[str, Any]:
         _hierarchical_long_horizon_planning(),
         _resource_aware_cognition(),
         _persistent_memory_retrieval_consolidation(),
+        _verified_tool_feedback_loop(),
     ]
     passed = sum(bool(item["passed"]) for item in scenarios)
     return {
