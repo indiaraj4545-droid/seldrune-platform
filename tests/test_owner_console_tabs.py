@@ -142,7 +142,7 @@ def test_agent_workspace_executes_assigned_work_and_records_retries():
     styles = (WEB / "console-agents.css").read_text()
 
     assert "/console-assets/console-agents.js" in html
-    assert 'id="agent-task-console"' in script
+    assert 'root.id = "agent-task-console";' in script
     assert 'api("/agents")' in script
     assert 'api("/tasks")' in script
     assert '"/execute"' in script
