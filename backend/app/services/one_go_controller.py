@@ -506,32 +506,6 @@ def execute_one_go_controller(
             compiled_contract = (
                 (task.input_data or {}).get("compiled_execution_contract")
             )
-            # Avoid spending a model call when the compiled tool chain is blocked.
-            if (
-                not isinstance(tool_request, dict)
-                and isinstance(compiled_contract, dict)
-                and int(compiled_contract.get("tool_step_count") or 0) > 0
-                and not bool(compiled_contract.get("executable_now"))
-            ):
-                blocking_reasons = compiled_contract.get("blocking_reasons")
-                blocking_detail = (
-                    ",".join(str(item) for item in blocking_reasons)
-                    if isinstance(blocking_reasons, list)
-                    else ""
-                )
-                block_reason = "compiled_contract_not_executable"
-                if blocking_detail:
-                    block_reason += f":{blocking_detail}"
-                report["tasks_blocked"] += 1
-                report["stage_results"].append(
-                    _stage_result(
-                        task,
-                        disposition="blocked",
-                        reason=block_reason,
-                    )
-                )
-                continue
-
             if (
                 not isinstance(tool_request, dict)
                 and isinstance(compiled_contract, dict)
