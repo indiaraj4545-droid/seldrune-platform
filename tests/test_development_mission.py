@@ -434,7 +434,7 @@ def test_one_go_blocks_compiled_work_before_model_without_tools(
     report = executed.json()
     assert report["controller_version"] == "one-go-v1"
     assert report["starting_percentage"] == 69.2
-    assert report["ending_percentage"] == 69.4
+    assert report["ending_percentage"] == 69.2
     assert report["waves_executed"] == 1
     assert report["tasks_executed"] == 0
     assert report["tasks_verified"] == 0
