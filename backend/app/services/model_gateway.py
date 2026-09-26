@@ -11,8 +11,11 @@ from backend.app.core.config import Settings
 from backend.app.core.modeling import (
     ModelGatewayError,
     ModelProvider,
+    ModelProviderCapabilities,
     ModelRequest,
     ModelResult,
+    ModelRouteCandidate,
+    ModelRouteDecision,
     ModelUsage,
 )
 from backend.app.services.ai_cost_governor import estimate_model_cost
@@ -41,18 +44,81 @@ def _is_prompt_cache_error(exc: Exception) -> bool:
     )
 
 
+_PROVIDER_CAPABILITIES: dict[ModelProvider, ModelProviderCapabilities] = {
+    ModelProvider.MOCK: ModelProviderCapabilities(text=True),
+    ModelProvider.OPENAI: ModelProviderCapabilities(
+        text=True,
+        structured_output=True,
+        images=True,
+        files=True,
+        reasoning=True,
+    ),
+    ModelProvider.OPENAI_COMPATIBLE: ModelProviderCapabilities(
+        text=True,
+        structured_output=True,
+    ),
+}
+
+
+def model_provider_capabilities(
+    provider: ModelProvider,
+) -> ModelProviderCapabilities:
+    try:
+        return _PROVIDER_CAPABILITIES[provider]
+    except KeyError as exc:
+        raise ModelGatewayError(f"Unsupported model provider: {provider}") from exc
+
+
 class ModelGateway:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
+    def route(
+        self,
+        candidates: tuple[ModelRouteCandidate, ...],
+        *,
+        required_capabilities: tuple[str, ...] = ("text",),
+        allowed_providers: tuple[ModelProvider, ...] | None = None,
+    ) -> ModelRouteDecision:
+        if not candidates:
+            raise ModelGatewayError("No model route candidates were provided")
+        allowed = set(allowed_providers) if allowed_providers is not None else None
+        required = tuple(dict.fromkeys(required_capabilities or ("text",)))
+        ranked = sorted(
+            enumerate(candidates),
+            key=lambda item: (item[1].priority, item[0]),
+        )
+        for _index, candidate in ranked:
+            if allowed is not None and candidate.provider not in allowed:
+                continue
+            capabilities = model_provider_capabilities(candidate.provider)
+            try:
+                supported = capabilities.supports(required)
+            except ValueError as exc:
+                raise ModelGatewayError(str(exc)) from exc
+            if supported:
+                return ModelRouteDecision(
+                    provider=candidate.provider,
+                    model=candidate.model,
+                    capabilities=capabilities,
+                    required_capabilities=required,
+                )
+        requirements = ", ".join(required)
+        raise ModelGatewayError(
+            f"No allowed model route satisfies required capabilities: {requirements}"
+        )
+
     def generate(self, request: ModelRequest) -> tuple[ModelResult, int]:
         started = perf_counter()
-        if request.provider is ModelProvider.MOCK:
-            result = self._generate_mock(request)
-        elif request.provider is ModelProvider.OPENAI:
-            result = self._generate_openai(request)
-        else:
+        adapters = {
+            ModelProvider.MOCK: self._generate_mock,
+            ModelProvider.OPENAI: self._generate_openai,
+            ModelProvider.OPENAI_COMPATIBLE: self._generate_openai_compatible,
+        }
+        adapter = adapters.get(request.provider)
+        if adapter is None:
             raise ModelGatewayError(f"Unsupported model provider: {request.provider}")
+        result = adapter(request)
         latency_ms = max(0, round((perf_counter() - started) * 1000))
         return result, latency_ms
 
@@ -108,6 +174,91 @@ class ModelGateway:
                 f"estimated maximum USD {worst_case:.4f} exceeds "
                 f"USD {budget:.4f} request budget"
             )
+
+    def _generate_openai_compatible(self, request: ModelRequest) -> ModelResult:
+        if not request.model or request.model.startswith("mock-"):
+            raise ModelGatewayError("An OpenAI-compatible model must be configured")
+        base_url = (self.settings.model_compatible_base_url or "").strip()
+        if not base_url:
+            raise ModelGatewayError(
+                "SELDRUNE_MODEL_COMPATIBLE_BASE_URL must be configured"
+            )
+        unsupported: list[str] = []
+        if request.input_images:
+            unsupported.append("images")
+        if request.input_files:
+            unsupported.append("files")
+        if request.reasoning_effort:
+            unsupported.append("reasoning")
+        if unsupported:
+            raise ModelGatewayError(
+                "OpenAI-compatible provider does not support requested capabilities: "
+                + ", ".join(unsupported)
+            )
+
+        rough_tokens = self._rough_input_token_estimate(request, 0)
+        self._guard_request_cost(request, input_tokens=rough_tokens)
+        client = OpenAI(
+            api_key=self.settings.model_compatible_api_key or "not-required",
+            base_url=base_url,
+            timeout=self.settings.model_timeout_seconds,
+        )
+        messages: list[dict[str, str]] = []
+        if request.instructions:
+            messages.append({"role": "system", "content": request.instructions})
+        messages.append({"role": "user", "content": request.input_text})
+        args: dict[str, Any] = {
+            "model": request.model,
+            "messages": messages,
+        }
+        if request.max_output_tokens is not None:
+            args["max_tokens"] = request.max_output_tokens
+        if request.response_schema is not None:
+            args["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "seldrune_response",
+                    "strict": True,
+                    "schema": request.response_schema,
+                },
+            }
+        try:
+            response = client.chat.completions.create(**args)
+        except Exception as exc:
+            detail = " ".join(str(exc).split())
+            if len(detail) > 500:
+                detail = detail[:497] + "..."
+            suffix = f": {detail}" if detail else ""
+            raise ModelGatewayError(
+                f"OpenAI-compatible request failed ({type(exc).__name__}){suffix}"
+            ) from exc
+
+        usage = getattr(response, "usage", None)
+        input_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+        output_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+        total_tokens = int(
+            getattr(usage, "total_tokens", input_tokens + output_tokens) or 0
+        )
+        choices = getattr(response, "choices", None) or []
+        message = getattr(choices[0], "message", None) if choices else None
+        output_text = getattr(message, "content", "") or ""
+        estimated_cost = estimate_model_cost(
+            request.model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
+        return ModelResult(
+            provider=ModelProvider.OPENAI_COMPATIBLE,
+            model=request.model,
+            output_text=output_text,
+            response_id=getattr(response, "id", None),
+            usage=ModelUsage(
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=total_tokens,
+                estimated_cost_usd=estimated_cost,
+            ),
+        )
 
     def _generate_openai(self, request: ModelRequest) -> ModelResult:
         if not request.model or request.model.startswith("mock-"):
