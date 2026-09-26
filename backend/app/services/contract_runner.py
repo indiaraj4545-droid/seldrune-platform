@@ -24,6 +24,7 @@ from backend.app.services.orchestrator import (
 )
 from backend.app.services.stage_compiler import compile_stage_execution_contract
 from backend.app.services.task_engine import transition_task
+from backend.app.services.tool_bootstrap import configured_external_tool_status
 
 
 RUNNER_VERSION = "contract-runner-v1"
@@ -199,6 +200,46 @@ def _refresh_stale_contract_tools(
     session.commit()
     session.refresh(task)
     return refreshed, True
+
+
+def _unconfigured_external_tool_steps(
+    session: Session,
+    *,
+    organization_id: UUID,
+    contract: dict[str, Any],
+) -> list[str]:
+    status = configured_external_tool_status(
+        session,
+        organization_id=organization_id,
+    )
+    readiness: dict[tuple[str, str], bool] = {}
+    for provider_status in status.get("providers") or []:
+        if not isinstance(provider_status, dict):
+            continue
+        provider = str(provider_status.get("provider") or "").lower()
+        for action in provider_status.get("actions") or []:
+            if not isinstance(action, dict):
+                continue
+            readiness[(provider, str(action.get("action_name") or ""))] = bool(
+                action.get("ready")
+            )
+
+    required_external_providers = {"github", "gmail", "render"}
+    missing: list[str] = []
+    for step in contract.get("steps") or []:
+        if (
+            not isinstance(step, dict)
+            or step.get("kind") != "tool"
+            or bool(step.get("optional"))
+        ):
+            continue
+        provider = str(step.get("provider") or "").lower()
+        if provider not in required_external_providers:
+            continue
+        action_name = str(step.get("action_name") or "")
+        if not readiness.get((provider, action_name), False):
+            missing.append(str(step.get("id") or f"{provider}:{action_name}"))
+    return missing
 
 
 def _child_step_id(task: Task) -> str | None:
@@ -1204,6 +1245,21 @@ def advance_compiled_contract(
             task=task,
             contract=contract,
             reason=f"compiled_inputs_unresolved:{details}",
+        )
+
+    unconfigured_steps = _unconfigured_external_tool_steps(
+        session,
+        organization_id=task.organization_id,
+        contract=contract,
+    )
+    if unconfigured_steps:
+        return _blocked_report(
+            task=task,
+            contract=contract,
+            reason=(
+                "compiled_tools_unavailable:credentials:"
+                + ",".join(unconfigured_steps)
+            ),
         )
 
     agent, match_score = _assign_parent_agent(
