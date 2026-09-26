@@ -470,8 +470,11 @@ def seldrune_gpt(
     current_user: CurrentUserDep,
     session: SessionDep,
 ) -> SeldruneGPTResponse:
-    if settings.model_provider != "openai":
-        raise HTTPException(status_code=503, detail="OpenAI model provider is not enabled")
+    if settings.model_provider not in {"openai", "openai_compatible"}:
+        raise HTTPException(
+            status_code=503,
+            detail="A live model provider is not enabled",
+        )
     input_images, input_files, attachment_names = _model_attachments(
         payload.attachments
     )
@@ -561,7 +564,7 @@ def seldrune_gpt(
     except AISpendBudgetExceeded as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
     request = ModelRequest(
-        provider=ModelProvider.OPENAI,
+        provider=ModelProvider(settings.model_provider),
         model=route.model,
         input_text=input_text,
         instructions=(
@@ -878,7 +881,7 @@ def edit_seldrune_gpt_pdf(
     except AISpendBudgetExceeded as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
     request = ModelRequest(
-        provider=ModelProvider.OPENAI,
+        provider=ModelProvider(settings.model_provider),
         model=pdf_route.model,
         input_text=(
             "Edit the attached PDF according to this owner instruction:\n"
@@ -1093,7 +1096,7 @@ def edit_seldrune_gpt_pdf(
             settings.ai_pdf_max_total_usd - total_ai_cost,
         )
         retry_request = ModelRequest(
-            provider=ModelProvider.OPENAI,
+            provider=ModelProvider(settings.model_provider),
             model=retry_route.model,
             input_text=(
                 "Create a complete replacement edit plan against the ORIGINAL PDF using "
