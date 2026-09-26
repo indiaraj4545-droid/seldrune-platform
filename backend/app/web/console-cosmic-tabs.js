@@ -1,22 +1,22 @@
 (() => {
   const WORKSPACES = [
-    ["home", "Home", "⌂"],
-    ["operator", "Seldrune GPT", "✦"],
-    ["operations", "Work", "⌘"],
-    ["media", "Media", "◉"],
-    ["intelligence", "Insights", "⬡"],
-    ["tools", "Tools", "⌁"],
-    ["settings", "Settings", "⚙"],
+    ["home", "NEXUS", "⌂"],
+    ["operator", "AI CORE", "✦"],
+    ["operations", "MISSIONS", "⌘"],
+    ["media", "WORLDS", "◉"],
+    ["intelligence", "INTEL", "⬡"],
+    ["tools", "CREATIONS", "⌁"],
+    ["settings", "SYSTEM", "⚙"],
   ];
 
   const DESCRIPTIONS = {
-    home: "Your simple launch point for Seldrune.",
-    operator: "Chat, upload files, edit PDFs, and run tasks through Seldrune.",
-    operations: "See active work, approvals, and execution progress.",
-    media: "Open Seldrune Face and LiveShift controls.",
-    intelligence: "Review evidence, incidents, agents, and audit signals.",
-    tools: "Connect providers, manage credentials, and run tools.",
-    settings: "Portal appearance, limits, treasury, and owner controls.",
+    home: "Seldrune command nexus for cognitive work, agent missions, media, and evidence.",
+    operator: "Chat with Seldrune, execute cognitive plans, and work with files.",
+    operations: "Track Seldrune self-development, agent work, and verified execution.",
+    media: "Create and inspect Seldrune Face and LiveShift workspaces.",
+    intelligence: "Inspect active agents, task runs, incidents, evidence, and audit signals.",
+    tools: "Configure connected providers, agent capabilities, and execution tools.",
+    settings: "Portal experience, cost limits, treasury, and owner controls.",
   };
 
   function initOwnerPortal() {
@@ -34,16 +34,16 @@
         <div class="cosmic-brand-mark" aria-hidden="true"><span>⌁</span></div>
         <div>
           <strong>SELDRUNE</strong>
-          <small>OWNER PORTAL</small>
+          <small>AETHELION INTELLIGENCE FOUNDRY</small>
         </div>
       </div>
       <nav class="cosmic-tabs owner-portal-tabs" role="tablist"
-           aria-label="Seldrune owner workspaces"></nav>
+           aria-label="Seldrune STI workspaces"></nav>
       <div class="owner-portal-actions">
         <button type="button" id="portal-back-button" class="owner-back-button ghost"
                 aria-label="Go to previous Seldrune page" hidden>← Back</button>
         <button type="button" class="owner-command-button"
-                data-open-portal="operator">Open GPT</button>
+                data-open-portal="operator">Open AI Core</button>
         <div class="cosmic-runtime-pill" id="portal-runtime-pill">
           <strong id="portal-runtime-state">● CHECKING</strong>
           <small id="cosmic-runtime-model">Seldrune runtime</small>
@@ -78,7 +78,7 @@
       panel.innerHTML = `
         <div class="cosmic-page-heading owner-portal-heading">
           <div>
-            <p>SELDRUNE OWNER WORKSPACE</p>
+            <p>SELDRUNE STI COMMAND NEXUS</p>
             <h1>${label}</h1>
           </div>
           <small>${DESCRIPTIONS[id]}</small>
@@ -106,18 +106,18 @@
       <button class="portal-quick-card portal-quick-gpt" type="button"
               data-open-portal="operator" data-depth="1.05">
         <span class="portal-quick-icon">✦</span>
-        <span><strong>GPT</strong><small>Chat with Seldrune</small></span>
+        <span><strong>AI CORE</strong><small>Think, plan, execute</small></span>
         <b>→</b>
       </button>
 
       <article class="portal-gateway-card" data-depth="1.35">
         <div class="portal-gateway-copy">
-          <span>SELDRUNE OWNER PORTAL</span>
-          <h2>Enter Seldrune</h2>
-          <p>One intelligent gateway to chat, work, tools, files, media, and evidence.</p>
+          <span>SELDRUNE STI · AETHELION COMMAND NEXUS</span>
+          <h2>Enter the Cognitive Engine</h2>
+          <p>Plan work, coordinate Seldrune agents, use connected capabilities, and inspect verified results.</p>
         </div>
         <button class="portal-gateway" type="button" data-open-portal="operator"
-                aria-label="Enter Seldrune GPT">
+                aria-label="Open Seldrune AI Core">
           <span class="portal-aura"></span>
           <span class="portal-ring portal-ring-outer"></span>
           <span class="portal-ring portal-ring-mid"></span>
@@ -153,10 +153,10 @@
       </button>
 
       <article class="portal-status-card" data-depth=".55">
-        <span>System</span>
-        <strong id="portal-tools-value">Cognitive</strong>
-        <small>Configured tools run with receipts; sensitive actions ask once for confirmation.</small>
-        <button type="button" class="ghost" data-open-portal="operations">View work</button>
+        <span>Cognitive Engine</span>
+        <strong id="portal-tools-value">Agent fabric</strong>
+        <small>Seldrune coordinates configured agents; model and spend limits remain active.</small>
+        <button type="button" class="ghost" data-open-portal="operations">View missions</button>
       </article>`;
     panels.get("home")?.querySelector(".owner-portal-heading")?.after(home);
 
@@ -250,7 +250,7 @@
     const footer = document.createElement("footer");
     footer.className = "cosmic-footer owner-portal-footer";
     footer.innerHTML =
-      "<span>SELDRUNE · OWNER PORTAL</span>" +
+      "<span>SELDRUNE STI · COMMAND NEXUS</span>" +
       "<span>Cognitive execution · active tools · evidence first</span>";
     root.after(footer);
 
@@ -272,6 +272,7 @@
       if (!panels.has(id)) id = "home";
       const changed = currentWorkspace !== id;
       currentWorkspace = id;
+      document.dispatchEvent(new CustomEvent("seldrune:workspace-change", {detail: {workspace: id}}));
 
       document.querySelectorAll(".owner-portal-tab").forEach(button => {
         const active = button.dataset.portalTab === id;
