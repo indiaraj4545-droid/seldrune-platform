@@ -6,8 +6,9 @@ import re
 from typing import Any
 
 
-UNARCHI_VERSION = "unarchi-v0.35"
+UNARCHI_VERSION = "unarchi-v0.36"
 _LEGACY_UNARCHI_VERSIONS = {
+    "unarchi-v0.35",
     "unarchi-v0.34",
     "unarchi-v0.33",
     "unarchi-v0.32",
@@ -103,6 +104,41 @@ class Experience:
     reward: float
     predicted_success: float
     prediction_error: float
+
+
+@dataclass
+class PersistentMemoryRecord:
+    id: int
+    content: str
+    kind: str
+    source_refs: tuple[str, ...]
+    confidence: float
+    importance: float
+    created_experience_count: int
+    last_access_experience_count: int
+    access_count: int = 0
+    status: str = "active"
+    consolidated_from_ids: tuple[int, ...] = ()
+    protected: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class PersistentMemoryHit:
+    record_id: int
+    content: str
+    kind: str
+    score: float
+    similarity: float
+    confidence: float
+    importance: float
+    freshness: float
+    source_refs: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 @dataclass
@@ -1098,7 +1134,7 @@ class UnarchiEngine:
     """
     CPU-only experimental cognitive kernel.
 
-    v0.34 includes causal internal dynamics, bounded endogenous goals, a
+    v0.36 includes causal internal dynamics, bounded endogenous goals, a
     calibrated predictive self-model, prospective memory, evidence-grounded
     metacognition, explicit value arbitration, competing causal hypotheses,
     controlled self-intervention trials, a bounded recurrent global workspace,
@@ -1126,11 +1162,17 @@ class UnarchiEngine:
     checkpoints, resource caps, rollback/replan triggers, verified checkpoint
     evidence, and branch-local replanning that preserves unaffected verified work,
     plus resource-aware plan selection that treats money, compute, latency, risk,
-    uncertainty, information gain, and reliability as explicit bounded variables.
+    uncertainty, information gain, and reliability as explicit bounded variables,
+    plus provenance-preserving persistent memory with deterministic retrieval,
+    consolidation, freshness-aware ranking, and bounded forgetting.
     """
 
     state: UnarchiState = field(default_factory=UnarchiState)
     memory: list[Experience] = field(default_factory=list)
+    persistent_memory: list[PersistentMemoryRecord] = field(default_factory=list)
+    next_persistent_memory_id: int = 1
+    max_persistent_memory: int = 1024
+    max_active_persistent_memories: int = 256
     observation_history: list[str] = field(default_factory=list)
     internal_goals: list[InternalGoal] = field(default_factory=list)
     next_internal_goal_id: int = 1
@@ -1279,6 +1321,266 @@ class UnarchiEngine:
     self_calibration_score: float = 0.5
     max_memory: int = 256
     max_active_internal_goals: int = 3
+
+    def _persistent_memory_freshness(
+        self,
+        record: PersistentMemoryRecord,
+    ) -> float:
+        age = max(
+            0,
+            self.state.experience_count - record.created_experience_count,
+        )
+        return _clamp(1.0 / (1.0 + (age / 50.0)))
+
+    def _persistent_memory_retention_score(
+        self,
+        record: PersistentMemoryRecord,
+    ) -> float:
+        access_signal = _clamp(record.access_count / 10.0)
+        provenance_signal = _clamp(len(record.source_refs) / 2.0)
+        return _clamp(
+            (record.importance * 0.35)
+            + (record.confidence * 0.30)
+            + (self._persistent_memory_freshness(record) * 0.20)
+            + (access_signal * 0.10)
+            + (provenance_signal * 0.05)
+        )
+
+    def prune_persistent_memory(
+        self,
+        *,
+        max_active: int | None = None,
+    ) -> tuple[int, ...]:
+        """
+        Apply bounded forgetting without allowing protected evidence to vanish.
+
+        Low-retention active records are marked forgotten first. If the total
+        archive still exceeds its hard storage cap, oldest forgotten records are
+        physically discarded while active, protected, and consolidated records
+        remain available for provenance inspection.
+        """
+        target = (
+            self.max_active_persistent_memories
+            if max_active is None
+            else int(max_active)
+        )
+        target = max(1, min(target, self.max_persistent_memory))
+
+        active = [
+            item
+            for item in self.persistent_memory
+            if item.status == "active"
+        ]
+        removable = [item for item in active if not item.protected]
+        removable.sort(
+            key=lambda item: (
+                round(self._persistent_memory_retention_score(item), 12),
+                item.created_experience_count,
+                item.id,
+            )
+        )
+        excess = max(0, len(active) - target)
+        forgotten_ids: list[int] = []
+        for item in removable[:excess]:
+            item.status = "forgotten"
+            forgotten_ids.append(item.id)
+
+        if len(self.persistent_memory) > self.max_persistent_memory:
+            forgotten = sorted(
+                [
+                    item
+                    for item in self.persistent_memory
+                    if item.status == "forgotten"
+                ],
+                key=lambda item: (
+                    item.created_experience_count,
+                    item.id,
+                ),
+            )
+            remove_count = len(self.persistent_memory) - self.max_persistent_memory
+            remove_ids = {item.id for item in forgotten[:remove_count]}
+            if remove_ids:
+                self.persistent_memory = [
+                    item
+                    for item in self.persistent_memory
+                    if item.id not in remove_ids
+                ]
+                forgotten_ids.extend(sorted(remove_ids))
+
+        return tuple(dict.fromkeys(forgotten_ids))
+
+    def remember_persistent_memory(
+        self,
+        *,
+        content: str,
+        source_refs: tuple[str, ...],
+        kind: str = "evidence",
+        confidence: float = 0.5,
+        importance: float = 0.5,
+        protected: bool = False,
+    ) -> PersistentMemoryRecord:
+        clean_content = content.strip()
+        clean_kind = kind.strip() or "evidence"
+        refs = tuple(
+            dict.fromkeys(
+                str(ref).strip()[:300]
+                for ref in source_refs
+                if str(ref).strip()
+            )
+        )
+        if not clean_content:
+            raise ValueError("persistent memory content is required")
+        if not refs:
+            raise ValueError("persistent memory requires provenance source_refs")
+
+        record = PersistentMemoryRecord(
+            id=self.next_persistent_memory_id,
+            content=clean_content[:4000],
+            kind=clean_kind[:80],
+            source_refs=refs,
+            confidence=_clamp(float(confidence)),
+            importance=_clamp(float(importance)),
+            created_experience_count=self.state.experience_count,
+            last_access_experience_count=self.state.experience_count,
+            protected=bool(protected),
+        )
+        self.next_persistent_memory_id += 1
+        self.persistent_memory.append(record)
+        self.prune_persistent_memory()
+        return record
+
+    def retrieve_persistent_memory(
+        self,
+        query: str,
+        *,
+        limit: int = 5,
+        min_score: float = 0.20,
+    ) -> tuple[PersistentMemoryHit, ...]:
+        clean_query = query.strip()
+        if not clean_query:
+            raise ValueError("persistent memory query is required")
+        limit = max(1, min(int(limit), 20))
+        min_score = _clamp(float(min_score))
+
+        ranked: list[tuple[float, float, PersistentMemoryRecord, float]] = []
+        for record in self.persistent_memory:
+            if record.status != "active":
+                continue
+            similarity = _similarity(clean_query, record.content)
+            if similarity <= 0.0:
+                continue
+            freshness = self._persistent_memory_freshness(record)
+            provenance_signal = _clamp(len(record.source_refs) / 2.0)
+            score = _clamp(
+                (similarity * 0.50)
+                + (record.confidence * 0.20)
+                + (record.importance * 0.15)
+                + (freshness * 0.10)
+                + (provenance_signal * 0.05)
+            )
+            if score < min_score:
+                continue
+            ranked.append((score, similarity, record, freshness))
+
+        ranked.sort(
+            key=lambda row: (
+                -round(row[0], 12),
+                -round(row[1], 12),
+                -round(row[2].confidence, 12),
+                -round(row[2].importance, 12),
+                row[2].id,
+            )
+        )
+
+        hits: list[PersistentMemoryHit] = []
+        for score, similarity, record, freshness in ranked[:limit]:
+            record.access_count += 1
+            record.last_access_experience_count = self.state.experience_count
+            hits.append(
+                PersistentMemoryHit(
+                    record_id=record.id,
+                    content=record.content,
+                    kind=record.kind,
+                    score=round(score, 6),
+                    similarity=round(similarity, 6),
+                    confidence=round(record.confidence, 6),
+                    importance=round(record.importance, 6),
+                    freshness=round(freshness, 6),
+                    source_refs=record.source_refs,
+                )
+            )
+        return tuple(hits)
+
+    def consolidate_persistent_memories(
+        self,
+        memory_ids: tuple[int, ...],
+        *,
+        summary: str,
+        source_refs: tuple[str, ...] = (),
+        confidence: float | None = None,
+        importance: float | None = None,
+        protected: bool = False,
+    ) -> PersistentMemoryRecord:
+        ids = tuple(dict.fromkeys(int(item) for item in memory_ids))
+        if len(ids) < 2:
+            raise ValueError("consolidation requires at least two memory ids")
+        selected = [
+            item
+            for item in self.persistent_memory
+            if item.id in ids and item.status == "active"
+        ]
+        if len(selected) != len(ids):
+            raise ValueError("consolidation requires active known memories")
+
+        clean_summary = summary.strip()
+        if not clean_summary:
+            raise ValueError("consolidation summary is required")
+        combined_refs = tuple(
+            dict.fromkeys(
+                [
+                    *(
+                        ref
+                        for item in selected
+                        for ref in item.source_refs
+                    ),
+                    *(
+                        str(ref).strip()[:300]
+                        for ref in source_refs
+                        if str(ref).strip()
+                    ),
+                ]
+            )
+        )
+        combined_confidence = (
+            sum(item.confidence for item in selected) / len(selected)
+            if confidence is None
+            else _clamp(float(confidence))
+        )
+        combined_importance = (
+            max(item.importance for item in selected)
+            if importance is None
+            else _clamp(float(importance))
+        )
+
+        for item in selected:
+            item.status = "consolidated"
+
+        record = PersistentMemoryRecord(
+            id=self.next_persistent_memory_id,
+            content=clean_summary[:4000],
+            kind="consolidated",
+            source_refs=combined_refs,
+            confidence=round(combined_confidence, 6),
+            importance=round(combined_importance, 6),
+            created_experience_count=self.state.experience_count,
+            last_access_experience_count=self.state.experience_count,
+            consolidated_from_ids=ids,
+            protected=bool(protected or any(item.protected for item in selected)),
+        )
+        self.next_persistent_memory_id += 1
+        self.persistent_memory.append(record)
+        self.prune_persistent_memory()
+        return record
 
     def _novelty(self, observation: str) -> float:
         if not self.observation_history:
@@ -10614,6 +10916,12 @@ class UnarchiEngine:
             "version": UNARCHI_VERSION,
             "state": self.state.to_dict(),
             "memory": [asdict(item) for item in self.memory],
+            "persistent_memory": [
+                item.to_dict() for item in self.persistent_memory
+            ],
+            "next_persistent_memory_id": self.next_persistent_memory_id,
+            "max_persistent_memory": self.max_persistent_memory,
+            "max_active_persistent_memories": self.max_active_persistent_memories,
             "observation_history": list(self.observation_history),
             "internal_goals": [item.to_dict() for item in self.internal_goals],
             "next_internal_goal_id": self.next_internal_goal_id,
@@ -10863,6 +11171,7 @@ class UnarchiEngine:
 
         state_payload = payload.get("state")
         memory_payload = payload.get("memory")
+        persistent_memory_payload = payload.get("persistent_memory", [])
         history_payload = payload.get("observation_history")
         goals_payload = payload.get("internal_goals", [])
         predictions_payload = payload.get("predictions", [])
@@ -10992,6 +11301,8 @@ class UnarchiEngine:
             raise ValueError("invalid UNARCHI state")
         if not isinstance(memory_payload, list):
             raise ValueError("invalid UNARCHI memory")
+        if not isinstance(persistent_memory_payload, list):
+            raise ValueError("invalid UNARCHI persistent memory")
         if not isinstance(history_payload, list):
             raise ValueError("invalid UNARCHI observation history")
         if not isinstance(goals_payload, list):
@@ -11116,6 +11427,21 @@ class UnarchiEngine:
             if not isinstance(item, dict):
                 raise ValueError("invalid UNARCHI experience")
             memory.append(Experience(**item))
+
+        persistent_memory: list[PersistentMemoryRecord] = []
+        for item in persistent_memory_payload:
+            if not isinstance(item, dict):
+                raise ValueError("invalid UNARCHI persistent memory record")
+            restored_item = dict(item)
+            restored_item["source_refs"] = tuple(
+                restored_item.get("source_refs", ())
+            )
+            restored_item["consolidated_from_ids"] = tuple(
+                restored_item.get("consolidated_from_ids", ())
+            )
+            persistent_memory.append(
+                PersistentMemoryRecord(**restored_item)
+            )
 
         internal_goals: list[InternalGoal] = []
         for item in goals_payload:
@@ -11831,6 +12157,17 @@ class UnarchiEngine:
             )
 
         max_memory = max(16, min(int(payload.get("max_memory") or 256), 4096))
+        max_persistent_memory = max(
+            32,
+            min(int(payload.get("max_persistent_memory") or 1024), 16384),
+        )
+        max_active_persistent_memories = max(
+            8,
+            min(
+                int(payload.get("max_active_persistent_memories") or 256),
+                max_persistent_memory,
+            ),
+        )
         max_active = max(
             1,
             min(int(payload.get("max_active_internal_goals") or 3), 10),
@@ -11838,6 +12175,13 @@ class UnarchiEngine:
         return cls(
             state=UnarchiState(**state_payload),
             memory=memory[-max_memory:],
+            persistent_memory=persistent_memory[-max_persistent_memory:],
+            next_persistent_memory_id=max(
+                int(payload.get("next_persistent_memory_id") or 1),
+                max((item.id for item in persistent_memory), default=0) + 1,
+            ),
+            max_persistent_memory=max_persistent_memory,
+            max_active_persistent_memories=max_active_persistent_memories,
             observation_history=[str(item) for item in history_payload][-max_memory:],
             internal_goals=internal_goals[-max_memory:],
             next_internal_goal_id=max(
@@ -12344,6 +12688,28 @@ class UnarchiEngine:
             "version": UNARCHI_VERSION,
             "state": self.state.to_dict(),
             "memory_size": len(self.memory),
+            "persistent_memory_total_count": len(self.persistent_memory),
+            "persistent_memory_active_count": len(
+                [
+                    item
+                    for item in self.persistent_memory
+                    if item.status == "active"
+                ]
+            ),
+            "persistent_memory_consolidated_count": len(
+                [
+                    item
+                    for item in self.persistent_memory
+                    if item.status == "consolidated"
+                ]
+            ),
+            "persistent_memory_forgotten_count": len(
+                [
+                    item
+                    for item in self.persistent_memory
+                    if item.status == "forgotten"
+                ]
+            ),
             "observation_history_size": len(self.observation_history),
             "active_internal_goals": len(self.active_internal_goals()),
             "total_internal_goals": len(self.internal_goals),
