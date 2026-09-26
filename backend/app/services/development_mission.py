@@ -177,9 +177,15 @@ STAGES = (
         "Feed verified tool outcomes back into the cognitive state.",
         "unarchi",
         2,
-        "pending",
+        "completed",
         ("unarchi_v36", "tool_gateway_core"),
         ("tools", "reasoning"),
+        evidence_refs=(
+            "pr:328",
+            "git:main:7186fdb5b01d3ff6ee7fafe3b72fda456b81c0df",
+            "railway:ae37a464-17ca-4e56-9288-6c13e5d43f64",
+            "benchmark:verified_tool_feedback_loop",
+        ),
     ),
     StageDefinition(
         "unarchi_v38",
