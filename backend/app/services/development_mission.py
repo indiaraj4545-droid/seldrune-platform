@@ -256,9 +256,15 @@ STAGES = (
         "Add direct and compatible provider adapters behind one capability contract.",
         "model_bus",
         20,
-        "pending",
+        "completed",
         ("model_gateway_core",),
         ("models", "engineering"),
+        evidence_refs=(
+            "pr:330",
+            "git:main:a4b6b4be4d328c5011effc56962b313e7337f118",
+            "railway:d4982ae2-b7c4-4fe4-949c-146a594d9d1b",
+            "docs:MODEL_ROUTER.md",
+        ),
     ),
     StageDefinition(
         "model_router_recency",
