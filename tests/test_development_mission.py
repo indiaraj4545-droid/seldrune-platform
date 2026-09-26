@@ -203,6 +203,7 @@ def test_development_mission_calculates_evidence_weighted_progress() -> None:
         "console_observability",
         "pdf_local_labels",
         "provider_connectors",
+        "factory_build_test",
     }
     assert "live_face_runtime" in mission["paused_stage_ids"]
     assert mission["execution_policy"]["single_go_intent"] is True
@@ -225,13 +226,14 @@ def test_mission_sync_persists_one_master_and_queues_ready_wave(
     payload = first.json()
     assert payload["created"] is True
     assert payload["overall_percentage"] == 73.4
-    assert payload["auto_queued_count"] == 5
+    assert payload["auto_queued_count"] == 6
     assert set(payload["auto_queued_stage_ids"]) == {
         "local_model_pool",
         "cost_aware_model_router",
         "console_observability",
         "pdf_local_labels",
         "provider_connectors",
+        "factory_build_test",
     }
 
     second = client.post(
@@ -261,7 +263,7 @@ def test_mission_sync_persists_one_master_and_queues_ready_wave(
         for item in rows
         if item["input_data"].get("cognitive_mission_stage_id")
     ]
-    assert len(stages) == 5
+    assert len(stages) == 6
     assert not any(
         item["input_data"].get("workstream") == "live_media"
         for item in stages
@@ -301,6 +303,7 @@ def test_mission_queue_ready_is_idempotent(client: TestClient) -> None:
         "console_observability",
         "pdf_local_labels",
         "provider_connectors",
+        "factory_build_test",
     }
 
 
@@ -363,7 +366,18 @@ def create_mission_agent(
 
 def test_one_go_blocks_compiled_work_before_model_without_tools(
     client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    for name in (
+        "SELDRUNE_GITHUB_TOOL_CREDENTIAL",
+        "SELDRUNE_GITHUB_APP_PRIVATE_KEY",
+        "SELDRUNE_GITHUB_APP_ID",
+        "SELDRUNE_GITHUB_APP_INSTALLATION_ID",
+        "SELDRUNE_GITHUB_TOOL_TOKEN",
+        "GITHUB_TOKEN",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
     token, organization_id = register_owner(client)
     headers = {"Authorization": f"Bearer {token}"}
     base = f"/api/v1/organizations/{organization_id}"
@@ -388,13 +402,32 @@ def test_one_go_blocks_compiled_work_before_model_without_tools(
     assert report["tasks_executed"] == 0
     assert report["tasks_verified"] == 0
     assert report["tasks_unverified"] == 0
-    assert report["tasks_blocked"] == 5
+    assert report["tasks_blocked"] == 6
     assert report["tasks_failed"] == 0
     assert report["recovery_rounds"] == 3
-    assert report["recovery_attempts"] == 4
-    assert report["recovery_configuration_gates"] == 4
+    assert report["recovery_attempts"] == 5
+    assert report["recovery_configuration_gates"] == 5
     assert report["recovery_owner_gates"] == 0
     assert report["recovery_external_resource_gates"] == 0
+    assert {
+        item["stage_id"] for item in report["stage_results"]
+    } == {
+        "local_model_pool",
+        "cost_aware_model_router",
+        "console_observability",
+        "pdf_local_labels",
+        "provider_connectors",
+        "factory_build_test",
+    }
+    assert all(
+        item["disposition"] == "blocked"
+        for item in report["stage_results"]
+    )
+    assert all(
+        item["contract_execution"]["executed_steps"] == 0
+        for item in report["stage_results"]
+        if item["stage_id"] != "pdf_local_labels"
+    )
     assert report["halted_reason"] == "no_new_verified_dependency_progress"
 
     by_stage = {
@@ -438,13 +471,13 @@ def test_one_go_verified_tool_receipt_respects_next_dependency_gate(
 
     tasks = client.get(f"{base}/tasks", headers=headers)
     assert tasks.status_code == 200
-    unarchi_v40 = next(
+    factory_build_test = next(
         item
         for item in tasks.json()
-        if item["input_data"].get("cognitive_mission_stage_id") == "unarchi_v40"
+        if item["input_data"].get("cognitive_mission_stage_id") == "factory_build_test"
     )
     assigned = client.post(
-        f"{base}/tasks/{unarchi_v40['id']}/assign",
+        f"{base}/tasks/{factory_build_test['id']}/assign",
         headers=headers,
         json={"agent_id": agent["id"]},
     )
@@ -465,7 +498,7 @@ def test_one_go_verified_tool_receipt_respects_next_dependency_gate(
     assert tool.status_code == 201
 
     with session_factory() as session:
-        task = session.get(Task, UUID(unarchi_v40["id"]))
+        task = session.get(Task, UUID(factory_build_test["id"]))
         assert task is not None
         task.input_data = {
             **(task.input_data or {}),
@@ -481,7 +514,7 @@ def test_one_go_verified_tool_receipt_respects_next_dependency_gate(
         headers=headers,
         json={
             "tool_id": tool.json()["id"],
-            "task_id": unarchi_v40["id"],
+            "task_id": factory_build_test["id"],
             "input_data": {"message": "verified mission evidence"},
         },
     )
@@ -490,13 +523,13 @@ def test_one_go_verified_tool_receipt_respects_next_dependency_gate(
     assert run["status"] == "succeeded"
 
     running = client.post(
-        f"{base}/tasks/{unarchi_v40['id']}/transition",
+        f"{base}/tasks/{factory_build_test['id']}/transition",
         headers=headers,
         json={"status": "running"},
     )
     assert running.status_code == 200
     succeeded = client.post(
-        f"{base}/tasks/{unarchi_v40['id']}/transition",
+        f"{base}/tasks/{factory_build_test['id']}/transition",
         headers=headers,
         json={
             "status": "succeeded",
@@ -515,16 +548,20 @@ def test_one_go_verified_tool_receipt_respects_next_dependency_gate(
     executed = client.post(
         f"{base}/development-mission/execute",
         headers=headers,
-        json={"max_waves": 1, "max_tasks": 1},
+        json={"max_waves": 1, "max_tasks": 6},
     )
     assert executed.status_code == 200
     report = executed.json()
     assert report["tasks_verified"] == 1
     assert report["tasks_unverified"] == 0
-    assert report["ending_percentage"] == 73.4
-    assert report["stage_results"][0]["stage_id"] == "unarchi_v40"
-    assert report["stage_results"][0]["disposition"] == "verified"
-    assert report["stage_results"][0]["reason"] == "verified_tool_receipt"
+    assert report["ending_percentage"] == 75.4
+    factory_result = next(
+        item
+        for item in report["stage_results"]
+        if item["stage_id"] == "factory_build_test"
+    )
+    assert factory_result["disposition"] == "verified"
+    assert factory_result["reason"] == "verified_tool_receipt"
 
     mission = client.get(
         f"{base}/development-mission",
@@ -532,7 +569,7 @@ def test_one_go_verified_tool_receipt_respects_next_dependency_gate(
     )
     assert mission.status_code == 200
     payload = mission.json()
-    assert payload["overall_percentage"] == 73.4
+    assert payload["overall_percentage"] == 75.4
     stages = {
         item["id"]: item
         for item in payload["stages"]
@@ -547,10 +584,14 @@ def test_one_go_verified_tool_receipt_respects_next_dependency_gate(
     assert stages["model_router_recency"]["completion_source"] == "roadmap_evidence"
     assert stages["unarchi_v39"]["status"] == "completed"
     assert stages["unarchi_v39"]["completion_source"] == "roadmap_evidence"
-    assert stages["unarchi_v40"]["status"] == "completed"
-    assert stages["unarchi_v40"]["completion_source"] == "runtime_verified"
-    assert stages["unarchi_v40"]["ready"] is False
-    assert "unarchi_v40" not in payload["parallel_ready_stage_ids"]
+    assert stages["factory_build_test"]["status"] == "completed"
+    assert stages["factory_build_test"]["completion_source"] == "runtime_verified"
+    assert stages["factory_build_test"]["ready"] is False
+    assert "factory_build_test" not in payload["parallel_ready_stage_ids"]
+    assert stages["factory_deploy"]["status"] == "pending"
+    assert stages["factory_deploy"]["dependencies_complete"] is False
+    assert stages["factory_deploy"]["ready"] is False
+    assert "factory_deploy" not in payload["parallel_ready_stage_ids"]
 
 
 def test_one_go_respects_autonomous_execution_governance(

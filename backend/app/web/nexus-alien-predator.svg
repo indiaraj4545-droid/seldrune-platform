@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+<title id="title">Alien versus Predator cinematic holographic duel</title>
+<desc id="desc">An original biomechanical alien faces an armored extraterrestrial hunter inside a dark starship arena, with a glowing energy rift between them.</desc>
+<defs>
+  <radialGradient id="void" cx="50%" cy="42%" r="75%"><stop stop-color="#11294d"/><stop offset=".42" stop-color="#080f21"/><stop offset="1" stop-color="#01030a"/></radialGradient>
+  <linearGradient id="deck" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#182638" stop-opacity=".08"/><stop offset=".22" stop-color="#08121e" stop-opacity=".76"/><stop offset="1" stop-color="#010309"/></linearGradient>
+  <linearGradient id="xenoShell" x1=".08" y1=".05" x2=".92" y2="1"><stop stop-color="#b7fbff"/><stop offset=".16" stop-color="#396376"/><stop offset=".39" stop-color="#111c2c"/><stop offset=".7" stop-color="#060b15"/><stop offset="1" stop-color="#546e7f"/></linearGradient>
+  <linearGradient id="xenoRidge" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#a6f6ff"/><stop offset=".35" stop-color="#347c91"/><stop offset="1" stop-color="#101b2a"/></linearGradient>
+  <linearGradient id="hunterArmor" x1=".1" y1=".05" x2=".9" y2="1"><stop stop-color="#e2c27d"/><stop offset=".2" stop-color="#705438"/><stop offset=".5" stop-color="#252e39"/><stop offset=".76" stop-color="#121a28"/><stop offset="1" stop-color="#b76c3e"/></linearGradient>
+  <linearGradient id="hunterMetal" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#ffe5a0"/><stop offset=".4" stop-color="#7e664a"/><stop offset="1" stop-color="#293241"/></linearGradient>
+  <radialGradient id="rift" cx="50%" cy="48%" r="52%"><stop stop-color="#e1fbff" stop-opacity=".95"/><stop offset=".12" stop-color="#5cf3ff" stop-opacity=".82"/><stop offset=".32" stop-color="#6a5fff" stop-opacity=".46"/><stop offset=".68" stop-color="#b740ff" stop-opacity=".13"/><stop offset="1" stop-color="#02040d" stop-opacity="0"/></radialGradient>
+  <linearGradient id="riftBeam" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#35eaff" stop-opacity="0"/><stop offset=".5" stop-color="#d8ffff" stop-opacity=".92"/><stop offset="1" stop-color="#ff62d4" stop-opacity="0"/></linearGradient>
+  <filter id="softGlow" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="16" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  <filter id="edgeGlow" x="-70%" y="-70%" width="240%" height="240%"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  <filter id="shadow" x="-40%" y="-40%" width="180%" height="200%"><feGaussianBlur stdDeviation="17"/></filter>
+  <pattern id="floorGrid" width="70" height="45" patternUnits="userSpaceOnUse"><path d="M70 0H0V45" fill="none" stroke="#52c9ec" stroke-opacity=".16" stroke-width="1"/></pattern>
+</defs>
+<style>
+  @keyframes xenoLunge { 0%,100% { transform:translate(-5px,0) rotate(-.6deg) } 50% { transform:translate(10px,-7px) rotate(.8deg) } }
+  @keyframes hunterShift { 0%,100% { transform:translate(5px,0) rotate(.35deg) } 50% { transform:translate(-9px,-4px) rotate(-.45deg) } }
+  @keyframes riftPulse { 0%,100% { opacity:.7; transform:scale(.97) } 50% { opacity:1; transform:scale(1.04) } }
+  @keyframes scannerSweep { 0% { transform:translateY(-120px);opacity:0 } 15%,75% {opacity:.5} 100% {transform:translateY(620px);opacity:0} }
+  #xenomorph { transform-origin:455px 470px; animation:xenoLunge 5.8s ease-in-out infinite }
+  #hunter { transform-origin:1148px 468px; animation:hunterShift 6.4s ease-in-out infinite }
+  #riftField { transform-origin:800px 470px; animation:riftPulse 3.4s ease-in-out infinite }
+  #scan { animation:scannerSweep 9s linear infinite }
+  @media (prefers-reduced-motion: reduce) { #xenomorph,#hunter,#riftField,#scan { animation:none!important } }
+</style>
+<rect width="1600" height="900" fill="url(#void)"/>
+<g fill="#b8edff" opacity=".48">
+  <circle cx="108" cy="96" r="2"/><circle cx="224" cy="176" r="1.4"/><circle cx="364" cy="82" r="1.8"/><circle cx="557" cy="136" r="1.1"/><circle cx="690" cy="66" r="1.5"/><circle cx="928" cy="104" r="1.3"/><circle cx="1078" cy="68" r="1.8"/><circle cx="1262" cy="148" r="1.2"/><circle cx="1454" cy="84" r="1.7"/><circle cx="1515" cy="218" r="1.3"/><circle cx="68" cy="270" r="1.2"/><circle cx="1335" cy="275" r="1.6"/>
+</g>
+<g fill="none" stroke="#80dfff" stroke-opacity=".2">
+  <path d="M0 0h260l210 392H0z"/><path d="M1600 0h-260l-210 392h470z"/>
+  <path d="M0 0v660l470-268M1600 0v660l-470-268" stroke-width="3"/>
+  <path d="M125 0l260 392M1475 0l-260 392M0 212h344M1600 212h-344"/>
+  <path d="M62 90h120M1418 90h120M24 124h170M1406 124h170" stroke-width="2"/>
+</g>
+<path d="M0 540 490 420h620l490 120v360H0z" fill="url(#deck)"/>
+<path d="M0 547 500 430h600l500 117v353H0z" fill="url(#floorGrid)" opacity=".76"/>
+<path d="M0 548 500 430M1600 548 1100 430M0 740l620-265M1600 740 980 475M0 890l730-414M1600 890 870 476" fill="none" stroke="#4bdcf7" stroke-opacity=".25"/>
+<ellipse cx="800" cy="476" rx="365" ry="228" fill="url(#rift)" filter="url(#softGlow)" opacity=".74"/>
+<g id="riftField" fill="none" filter="url(#edgeGlow)">
+  <ellipse cx="800" cy="470" rx="234" ry="166" stroke="#65f1ff" stroke-opacity=".52" stroke-width="2"/>
+  <ellipse cx="800" cy="470" rx="183" ry="130" stroke="#b560ff" stroke-opacity=".47" stroke-width="2" stroke-dasharray="6 12"/>
+  <path d="M800 230v478M548 470h504" stroke="#b8fbff" stroke-opacity=".24" stroke-width="1"/>
+  <path d="M620 318c96-52 264-52 360 0M620 622c96 52 264 52 360 0" stroke="#52efff" stroke-opacity=".35" stroke-width="2"/>
+</g>
+<path d="M178 478h340M1082 478h340" fill="none" stroke="url(#riftBeam)" stroke-width="4" filter="url(#edgeGlow)"/>
+<ellipse cx="458" cy="737" rx="185" ry="29" fill="#000" opacity=".75" filter="url(#shadow)"/>
+<ellipse cx="1154" cy="738" rx="180" ry="31" fill="#000" opacity=".78" filter="url(#shadow)"/>
+<g id="xenomorph">
+  <path d="M478 510c-126 33-202 131-142 189 52 50 149 9 194-30 58-49 106-58 129-25 22 32-12 69-70 79" fill="none" stroke="#07101b" stroke-width="30" stroke-linecap="round"/>
+  <path d="M478 510c-126 33-202 131-142 189 52 50 149 9 194-30 58-49 106-58 129-25 22 32-12 69-70 79" fill="none" stroke="url(#xenoRidge)" stroke-width="15" stroke-linecap="round" filter="url(#edgeGlow)"/>
+  <path d="M420 363c-28-47-19-112 14-152 42-52 123-67 199-54 21 4 32 19 25 36-26 63-66 103-123 130-28 14-44 41-50 72z" fill="url(#xenoShell)" stroke="#91f2ff" stroke-opacity=".66" stroke-width="3"/>
+  <path d="M440 340c39-66 106-117 188-144M457 353c40-32 105-60 161-74M468 367c47-8 104-21 148-44" fill="none" stroke="#b5f8ff" stroke-opacity=".42" stroke-width="4"/>
+  <path d="M449 366c-33 28-43 63-31 105 8 29 31 41 66 38l83-23 47-71-29-49-65-25z" fill="url(#xenoShell)" stroke="#7be5f8" stroke-opacity=".58" stroke-width="3"/>
+  <path d="M438 392c-19 37-18 81 7 111M462 386l28 102M508 375l-4 116M552 369l-8 102" fill="none" stroke="#b5f8ff" stroke-opacity=".34" stroke-width="5"/>
+  <path d="M486 482c-40 23-61 78-61 139l-42 95 41 9 75-91 25-87 47 86-1 80 43 6 30-109-26-97-73-44z" fill="url(#xenoShell)" stroke="#80dff0" stroke-opacity=".68" stroke-width="3"/>
+  <path d="M429 516c-35 20-58 62-82 94l-57 23 7 34 76-15 83-70M567 515c50 4 86 32 113 71l-9 48-38-13-40-48-60-23" fill="url(#xenoShell)" stroke="#78ddeb" stroke-opacity=".6" stroke-width="5" stroke-linejoin="round"/>
+  <path d="M297 633l-18 23 28-4m358-77 28 19-29-2m-235 137 14 26 3-31m164-23 23 23-6-31" fill="none" stroke="#b8fbff" stroke-width="6" stroke-linecap="round"/>
+  <path d="M440 396c41 6 81 9 115 0" fill="none" stroke="#39f0ff" stroke-opacity=".65" stroke-width="4" filter="url(#edgeGlow)"/>
+  <path d="M446 415c18 10 36 10 54 0" fill="none" stroke="#f351a9" stroke-opacity=".68" stroke-width="3"/>
+  <circle cx="460" cy="402" r="4" fill="#aaffff" filter="url(#edgeGlow)"/>
+  <path d="M426 353c-11-31-4-63 19-91M452 349c-2-32 10-65 35-88" fill="none" stroke="#a2efff" stroke-opacity=".45" stroke-width="5"/>
+</g>
+<g id="hunter">
+  <path d="M1109 340c7-80 31-148 50-204 7-20 22-27 35-12 21 25 28 86 14 130-10 30-29 64-53 98" fill="none" stroke="#5d4a42" stroke-width="19" stroke-linecap="round"/>
+  <path d="M1130 338c22-72 42-128 55-202M1161 338c25-75 34-130 34-196M1187 344c33-62 47-111 51-161" fill="none" stroke="#c8915d" stroke-opacity=".72" stroke-width="7"/>
+  <path d="M1145 353c-22-45-18-89 14-125 27-30 76-39 115-17 30 17 41 47 31 81l-25 55-68 33z" fill="url(#hunterArmor)" stroke="#f0cc7d" stroke-opacity=".72" stroke-width="3"/>
+  <path d="M1170 323c20-18 47-26 82-18l25 31-27 32-58 7-40-20z" fill="#111b28" stroke="#d8c189" stroke-width="3"/>
+  <path d="M1183 338l31-24 41 8 17 28-27 31-44-3-26-20z" fill="url(#hunterMetal)" stroke="#ffe4a5" stroke-opacity=".74" stroke-width="3"/>
+  <path d="M1198 348l15 8-7 21-18 4-9-16zM1258 348l-15 8 7 21 18 4 9-16z" fill="#101822" stroke="#f2cd83" stroke-width="2"/>
+  <path d="M1223 373l-10 23 11 11 11-11-9-23" fill="#a55341" stroke="#f5bb7b" stroke-width="2"/>
+  <path d="M1155 356c-52-18-76-5-89 26l25 31 70-7M1279 356c57-18 76 2 90 35l-31 26-70-13" fill="url(#hunterArmor)" stroke="#d9ae72" stroke-width="4"/>
+  <path d="M1176 399l-45 10-28 54 35 58 75 25 86-34 24-51-41-54-58 9z" fill="url(#hunterArmor)" stroke="#edc87e" stroke-opacity=".72" stroke-width="4"/>
+  <path d="M1182 410l46 14 38-14 32 30-29 58-77 13-57-26 12-51z" fill="#18232e" stroke="#e4be77" stroke-width="3"/>
+  <path d="M1210 429l18 13 20-13 10 25-29 30-29-30z" fill="#41645e" stroke="#9df2cb" stroke-width="3" filter="url(#edgeGlow)"/>
+  <path d="M1188 500l-65 16-40 49-10 42 33 21 53-54 66-12M1273 501l61 11 44 45 8 45-34 24-51-52-66-13" fill="url(#hunterArmor)" stroke="#edc67c" stroke-width="4"/>
+  <path d="M1068 593l-26 14 14 17 43-12M1391 594l23 14-13 17-43-12" fill="none" stroke="#dcb674" stroke-width="9" stroke-linecap="round"/>
+  <path d="M1160 534l-30 89-9 89 40 8 49-98 21-49M1276 531l24 91 19 88-40 11-55-99-8-48" fill="url(#hunterArmor)" stroke="#d7b66f" stroke-width="4"/>
+  <path d="M1122 699l-16 25 64 6 11-18M1280 700l24 26 66-8-18-22" fill="#111925" stroke="#e2bd78" stroke-width="4"/>
+  <path d="M1093 424l-44-32M1321 433l48-36M1140 496l62 15M1307 499l-54 14" fill="none" stroke="#ffe1a1" stroke-opacity=".54" stroke-width="4"/>
+  <path d="M1069 391l-18-44M1086 388l-2-51M1102 390l16-43M1340 399l19-51M1356 404l41-33M1370 417l48-16" fill="none" stroke="#bf7752" stroke-width="8" stroke-linecap="round"/>
+  <path d="M1338 367l114-251" fill="none" stroke="#0b111c" stroke-width="14" stroke-linecap="round"/>
+  <path d="M1338 367l114-251" fill="none" stroke="#d8be86" stroke-width="4" stroke-linecap="round" filter="url(#edgeGlow)"/>
+  <path d="M1452 116l20 38-27-10-23 18z" fill="#a3f1e7" stroke="#f4e1ab" stroke-width="3"/>
+  <path d="M1084 378l-34 10M1362 394l35 9" fill="none" stroke="#5cf5ff" stroke-width="5" filter="url(#edgeGlow)"/>
+</g>
+<g fill="none" stroke="#9deeff" stroke-opacity=".34">
+  <circle cx="800" cy="470" r="286" stroke-dasharray="3 17"/><circle cx="800" cy="470" r="320" stroke-dasharray="1 29"/>
+  <path d="M800 126v96M800 718v72M457 470h63M1080 470h63"/>
+</g>
+<g id="scan" opacity=".4"><path d="M90 281h1420" stroke="#7cecff" stroke-width="2"/><path d="M90 282h1420" stroke="#fff" stroke-opacity=".6" stroke-width="1"/></g>
+<g font-family="ui-monospace,monospace" letter-spacing="5" fill="#c9f8ff">
+  <text x="100" y="112" font-size="19" opacity=".84">AETHELION · CONTACT ZONE 07</text>
+  <text x="100" y="148" font-size="12" opacity=".53">BIO-SIGNAL / UNKNOWN SPECIMEN</text>
+  <text x="1210" y="112" font-size="19" opacity=".84">HUNTER · TARGET LOCK</text>
+  <text x="1285" y="148" font-size="12" opacity=".53">ARMOR SIGNATURE / TRACKING</text>
+  <text x="800" y="820" text-anchor="middle" font-size="14" opacity=".55">SIMULATED HOLOSCAPE · NO LIVE ENTITIES</text>
+</g>
+<g fill="#79f4ff" filter="url(#edgeGlow)"><circle cx="726" cy="411" r="4"/><circle cx="871" cy="523" r="3"/><circle cx="780" cy="569" r="5"/><circle cx="850" cy="366" r="3"/><circle cx="648" cy="470" r="3"/></g>
+</svg>

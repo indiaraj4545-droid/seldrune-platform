@@ -1333,9 +1333,9 @@ def seldrune_gpt_capabilities(
         monthly_utilization=float(spend_status["monthly_utilization"]),
     )
     return SeldruneGPTCapabilitiesResponse(
-        mode="governed-owner-operator",
+        mode="cognitive-owner-operator",
         execution=(
-            "single-order plan, execute, verify; fresh confirmation for "
+            "single-request cognitive plan, execute, verify; one fresh confirmation for "
             "high-impact commitments"
         ),
         supported_controls=[
