@@ -163,7 +163,7 @@ def test_nexus_duel_and_observatory_use_measured_system_data():
     assert 'document.querySelector("#portal-panel-home")' in script
     assert 'api("/agents")' in script
     assert 'api("/tasks")' in script
-    assert 'document.getElementById("sti-verified")' in script
+    assert 'readMetric("sti-verified")' in script
     assert "nexus-alien-predator.svg" in script
     assert "failedTasks" in script
     assert "CONFIGURATION NEEDED" in script
