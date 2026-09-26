@@ -4,8 +4,8 @@ from backend.app.services.unarchi_benchmark import run_unarchi_ablation_benchmar
 def test_unarchi_ablation_benchmark_passes_all_scenarios() -> None:
     result = run_unarchi_ablation_benchmark()
 
-    assert result["scenario_count"] == 37
-    assert result["passed_scenarios"] == 37
+    assert result["scenario_count"] == 38
+    assert result["passed_scenarios"] == 38
     assert result["pass_rate"] == 1.0
     assert result["claims_phenomenal_consciousness"] is False
 
@@ -579,7 +579,7 @@ def test_unarchi_benchmark_covers_v033_multi_hypothesis_arbitration() -> None:
 
     arbitration = scenarios["multi_hypothesis_arbitration"]
 
-    assert result["version"] == "unarchi-ablation-v0.36"
+    assert result["version"] == "unarchi-ablation-v0.37"
     assert arbitration["passed"] is True
     assert arbitration["status"] == "selected"
     assert arbitration["selected_ids"] == (arbitration["temperature_id"],)
@@ -595,7 +595,7 @@ def test_unarchi_benchmark_covers_v034_hierarchical_long_horizon_planning() -> N
 
     planning = scenarios["hierarchical_long_horizon_planning"]
 
-    assert result["version"] == "unarchi-ablation-v0.36"
+    assert result["version"] == "unarchi-ablation-v0.37"
     assert planning["passed"] is True
     assert planning["preserved_verified_status"] == "verified"
     assert planning["preserved_verified_node_id"] not in planning["affected_node_ids"]
@@ -614,7 +614,7 @@ def test_unarchi_benchmark_covers_v035_resource_aware_cognition() -> None:
 
     resource = scenarios["resource_aware_cognition"]
 
-    assert result["version"] == "unarchi-ablation-v0.36"
+    assert result["version"] == "unarchi-ablation-v0.37"
     assert resource["passed"] is True
     assert resource["economy_selected"] == "economical"
     assert resource["premium_selected"] == "informative-premium"
@@ -632,7 +632,7 @@ def test_unarchi_benchmark_covers_v036_persistent_memory() -> None:
 
     memory = scenarios["persistent_memory_retrieval_consolidation"]
 
-    assert result["version"] == "unarchi-ablation-v0.36"
+    assert result["version"] == "unarchi-ablation-v0.37"
     assert memory["passed"] is True
     assert memory["working_memory_size"] == 16
     assert memory["consolidated_sources"] == (
@@ -646,3 +646,18 @@ def test_unarchi_benchmark_covers_v036_persistent_memory() -> None:
     assert memory["top_retrieval_id"] == memory["consolidated_id"]
     assert memory["restart_top_retrieval_id"] == memory["consolidated_id"]
     assert memory["restart_preserved"] is True
+
+
+def test_unarchi_benchmark_covers_v037_verified_tool_feedback() -> None:
+    result = run_unarchi_ablation_benchmark()
+    scenarios = {item["name"]: item for item in result["scenarios"]}
+
+    feedback = scenarios["verified_tool_feedback_loop"]
+
+    assert result["version"] == "unarchi-ablation-v0.37"
+    assert feedback["passed"] is True
+    assert feedback["experience_delta"] == 1
+    assert feedback["replay_idempotent"] is True
+    assert feedback["rejected_without_state_change"] is True
+    assert feedback["restart_preserved"] is True
+    assert "receipt:gateway-receipt-v037" in feedback["durable_source_refs"]
