@@ -16,12 +16,134 @@ from backend.app.core.modeling import (
     ModelResult,
     ModelRouteCandidate,
     ModelRouteDecision,
+    ModelRoutePerformanceEvidence,
+    ModelRoutePerformanceSummary,
     ModelUsage,
 )
 from backend.app.services.ai_cost_governor import estimate_model_cost
 
 
 PROMPT_CACHE_KEY_MAX_LENGTH = 64
+RECENT_PERFORMANCE_WINDOW_SECONDS = 7 * 24 * 60 * 60
+RECENT_PERFORMANCE_MIN_SAMPLES = 2
+RECENT_PERFORMANCE_WEIGHT = 0.80
+RECENT_DRIFT_THRESHOLD = 0.25
+
+
+def _performance_summary(
+    candidate: ModelRouteCandidate,
+    evidence: tuple[ModelRoutePerformanceEvidence, ...],
+    *,
+    recent_window_seconds: int,
+    min_recent_samples: int,
+) -> ModelRoutePerformanceSummary:
+    if recent_window_seconds <= 0:
+        raise ModelGatewayError("Recent performance window must be positive")
+    if min_recent_samples <= 0:
+        raise ModelGatewayError("Recent performance sample floor must be positive")
+
+    deduped: dict[str, ModelRoutePerformanceEvidence] = {}
+    for item in evidence:
+        if item.provider is not candidate.provider or item.model != candidate.model:
+            continue
+        if not item.verified or not item.evidence_key.strip() or not item.evidence_refs:
+            continue
+        if item.age_seconds < 0:
+            raise ModelGatewayError("Model performance evidence age cannot be negative")
+        deduped.setdefault(item.evidence_key, item)
+
+    history = tuple(deduped.values())
+    if not history:
+        return ModelRoutePerformanceSummary()
+
+    lifetime_success_rate = sum(item.succeeded for item in history) / len(history)
+    recent = tuple(
+        item for item in history if item.age_seconds <= recent_window_seconds
+    )
+    if recent:
+        weights = tuple(
+            1.0 / (1.0 + (item.age_seconds / 86_400.0))
+            for item in recent
+        )
+        weight_total = sum(weights)
+        recent_success_rate = sum(
+            weight * float(item.succeeded)
+            for item, weight in zip(recent, weights, strict=True)
+        ) / weight_total
+    else:
+        recent_success_rate = None
+
+    trust_score: float | None = None
+    if len(recent) >= min_recent_samples and recent_success_rate is not None:
+        trust_score = (
+            RECENT_PERFORMANCE_WEIGHT * recent_success_rate
+            + (1.0 - RECENT_PERFORMANCE_WEIGHT) * lifetime_success_rate
+        )
+
+    drift_detected = bool(
+        recent_success_rate is not None
+        and len(history) > len(recent)
+        and abs(recent_success_rate - lifetime_success_rate)
+        >= RECENT_DRIFT_THRESHOLD
+    )
+    refs = tuple(
+        dict.fromkeys(
+            ref
+            for item in recent
+            for ref in item.evidence_refs
+            if ref
+        )
+    )
+    return ModelRoutePerformanceSummary(
+        recent_verified_samples=len(recent),
+        lifetime_verified_samples=len(history),
+        recent_success_rate=(
+            round(recent_success_rate, 6)
+            if recent_success_rate is not None
+            else None
+        ),
+        lifetime_success_rate=round(lifetime_success_rate, 6),
+        trust_score=round(trust_score, 6) if trust_score is not None else None,
+        drift_detected=drift_detected,
+        evidence_refs=refs,
+    )
+
+
+def _rank_model_candidates(
+    candidates: tuple[ModelRouteCandidate, ...],
+    evidence: tuple[ModelRoutePerformanceEvidence, ...],
+    *,
+    recent_window_seconds: int,
+    min_recent_samples: int,
+) -> list[tuple[int, ModelRouteCandidate, ModelRoutePerformanceSummary]]:
+    scored = [
+        (
+            index,
+            candidate,
+            _performance_summary(
+                candidate,
+                evidence,
+                recent_window_seconds=recent_window_seconds,
+                min_recent_samples=min_recent_samples,
+            ),
+        )
+        for index, candidate in enumerate(candidates)
+    ]
+    if not any(summary.trust_score is not None for _, _, summary in scored):
+        return sorted(scored, key=lambda item: (item[1].priority, item[0]))
+
+    return sorted(
+        scored,
+        key=lambda item: (
+            -(
+                item[2].trust_score
+                if item[2].trust_score is not None
+                else 0.5
+            ),
+            item[1].priority,
+            item[0],
+        ),
+    )
 
 
 def normalize_prompt_cache_key(value: str) -> str:
@@ -79,16 +201,21 @@ class ModelGateway:
         *,
         required_capabilities: tuple[str, ...] = ("text",),
         allowed_providers: tuple[ModelProvider, ...] | None = None,
+        performance_evidence: tuple[ModelRoutePerformanceEvidence, ...] = (),
+        recent_window_seconds: int = RECENT_PERFORMANCE_WINDOW_SECONDS,
+        min_recent_samples: int = RECENT_PERFORMANCE_MIN_SAMPLES,
     ) -> ModelRouteDecision:
         if not candidates:
             raise ModelGatewayError("No model route candidates were provided")
         allowed = set(allowed_providers) if allowed_providers is not None else None
         required = tuple(dict.fromkeys(required_capabilities or ("text",)))
-        ranked = sorted(
-            enumerate(candidates),
-            key=lambda item: (item[1].priority, item[0]),
+        ranked = _rank_model_candidates(
+            candidates,
+            performance_evidence,
+            recent_window_seconds=recent_window_seconds,
+            min_recent_samples=min_recent_samples,
         )
-        for _index, candidate in ranked:
+        for _index, candidate, performance in ranked:
             if allowed is not None and candidate.provider not in allowed:
                 continue
             capabilities = model_provider_capabilities(candidate.provider)
@@ -102,6 +229,7 @@ class ModelGateway:
                     model=candidate.model,
                     capabilities=capabilities,
                     required_capabilities=required,
+                    performance=performance,
                 )
         requirements = ", ".join(required)
         raise ModelGatewayError(
