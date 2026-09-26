@@ -6,8 +6,9 @@ import re
 from typing import Any
 
 
-UNARCHI_VERSION = "unarchi-v0.34"
+UNARCHI_VERSION = "unarchi-v0.35"
 _LEGACY_UNARCHI_VERSIONS = {
+    "unarchi-v0.34",
     "unarchi-v0.33",
     "unarchi-v0.32",
     "unarchi-v0.31",
@@ -308,6 +309,28 @@ class HierarchicalPlanReplan:
     replacement_resource_limit: int
     reason: str
     evidence_refs: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class ResourceAwareDecision:
+    id: int
+    context: str
+    candidate_names: tuple[str, ...]
+    feasible_names: tuple[str, ...]
+    rejected_options: tuple[tuple[str, str], ...]
+    ranked_scores: tuple[tuple[str, float], ...]
+    resource_burdens: tuple[tuple[str, float], ...]
+    expected_values: tuple[tuple[str, float], ...]
+    information_gains: tuple[tuple[str, float], ...]
+    reliabilities: tuple[tuple[str, float], ...]
+    budgets: tuple[tuple[str, float], ...]
+    selected_option: str | None
+    status: str
+    reason: str
+    evidence_refs: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -1101,7 +1124,9 @@ class UnarchiEngine:
     explicit uncertainty/context/consequence exposure, and bounded combinations,
     plus deterministic hierarchical long-horizon plans with explicit assumptions,
     checkpoints, resource caps, rollback/replan triggers, verified checkpoint
-    evidence, and branch-local replanning that preserves unaffected verified work.
+    evidence, and branch-local replanning that preserves unaffected verified work,
+    plus resource-aware plan selection that treats money, compute, latency, risk,
+    uncertainty, information gain, and reliability as explicit bounded variables.
     """
 
     state: UnarchiState = field(default_factory=UnarchiState)
@@ -1130,6 +1155,10 @@ class UnarchiEngine:
     hierarchical_plan_replans: list[HierarchicalPlanReplan] = field(
         default_factory=list
     )
+    resource_aware_decisions: list[ResourceAwareDecision] = field(
+        default_factory=list
+    )
+    next_resource_aware_decision_id: int = 1
     next_hierarchical_plan_id: int = 1
     next_hierarchical_plan_node_id: int = 1
     next_hierarchical_plan_checkpoint_id: int = 1
@@ -2712,6 +2741,241 @@ class UnarchiEngine:
             self.hierarchical_plan_replans = (
                 self.hierarchical_plan_replans[-self.max_memory:]
             )
+        return record
+
+    def choose_resource_aware_option(
+        self,
+        *,
+        context: str,
+        options: list[dict[str, Any]],
+        money_budget: float,
+        compute_budget: float,
+        latency_budget_ms: float,
+        max_risk: float,
+        max_uncertainty: float,
+        evidence_refs: tuple[str, ...] = (),
+        similar_value_margin: float = 0.05,
+        premium_justification_gain: float = 0.20,
+    ) -> ResourceAwareDecision:
+        """
+        Select a bounded plan option while treating resources as first-class signals.
+
+        Money, compute, latency, risk, and uncertainty are hard feasibility gates.
+        For options with similar expected value, lower resource burden is preferred
+        unless measured information gain or reliability justifies the premium.
+        """
+        clean_context = context.strip()
+        if not clean_context:
+            raise ValueError("resource-aware decision context is required")
+        if len(options) < 2:
+            raise ValueError("resource-aware decision requires at least two options")
+        if money_budget <= 0:
+            raise ValueError("money_budget must be positive")
+        if compute_budget <= 0:
+            raise ValueError("compute_budget must be positive")
+        if latency_budget_ms <= 0:
+            raise ValueError("latency_budget_ms must be positive")
+        if not 0.0 < max_risk <= 1.0:
+            raise ValueError("max_risk must be between 0 and 1")
+        if not 0.0 < max_uncertainty <= 1.0:
+            raise ValueError("max_uncertainty must be between 0 and 1")
+        if not 0.0 <= similar_value_margin <= 0.25:
+            raise ValueError("similar_value_margin must be between 0 and 0.25")
+        if not 0.0 <= premium_justification_gain <= 1.0:
+            raise ValueError(
+                "premium_justification_gain must be between 0 and 1"
+            )
+
+        rows: list[dict[str, Any]] = []
+        rejected: list[tuple[str, str]] = []
+        seen_names: set[str] = set()
+        candidate_names: list[str] = []
+        for option in options:
+            if not isinstance(option, dict):
+                raise ValueError("resource-aware options must be objects")
+            name = str(option.get("name") or "").strip()
+            if not name:
+                raise ValueError("each resource-aware option requires a name")
+            if name in seen_names:
+                raise ValueError("resource-aware option names must be unique")
+            seen_names.add(name)
+            candidate_names.append(name)
+
+            money = float(option.get("money_cost", 0.0))
+            compute = float(option.get("compute_units", 0.0))
+            latency = float(option.get("latency_ms", 0.0))
+            if money < 0 or compute < 0 or latency < 0:
+                raise ValueError("resource costs cannot be negative")
+            expected_value = _clamp(float(option.get("expected_value", 0.0)))
+            information_gain = _clamp(
+                float(option.get("information_gain", 0.0))
+            )
+            reliability = _clamp(float(option.get("reliability", 0.0)))
+            risk = _clamp(float(option.get("risk", 0.0)))
+            uncertainty = _clamp(float(option.get("uncertainty", 0.0)))
+
+            violations: list[str] = []
+            if money > money_budget:
+                violations.append("money")
+            if compute > compute_budget:
+                violations.append("compute")
+            if latency > latency_budget_ms:
+                violations.append("latency")
+            if risk > max_risk:
+                violations.append("risk")
+            if uncertainty > max_uncertainty:
+                violations.append("uncertainty")
+            if violations:
+                rejected.append((name, ",".join(violations)))
+                continue
+
+            burden = (
+                (money / money_budget)
+                + (compute / compute_budget)
+                + (latency / latency_budget_ms)
+                + (risk / max_risk)
+                + (uncertainty / max_uncertainty)
+            ) / 5.0
+            burden = _clamp(burden)
+            score = _clamp(
+                (expected_value * 0.45)
+                + (information_gain * 0.20)
+                + (reliability * 0.20)
+                + ((1.0 - burden) * 0.15)
+            )
+            rows.append(
+                {
+                    "name": name,
+                    "expected_value": expected_value,
+                    "information_gain": information_gain,
+                    "reliability": reliability,
+                    "burden": burden,
+                    "score": score,
+                }
+            )
+
+        rows.sort(
+            key=lambda row: (
+                -round(float(row["score"]), 12),
+                round(float(row["burden"]), 12),
+                row["name"].casefold(),
+            )
+        )
+
+        selected: dict[str, Any] | None = None
+        status = "no_feasible_option"
+        reason = (
+            "All options violated one or more explicit resource or risk budgets."
+        )
+        if rows:
+            highest_value = max(float(row["expected_value"]) for row in rows)
+            near_value = [
+                row
+                for row in rows
+                if highest_value - float(row["expected_value"])
+                <= similar_value_margin
+            ]
+            cheapest_near = min(
+                near_value,
+                key=lambda row: (
+                    round(float(row["burden"]), 12),
+                    -round(float(row["score"]), 12),
+                    row["name"].casefold(),
+                ),
+            )
+            justified = [
+                row
+                for row in near_value
+                if row is not cheapest_near
+                and (
+                    (
+                        float(row["information_gain"])
+                        - float(cheapest_near["information_gain"])
+                        + float(row["reliability"])
+                        - float(cheapest_near["reliability"])
+                    )
+                    / 2.0
+                )
+                >= premium_justification_gain
+                and float(row["score"]) > float(cheapest_near["score"])
+            ]
+            if justified:
+                justified.sort(
+                    key=lambda row: (
+                        -round(float(row["score"]), 12),
+                        round(float(row["burden"]), 12),
+                        row["name"].casefold(),
+                    )
+                )
+                selected = justified[0]
+                reason = (
+                    "Measured information gain or reliability justifies the "
+                    "additional resource burden among similarly valued options."
+                )
+            elif len(near_value) > 1:
+                selected = cheapest_near
+                reason = (
+                    "Expected values are similar, so the lower-resource option "
+                    "is preferred without sufficient measured premium benefit."
+                )
+            else:
+                selected = rows[0]
+                reason = (
+                    "Selected the highest bounded value-adjusted resource score."
+                )
+            status = "selected"
+
+        refs = tuple(
+            str(ref).strip()[:300]
+            for ref in evidence_refs
+            if str(ref).strip()
+        )
+        record = ResourceAwareDecision(
+            id=self.next_resource_aware_decision_id,
+            context=clean_context[:500],
+            candidate_names=tuple(candidate_names),
+            feasible_names=tuple(row["name"] for row in rows),
+            rejected_options=tuple(rejected),
+            ranked_scores=tuple(
+                (row["name"], round(float(row["score"]), 6))
+                for row in rows
+            ),
+            resource_burdens=tuple(
+                (row["name"], round(float(row["burden"]), 6))
+                for row in rows
+            ),
+            expected_values=tuple(
+                (row["name"], round(float(row["expected_value"]), 6))
+                for row in rows
+            ),
+            information_gains=tuple(
+                (row["name"], round(float(row["information_gain"]), 6))
+                for row in rows
+            ),
+            reliabilities=tuple(
+                (row["name"], round(float(row["reliability"]), 6))
+                for row in rows
+            ),
+            budgets=(
+                ("money", float(money_budget)),
+                ("compute", float(compute_budget)),
+                ("latency_ms", float(latency_budget_ms)),
+                ("risk", float(max_risk)),
+                ("uncertainty", float(max_uncertainty)),
+            ),
+            selected_option=(
+                str(selected["name"]) if selected is not None else None
+            ),
+            status=status,
+            reason=reason,
+            evidence_refs=refs,
+        )
+        self.next_resource_aware_decision_id += 1
+        self.resource_aware_decisions.append(record)
+        if len(self.resource_aware_decisions) > self.max_memory:
+            self.resource_aware_decisions = self.resource_aware_decisions[
+                -self.max_memory:
+            ]
         return record
 
     def arbitrate_causal_hypotheses(
@@ -10388,6 +10652,10 @@ class UnarchiEngine:
             "hierarchical_plan_replans": [
                 item.to_dict() for item in self.hierarchical_plan_replans
             ],
+            "resource_aware_decisions": [
+                item.to_dict() for item in self.resource_aware_decisions
+            ],
+            "next_resource_aware_decision_id": self.next_resource_aware_decision_id,
             "next_hierarchical_plan_id": self.next_hierarchical_plan_id,
             "next_hierarchical_plan_node_id": self.next_hierarchical_plan_node_id,
             "next_hierarchical_plan_checkpoint_id": (
@@ -10619,6 +10887,10 @@ class UnarchiEngine:
             "hierarchical_plan_replans",
             [],
         )
+        resource_aware_decisions_payload = payload.get(
+            "resource_aware_decisions",
+            [],
+        )
         experiments_payload = payload.get("discriminating_experiments", [])
         interventions_payload = payload.get("intervention_trials", [])
         workspace_items_payload = payload.get("global_workspace_items", [])
@@ -10736,6 +11008,8 @@ class UnarchiEngine:
             raise ValueError("invalid UNARCHI value weights")
         if not isinstance(hypotheses_payload, list):
             raise ValueError("invalid UNARCHI causal hypotheses")
+        if not isinstance(resource_aware_decisions_payload, list):
+            raise ValueError("invalid UNARCHI resource-aware decisions")
         if not isinstance(experiments_payload, list):
             raise ValueError("invalid UNARCHI discriminating experiments")
         if not isinstance(interventions_payload, list):
@@ -10983,6 +11257,33 @@ class UnarchiEngine:
                 restored_item[key] = tuple(restored_item.get(key, ()))
             hierarchical_plan_replans.append(
                 HierarchicalPlanReplan(**restored_item)
+            )
+
+        resource_aware_decisions: list[ResourceAwareDecision] = []
+        for item in resource_aware_decisions_payload:
+            if not isinstance(item, dict):
+                raise ValueError("invalid UNARCHI resource-aware decision")
+            restored_item = dict(item)
+            for key in (
+                "candidate_names",
+                "feasible_names",
+                "evidence_refs",
+            ):
+                restored_item[key] = tuple(restored_item.get(key, ()))
+            for key in (
+                "rejected_options",
+                "ranked_scores",
+                "resource_burdens",
+                "expected_values",
+                "information_gains",
+                "reliabilities",
+                "budgets",
+            ):
+                restored_item[key] = tuple(
+                    tuple(pair) for pair in restored_item.get(key, ())
+                )
+            resource_aware_decisions.append(
+                ResourceAwareDecision(**restored_item)
             )
 
         discriminating_experiments: list[DiscriminatingExperiment] = []
@@ -11623,6 +11924,11 @@ class UnarchiEngine:
                 int(payload.get("next_hierarchical_plan_replan_id") or 1),
                 max((item.id for item in hierarchical_plan_replans), default=0) + 1,
             ),
+            resource_aware_decisions=resource_aware_decisions[-max_memory:],
+            next_resource_aware_decision_id=max(
+                int(payload.get("next_resource_aware_decision_id") or 1),
+                max((item.id for item in resource_aware_decisions), default=0) + 1,
+            ),
             discriminating_experiments=discriminating_experiments[-max_memory:],
             next_hypothesis_id=max(
                 int(payload.get("next_hypothesis_id") or 1),
@@ -12064,6 +12370,7 @@ class UnarchiEngine:
                 self.hierarchical_plan_checkpoints
             ),
             "hierarchical_plan_replan_count": len(self.hierarchical_plan_replans),
+            "resource_aware_decision_count": len(self.resource_aware_decisions),
             "verified_hierarchical_plan_node_count": len(
                 [
                     node
