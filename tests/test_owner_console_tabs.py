@@ -7,6 +7,8 @@ def test_owner_console_uses_single_owner_portal_shell():
     html = (WEB / "index.html").read_text()
     assert "/console-assets/console-cosmic-tabs.css" in html
     assert "/console-assets/console-cosmic-tabs.js" in html
+    assert "/console-assets/console-agents.css" in html
+    assert "/console-assets/console-agents.js" in html
     assert "/console-assets/console-portal.css" in html
     assert "/console-assets/console-portal-settings.js" in html
     assert "/console-assets/seldrune-gpt-studio.css" in html
@@ -46,9 +48,12 @@ def test_portal_controller_defines_owner_workspaces_and_fixed_home():
         "settings",
     ):
         assert f'["{workspace}",' in js
-    assert "OWNER PORTAL" in js
+    assert "AETHELION INTELLIGENCE FOUNDRY" in js
+    assert "seldrune:workspace-change" in js
     assert "portal-quick-orders" not in js
-    assert "Open GPT" in js
+    assert "Open AI Core" in js
+    for label in ("NEXUS", "AI CORE", "MISSIONS", "WORLDS", "INTEL", "CREATIONS", "SYSTEM"):
+        assert label in js
     assert 'move("#seldrune-gpt", "operator")' in js
     assert 'move("#cognitive-mission", "operations")' in js
     assert 'move("#sti-runtime", "operations")' in js
@@ -126,3 +131,20 @@ def test_gpt_pdf_editor_is_single_ai_prompt_flow():
     assert "AI Edit PDF" in script
     assert ".gpt-mode-pill.active" in styles
     assert ".gpt-dropzone.ai-pdf-mode" in styles
+
+
+def test_agent_workspace_executes_assigned_work_and_records_retries():
+    html = (WEB / "index.html").read_text()
+    script = (WEB / "console-agents.js").read_text()
+    styles = (WEB / "console-agents.css").read_text()
+
+    assert "/console-assets/console-agents.js" in html
+    assert 'id="agent-task-console"' in script
+    assert 'api("/agents")' in script
+    assert 'api("/tasks")' in script
+    assert '"/execute"' in script
+    assert '"/assign"' in script
+    assert "retry_of_task_id" in script
+    assert "MAX_VISIBLE_TASKS = 10" in script
+    assert "agent-task-metrics" in styles
+    assert "@media (max-width: 620px)" in styles
