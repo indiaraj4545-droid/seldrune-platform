@@ -1,4 +1,5 @@
 from pathlib import Path
+import xml.etree.ElementTree as ET
 
 WEB = Path("backend/app/web")
 
@@ -12,6 +13,9 @@ def test_owner_console_uses_single_owner_portal_shell():
     assert "/console-assets/console-portal.css" in html
     assert "/console-assets/console-portal-settings.js" in html
     assert "/console-assets/seldrune-gpt-studio.css" in html
+    assert "/console-assets/console-nexus-arena.css" in html
+    assert "/console-assets/console-nexus-arena.js" in html
+    assert "/console-assets/nexus-alien-predator.svg" in html
 
     # Engineering/version presentation layers stay out of the normal owner portal.
     assert "/console-assets/console-xenobiotic.css" not in html
@@ -148,3 +152,21 @@ def test_agent_workspace_executes_assigned_work_and_records_retries():
     assert "MAX_VISIBLE_TASKS = 10" in script
     assert "agent-task-metrics" in styles
     assert "@media (max-width: 620px)" in styles
+
+
+def test_nexus_duel_and_observatory_use_measured_system_data():
+    svg = WEB / "nexus-alien-predator.svg"
+    ET.parse(svg)
+
+    script = (WEB / "console-nexus-arena.js").read_text()
+    styles = (WEB / "console-nexus-arena.css").read_text()
+
+    assert 'document.querySelector("#portal-panel-home")' in script
+    assert 'api("/agents")' in script
+    assert 'api("/tasks")' in script
+    assert 'document.getElementById("sti-verified")' in script
+    assert "failedTasks" in script
+    assert "CONFIGURATION NEEDED" in script
+    assert "No system state was inferred from missing data." in script
+    assert "@media (max-width: 560px)" in styles
+    assert "@media (prefers-reduced-motion: reduce)" in styles
