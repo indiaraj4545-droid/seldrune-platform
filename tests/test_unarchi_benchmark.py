@@ -4,8 +4,8 @@ from backend.app.services.unarchi_benchmark import run_unarchi_ablation_benchmar
 def test_unarchi_ablation_benchmark_passes_all_scenarios() -> None:
     result = run_unarchi_ablation_benchmark()
 
-    assert result["scenario_count"] == 34
-    assert result["passed_scenarios"] == 34
+    assert result["scenario_count"] == 35
+    assert result["passed_scenarios"] == 35
     assert result["pass_rate"] == 1.0
     assert result["claims_phenomenal_consciousness"] is False
 
@@ -587,3 +587,22 @@ def test_unarchi_benchmark_covers_v033_multi_hypothesis_arbitration() -> None:
     assert arbitration["fail_closed_status"] == "insufficient_evidence"
     assert arbitration["fail_closed_selected_ids"] == ()
     assert arbitration["restart_preserved"] is True
+
+
+def test_unarchi_benchmark_covers_v034_hierarchical_long_horizon_planning() -> None:
+    result = run_unarchi_ablation_benchmark()
+    scenarios = {item["name"]: item for item in result["scenarios"]}
+
+    planning = scenarios["hierarchical_long_horizon_planning"]
+
+    assert result["version"] == "unarchi-ablation-v0.34"
+    assert planning["passed"] is True
+    assert planning["preserved_verified_status"] == "verified"
+    assert planning["preserved_verified_node_id"] not in planning["affected_node_ids"]
+    assert planning["invalidated_node_id"] in planning["affected_node_ids"]
+    assert planning["replacement_node_ids"]
+    assert (
+        planning["replacement_resource_limit"]
+        <= planning["released_resource_limit"]
+    )
+    assert planning["restart_preserved"] is True
