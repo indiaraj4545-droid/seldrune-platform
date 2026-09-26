@@ -167,7 +167,7 @@ def test_snapshot_never_claims_phenomenal_consciousness() -> None:
     snapshot = engine.snapshot()
 
     assert snapshot["claims_phenomenal_consciousness"] is False
-    assert snapshot["version"] == "unarchi-v0.37"
+    assert snapshot["version"] == "unarchi-v0.38"
 
 
 def test_export_restore_preserves_identity_state_and_memory() -> None:
@@ -5692,7 +5692,7 @@ def test_v033_arbitration_survives_export_restore() -> None:
     )
     restored = UnarchiEngine.from_export(engine.export_state())
 
-    assert restored.snapshot()["version"] == "unarchi-v0.37"
+    assert restored.snapshot()["version"] == "unarchi-v0.38"
     assert restored.causal_hypothesis_arbitrations == engine.causal_hypothesis_arbitrations
     assert restored.causal_hypothesis_arbitrations[-1].id == arbitration.id
     assert restored.snapshot()["causal_hypothesis_arbitration_count"] == 1
@@ -5936,7 +5936,7 @@ def test_v034_hierarchical_planning_survives_export_restore() -> None:
 
     restored = UnarchiEngine.from_export(engine.export_state())
 
-    assert restored.snapshot()["version"] == "unarchi-v0.37"
+    assert restored.snapshot()["version"] == "unarchi-v0.38"
     assert restored.hierarchical_plans == engine.hierarchical_plans
     assert restored.hierarchical_plan_nodes == engine.hierarchical_plan_nodes
     assert restored.hierarchical_plan_checkpoints == engine.hierarchical_plan_checkpoints
@@ -6051,7 +6051,7 @@ def test_v035_budget_violations_fail_closed_and_persist() -> None:
         "money,compute,latency,risk,uncertainty"
     )
     assert "over-budget" not in decision.feasible_names
-    assert restored.snapshot()["version"] == "unarchi-v0.37"
+    assert restored.snapshot()["version"] == "unarchi-v0.38"
     assert restored.snapshot()["resource_aware_decision_count"] == 1
     assert restored.resource_aware_decisions == engine.resource_aware_decisions
 
@@ -6099,7 +6099,7 @@ def test_v036_persistent_memory_survives_working_memory_overflow_and_restart() -
         "schema rollback receipt 0052"
     )
 
-    assert restored.snapshot()["version"] == "unarchi-v0.37"
+    assert restored.snapshot()["version"] == "unarchi-v0.38"
     assert restored_hits
     assert restored_hits[0].record_id == durable.id
     assert restored.persistent_memory[0].source_refs == durable.source_refs
@@ -6321,7 +6321,7 @@ def test_v037_verified_tool_outcomes_survive_restart_and_v036_exports_load() -> 
     )
     restored = UnarchiEngine.from_export(engine.export_state())
 
-    assert restored.snapshot()["version"] == "unarchi-v0.37"
+    assert restored.snapshot()["version"] == "unarchi-v0.38"
     assert restored.verified_tool_outcomes == engine.verified_tool_outcomes
     assert restored.verified_tool_outcomes[0].id == outcome.id
 
