@@ -168,9 +168,9 @@ def test_development_mission_calculates_evidence_weighted_progress() -> None:
     }
 
     assert mission["version"] == "cognitive-execution-v2"
-    assert mission["overall_percentage"] == 71.3
-    assert mission["remaining_percentage"] == 28.7
-    assert workstreams["unarchi"]["percentage"] == 98.0
+    assert mission["overall_percentage"] == 71.8
+    assert mission["remaining_percentage"] == 28.2
+    assert workstreams["unarchi"]["percentage"] == 100.0
     assert workstreams["model_bus"]["percentage"] == 85.0
     assert workstreams["console"]["percentage"] == 90.0
     assert workstreams["live_media"]["percentage"] == 25.0
@@ -191,9 +191,10 @@ def test_development_mission_calculates_evidence_weighted_progress() -> None:
     assert stages["unarchi_v39"]["status"] == "completed"
     assert stages["unarchi_v39"]["completion_source"] == "roadmap_evidence"
     assert "pr:337" in stages["unarchi_v39"]["evidence_refs"]
-    assert stages["unarchi_v40"]["dependencies_complete"] is True
+    assert stages["unarchi_v40"]["status"] == "completed"
+    assert stages["unarchi_v40"]["completion_source"] == "roadmap_evidence"
+    assert "pr:339" in stages["unarchi_v40"]["evidence_refs"]
     assert set(mission["parallel_ready_stage_ids"]) == {
-        "unarchi_v40",
         "model_verifier_fallback",
         "local_model_pool",
         "console_observability",
@@ -220,10 +221,9 @@ def test_mission_sync_persists_one_master_and_queues_ready_wave(
     assert first.status_code == 200
     payload = first.json()
     assert payload["created"] is True
-    assert payload["overall_percentage"] == 71.3
-    assert payload["auto_queued_count"] == 6
+    assert payload["overall_percentage"] == 71.8
+    assert payload["auto_queued_count"] == 5
     assert set(payload["auto_queued_stage_ids"]) == {
-        "unarchi_v40",
         "model_verifier_fallback",
         "local_model_pool",
         "console_observability",
@@ -258,73 +258,11 @@ def test_mission_sync_persists_one_master_and_queues_ready_wave(
         for item in rows
         if item["input_data"].get("cognitive_mission_stage_id")
     ]
-    assert len(stages) == 6
+    assert len(stages) == 5
     assert not any(
         item["input_data"].get("workstream") == "live_media"
         for item in stages
     )
-
-    unarchi_v40 = next(
-        item
-        for item in stages
-        if item["input_data"]["cognitive_mission_stage_id"] == "unarchi_v40"
-    )
-    contract = unarchi_v40["input_data"]["compiled_execution_contract"]
-    assert contract["version"] == "stage-compiler-v1"
-    assert contract["stage_id"] == "unarchi_v40"
-    assert contract["profile"] == "repository-engineering"
-    assert contract["executable_now"] is False
-    assert contract["evidence_contract"] == {
-        "model_output_is_completion_evidence": False,
-        "completion_requires_machine_evidence": True,
-        "all_tool_acceptance_checks_required": True,
-    }
-    assert contract["blocking_reasons"]
-    assert [step["id"] for step in contract["steps"]] == [
-        "produce-artifacts",
-        "inspect-repository",
-        "create-stage-branch",
-        "write-artifacts",
-        "open-pull-request",
-        "run-ci",
-        "verify-ci",
-        "verify-portable-ci",
-        "merge-verified-pull-request",
-    ]
-    verify_ci = next(
-        step for step in contract["steps"] if step["id"] == "verify-ci"
-    )
-    assert verify_ci["acceptance"]["fallback_step_id"] == "verify-portable-ci"
-
-    portable_ci = next(
-        step for step in contract["steps"] if step["id"] == "verify-portable-ci"
-    )
-    assert portable_ci["optional"] is True
-    assert portable_ci["run_when_external_resource_from"] == "verify-ci"
-    assert portable_ci["bindings"] == {
-        "receipt": "parent.input.portable_ci_evidence.receipt",
-        "signature": "parent.input.portable_ci_evidence.signature",
-    }
-
-    merge_step = next(
-        step
-        for step in contract["steps"]
-        if step["id"] == "merge-verified-pull-request"
-    )
-    assert merge_step["bindings"]["sha"] == [
-        "steps.verify-ci.output.head_sha",
-        "steps.verify-portable-ci.output.head_sha",
-    ]
-
-    artifact_step = contract["steps"][0]
-    schema = artifact_step["response_schema"]
-    assert schema["required"] == ["artifacts", "acceptance_notes"]
-    assert schema["properties"]["artifacts"]["items"]["required"] == [
-        "path",
-        "content",
-        "message",
-    ]
-    assert schema["additionalProperties"] is False
 
     pdf_labels = next(
         item
@@ -355,7 +293,6 @@ def test_mission_queue_ready_is_idempotent(client: TestClient) -> None:
     assert queued.status_code == 200
     assert queued.json()["queued_count"] == 0
     assert set(queued.json()["ready_stage_ids"]) == {
-        "unarchi_v40",
         "model_verifier_fallback",
         "local_model_pool",
         "console_observability",
@@ -442,17 +379,17 @@ def test_one_go_blocks_compiled_work_before_model_without_tools(
     assert executed.status_code == 200
     report = executed.json()
     assert report["controller_version"] == "one-go-v1"
-    assert report["starting_percentage"] == 71.3
-    assert report["ending_percentage"] == 71.3
+    assert report["starting_percentage"] == 71.8
+    assert report["ending_percentage"] == 71.8
     assert report["waves_executed"] == 1
     assert report["tasks_executed"] == 0
     assert report["tasks_verified"] == 0
     assert report["tasks_unverified"] == 0
-    assert report["tasks_blocked"] == 6
+    assert report["tasks_blocked"] == 5
     assert report["tasks_failed"] == 0
     assert report["recovery_rounds"] == 3
-    assert report["recovery_attempts"] == 5
-    assert report["recovery_configuration_gates"] == 5
+    assert report["recovery_attempts"] == 4
+    assert report["recovery_configuration_gates"] == 4
     assert report["recovery_owner_gates"] == 0
     assert report["recovery_external_resource_gates"] == 0
     assert report["halted_reason"] == "no_new_verified_dependency_progress"
@@ -466,25 +403,12 @@ def test_one_go_blocks_compiled_work_before_model_without_tools(
         by_stage["pdf_local_labels"]["reason"]
         == "owner-gated_requires_explicit_execution"
     )
-    assert by_stage["unarchi_v40"]["disposition"] == "blocked"
-    assert by_stage["unarchi_v40"]["reason"].startswith(
-        "compiled_tools_unavailable:"
-    )
-    assert (
-        by_stage["unarchi_v40"]["contract_execution"]["executed_steps"]
-        == 0
-    )
-    assert by_stage["unarchi_v40"]["compiled_contract_version"] == "stage-compiler-v1"
-    assert by_stage["unarchi_v40"]["compiled_profile"] == "repository-engineering"
-    assert by_stage["unarchi_v40"]["compiled_executable_now"] is False
-    assert by_stage["unarchi_v40"]["compiled_blocking_reasons"]
-
     mission = client.get(
         f"{base}/development-mission",
         headers=headers,
     )
     assert mission.status_code == 200
-    assert mission.json()["overall_percentage"] == 71.3
+    assert mission.json()["overall_percentage"] == 71.8
     assert mission.json()["one_go_execution"]["tasks_verified"] == 0
 
     invocations = client.get(
