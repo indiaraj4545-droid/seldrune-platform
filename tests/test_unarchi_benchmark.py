@@ -579,7 +579,7 @@ def test_unarchi_benchmark_covers_v033_multi_hypothesis_arbitration() -> None:
 
     arbitration = scenarios["multi_hypothesis_arbitration"]
 
-    assert result["version"] == "unarchi-ablation-v0.33"
+    assert result["version"] == "unarchi-ablation-v0.34"
     assert arbitration["passed"] is True
     assert arbitration["status"] == "selected"
     assert arbitration["selected_ids"] == (arbitration["temperature_id"],)
