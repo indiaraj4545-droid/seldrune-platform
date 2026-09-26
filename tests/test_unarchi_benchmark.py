@@ -579,7 +579,7 @@ def test_unarchi_benchmark_covers_v033_multi_hypothesis_arbitration() -> None:
 
     arbitration = scenarios["multi_hypothesis_arbitration"]
 
-    assert result["version"] == "unarchi-ablation-v0.34"
+    assert result["version"] == "unarchi-ablation-v0.35"
     assert arbitration["passed"] is True
     assert arbitration["status"] == "selected"
     assert arbitration["selected_ids"] == (arbitration["temperature_id"],)
@@ -595,7 +595,7 @@ def test_unarchi_benchmark_covers_v034_hierarchical_long_horizon_planning() -> N
 
     planning = scenarios["hierarchical_long_horizon_planning"]
 
-    assert result["version"] == "unarchi-ablation-v0.34"
+    assert result["version"] == "unarchi-ablation-v0.35"
     assert planning["passed"] is True
     assert planning["preserved_verified_status"] == "verified"
     assert planning["preserved_verified_node_id"] not in planning["affected_node_ids"]
@@ -606,3 +606,21 @@ def test_unarchi_benchmark_covers_v034_hierarchical_long_horizon_planning() -> N
         <= planning["released_resource_limit"]
     )
     assert planning["restart_preserved"] is True
+
+
+def test_unarchi_benchmark_covers_v035_resource_aware_cognition() -> None:
+    result = run_unarchi_ablation_benchmark()
+    scenarios = {item["name"]: item for item in result["scenarios"]}
+
+    resource = scenarios["resource_aware_cognition"]
+
+    assert result["version"] == "unarchi-ablation-v0.35"
+    assert resource["passed"] is True
+    assert resource["economy_selected"] == "economical"
+    assert resource["premium_selected"] == "informative-premium"
+    assert resource["economy_burden"] < resource["costly_similar_burden"]
+    assert resource["premium_burden"] > resource["economy_burden"]
+    assert resource["over_budget_rejection"] == (
+        "money,compute,latency,risk,uncertainty"
+    )
+    assert resource["restart_preserved"] is True
