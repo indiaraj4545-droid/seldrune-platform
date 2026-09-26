@@ -6,7 +6,7 @@ from typing import Any
 from backend.app.services.unarchi_engine import UnarchiEngine
 
 
-BENCHMARK_VERSION = "unarchi-ablation-v0.34"
+BENCHMARK_VERSION = "unarchi-ablation-v0.35"
 
 
 def _failure_sensitization() -> dict[str, Any]:
@@ -4854,6 +4854,109 @@ def _hierarchical_long_horizon_planning() -> dict[str, Any]:
         ),
     }
 
+
+def _resource_aware_cognition() -> dict[str, Any]:
+    engine = UnarchiEngine()
+    shared = {
+        "money_budget": 10.0,
+        "compute_budget": 100.0,
+        "latency_budget_ms": 1000.0,
+        "max_risk": 0.50,
+        "max_uncertainty": 0.50,
+    }
+    economical = {
+        "name": "economical",
+        "expected_value": 0.80,
+        "money_cost": 2.0,
+        "compute_units": 20.0,
+        "latency_ms": 200.0,
+        "risk": 0.10,
+        "uncertainty": 0.10,
+        "information_gain": 0.35,
+        "reliability": 0.85,
+    }
+    costly_similar = {
+        "name": "costly-similar",
+        "expected_value": 0.82,
+        "money_cost": 8.0,
+        "compute_units": 80.0,
+        "latency_ms": 800.0,
+        "risk": 0.20,
+        "uncertainty": 0.10,
+        "information_gain": 0.40,
+        "reliability": 0.87,
+    }
+    infeasible = {
+        "name": "over-budget",
+        "expected_value": 0.99,
+        "money_cost": 20.0,
+        "compute_units": 120.0,
+        "latency_ms": 1200.0,
+        "risk": 0.65,
+        "uncertainty": 0.60,
+        "information_gain": 1.0,
+        "reliability": 1.0,
+    }
+    economy_decision = engine.choose_resource_aware_option(
+        context="choose a bounded execution branch",
+        options=[costly_similar, economical, infeasible],
+        evidence_refs=("v035:comparable-value-measurements",),
+        **shared,
+    )
+
+    informative = {
+        **costly_similar,
+        "name": "informative-premium",
+        "information_gain": 0.95,
+        "reliability": 0.98,
+    }
+    premium_decision = engine.choose_resource_aware_option(
+        context="pay more only for measured decision quality",
+        options=[economical, informative],
+        evidence_refs=("v035:information-gain-measurements",),
+        **shared,
+    )
+
+    restored = UnarchiEngine.from_export(engine.export_state())
+    economy_burdens = dict(economy_decision.resource_burdens)
+    premium_burdens = dict(premium_decision.resource_burdens)
+
+    return {
+        "name": "resource_aware_cognition",
+        "expected_direction": (
+            "hard budgets reject infeasible branches; similar-value choices "
+            "prefer lower resource burden unless measured information gain or "
+            "reliability justifies the premium"
+        ),
+        "passed": (
+            economy_decision.status == "selected"
+            and economy_decision.selected_option == "economical"
+            and dict(economy_decision.rejected_options).get("over-budget")
+            == "money,compute,latency,risk,uncertainty"
+            and economy_burdens["economical"]
+            < economy_burdens["costly-similar"]
+            and premium_decision.status == "selected"
+            and premium_decision.selected_option == "informative-premium"
+            and premium_burdens["informative-premium"]
+            > premium_burdens["economical"]
+            and restored.resource_aware_decisions
+            == engine.resource_aware_decisions
+            and restored.snapshot()["resource_aware_decision_count"] == 2
+        ),
+        "economy_selected": economy_decision.selected_option,
+        "premium_selected": premium_decision.selected_option,
+        "economy_burden": economy_burdens["economical"],
+        "costly_similar_burden": economy_burdens["costly-similar"],
+        "premium_burden": premium_burdens["informative-premium"],
+        "over_budget_rejection": dict(economy_decision.rejected_options).get(
+            "over-budget"
+        ),
+        "restart_preserved": (
+            restored.resource_aware_decisions == engine.resource_aware_decisions
+            and restored.snapshot()["resource_aware_decision_count"] == 2
+        ),
+    }
+
 def run_unarchi_ablation_benchmark() -> dict[str, Any]:
     scenarios = [
         _failure_sensitization(),
@@ -4891,6 +4994,7 @@ def run_unarchi_ablation_benchmark() -> dict[str, Any]:
         _repeated_episode_isolation(),
         _multi_hypothesis_arbitration(),
         _hierarchical_long_horizon_planning(),
+        _resource_aware_cognition(),
     ]
     passed = sum(bool(item["passed"]) for item in scenarios)
     return {
