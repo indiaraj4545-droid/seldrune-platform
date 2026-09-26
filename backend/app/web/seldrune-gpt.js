@@ -17,6 +17,8 @@
   const modePill = document.querySelector('#seldrune-gpt-mode');
   const pdfPasswordWrap = document.querySelector('#seldrune-gpt-pdf-password-wrap');
   const pdfPassword = document.querySelector('#seldrune-gpt-pdf-password');
+  const capabilityStatus = document.querySelector('#seldrune-gpt-capabilities');
+  const openToolsButton = document.querySelector('#seldrune-gpt-open-tools');
 
   const MAX_FILES = 6;
   const MAX_FILE_BYTES = 8 * 1024 * 1024;
@@ -244,6 +246,44 @@
     }
   }
 
+
+  async function loadCapabilities() {
+    if (!capabilityStatus) return;
+    capabilityStatus.dataset.state = 'checking';
+    capabilityStatus.textContent = 'Checking cognitive runtime…';
+    try {
+      const capabilities = await api('/gpt/capabilities');
+      const registeredTools = Array.isArray(capabilities.registered_tools)
+        ? capabilities.registered_tools
+        : [];
+      const providers = Object.entries(capabilities.provider_readiness || {});
+      const readyProviders = providers.filter(([, ready]) => Boolean(ready)).length;
+      const hints = Array.isArray(capabilities.configuration_hints)
+        ? capabilities.configuration_hints
+        : [];
+      const needsSetup = hints.length > 0 || readyProviders < providers.length;
+      capabilityStatus.dataset.state = needsSetup ? 'attention' : 'ready';
+      capabilityStatus.textContent = needsSetup
+        ? 'Cognitive runtime · ' + registeredTools.length + ' tools · '
+          + readyProviders + '/' + providers.length + ' providers ready'
+        : 'Cognitive runtime ready · ' + registeredTools.length + ' tools';
+      capabilityStatus.title = hints.length
+        ? 'Provider setup needed: ' + hints.join(', ')
+        : '';
+      openToolsButton?.classList.toggle('hidden', !needsSetup);
+    } catch (error) {
+      capabilityStatus.dataset.state = 'attention';
+      capabilityStatus.textContent = 'Cognitive runtime status unavailable';
+      capabilityStatus.title = error.message;
+      openToolsButton?.classList.remove('hidden');
+    }
+  }
+
+  function initializeGptWorkspace() {
+    void loadHistory();
+    void loadCapabilities();
+  }
+
   newConversation?.addEventListener('click', async () => {
     if (!window.confirm('Start a new Seldrune GPT conversation and clear saved context?')) return;
     try {
@@ -254,6 +294,16 @@
     } catch (error) {
       status.textContent = `Could not clear history: ${error.message}`;
     }
+  });
+
+
+  openToolsButton?.addEventListener('click', () => {
+    const toolsTab = document.querySelector('[data-portal-tab="tools"]');
+    if (toolsTab) {
+      toolsTab.click();
+      return;
+    }
+    document.getElementById('tool-auto-activate')?.click();
   });
 
   attachButton?.addEventListener('click', () => fileInput?.click());
@@ -295,6 +345,72 @@
         max_steps: 50,
         max_retries_per_step: 1,
       }),
+    });
+  }
+
+
+  function addApprovalPrompt(order, result) {
+    if (thread.querySelector('.empty')) thread.replaceChildren();
+    const card = document.createElement('article');
+    card.className = 'command-card gpt-approval-card';
+    card.dataset.role = 'assistant';
+
+    const heading = document.createElement('strong');
+    heading.textContent = 'Owner confirmation';
+    const message = document.createElement('p');
+    const reasons = Array.isArray(result.risk_reasons) ? result.risk_reasons : [];
+    message.textContent = 'Sensitive action paused: ' + reasons.join(', ')
+      + '. Nothing has run yet. Confirm once to continue.';
+    const actions = document.createElement('div');
+    actions.className = 'gpt-approval-actions';
+
+    const confirmButton = document.createElement('button');
+    confirmButton.type = 'button';
+    confirmButton.textContent = 'Confirm once and run';
+    const cancelButton = document.createElement('button');
+    cancelButton.type = 'button';
+    cancelButton.className = 'ghost';
+    cancelButton.textContent = 'Cancel';
+
+    cancelButton.addEventListener('click', () => {
+      message.textContent = 'Execution canceled. No sensitive action ran.';
+      actions.remove();
+      status.textContent = 'No action ran · command ' + result.command_id
+        + ' remains unexecuted.';
+    });
+    confirmButton.addEventListener('click', async () => {
+      confirmButton.disabled = true;
+      cancelButton.disabled = true;
+      setBusy(true, 'Owner confirmed once · Seldrune is executing and verifying…');
+      try {
+        const completed = await executeOrder(order, result.command_id, true);
+        const summary = completed.status + ': '
+          + (completed.executed_steps || 0) + ' executed, '
+          + (completed.failed_steps || 0) + ' failed, '
+          + (completed.blocked_steps || 0) + ' blocked. Command '
+          + completed.command_id + '.';
+        addMessage('Seldrune Cognitive Engine', summary);
+        status.textContent = 'Verified cognitive run · ' + completed.status
+          + ' · evidence ' + completed.command_id;
+        window.dispatchEvent(new CustomEvent('seldrune:refresh'));
+        await loadCapabilities();
+      } catch (error) {
+        message.textContent = 'Execution did not complete: ' + error.message;
+        confirmButton.disabled = false;
+        cancelButton.disabled = false;
+        status.textContent = 'Execution needs attention.';
+      } finally {
+        setBusy(false);
+        input.focus();
+      }
+    });
+
+    actions.append(confirmButton, cancelButton);
+    card.append(heading, message, actions);
+    thread.append(card);
+    card.scrollIntoView({
+      behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+      block: 'nearest',
     });
   }
 
@@ -383,11 +499,12 @@
     input.value = '';
     try {
       let result = await executeOrder(order);
+      await loadCapabilities();
       if (result.status === 'configuration_required') {
         const missing = (result.missing_tools || []).join(', ');
         const hints = (result.configuration_hints || []).join(', ');
         addMessage(
-          'Seldrune Operator',
+          'Seldrune Cognitive Engine',
           `Configuration required before execution. Missing: ${missing || 'provider tool'}`
           + (hints ? `. Configure service secret(s): ${hints}.` : '.'),
         );
@@ -400,31 +517,20 @@
       ) {
         const missing = (result.missing_tools || []).join(', ');
         addMessage(
-          'Seldrune Operator',
+          'Seldrune Cognitive Engine',
           `Execution stopped before external action. Required tool input was unresolved: ${missing}.`,
         );
         status.textContent = `No external action performed · evidence ${result.command_id}`;
         return;
       }
       if (result.approval_required) {
-        const reasons = (result.risk_reasons || []).join(', ');
-        const approved = window.confirm(
-          `This order requires explicit owner confirmation: ${reasons}. Continue execution?`,
-        );
-        if (!approved) {
-          addMessage(
-            'Seldrune Operator',
-            `Paused for approval. Command ${result.command_id} remains unexecuted.`,
-          );
-          status.textContent = 'Execution paused by owner.';
-          return;
-        }
-        status.textContent = 'Owner confirmed. Executing governed command…';
-        result = await executeOrder(order, result.command_id, true);
+        addApprovalPrompt(order, result);
+        status.textContent = 'Sensitive action paused · waiting for your confirmation.';
+        return;
       }
       const summary = `${result.status}: ${result.executed_steps || 0} executed, ${result.failed_steps || 0} failed, ${result.blocked_steps || 0} blocked. Command ${result.command_id}.`;
-      addMessage('Seldrune Operator', summary);
-      status.textContent = `Verified operator result · ${result.status} · evidence ${result.command_id}`;
+      addMessage('Seldrune Cognitive Engine', summary);
+      status.textContent = `Verified cognitive run · ${result.status} · evidence ${result.command_id}`;
       window.dispatchEvent(new CustomEvent('seldrune:refresh'));
     } catch (error) {
       addMessage('System', `Operator request failed: ${error.message}`);
@@ -483,5 +589,6 @@
   });
 
   renderAttachments();
-  loadHistory();
+  document.addEventListener('seldrune:console-ready', initializeGptWorkspace);
+  if (typeof state !== 'undefined' && state.org) initializeGptWorkspace();
 })();
