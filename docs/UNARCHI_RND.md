@@ -1976,8 +1976,53 @@ This is controlled functional feedback, not unrestricted autonomy. The engine
 still cannot independently perform external actions and these mechanisms do not
 establish subjective identity, sentience, phenomenal consciousness, or qualia.
 
-## Next checkpoint: v0.38 multimodal observations
+## v0.38 multimodal observations checkpoint
 
-The next research step should normalize verified image, audio, video, document,
-and structured-data observations into provenance-backed evidence while keeping
-source modality, confidence, and transformation lineage explicit.
+UNARCHI v0.38 adds one fail-closed evidence contract for verified image, audio,
+video, document, and structured-data observations. Raw media processing remains
+outside the cognitive kernel; the normalizer accepts only an already-verified
+observation plus source identity and transformation provenance.
+
+Every normalized observation records:
+
+- one explicit source modality and compatible media type;
+- source name and SHA-256 identity;
+- a bounded confidence score;
+- a human-readable evidence summary;
+- one or more provenance source references;
+- an ordered transformation lineage;
+- a deterministic multimodal evidence key; and
+- canonical modality, media-type, digest, transformation, and evidence-key
+  references.
+
+The normalizer fails closed when verification is absent, source identity is
+missing or inconsistent, confidence is out of range, modality and media type do
+not match, provenance is absent, or transformation lineage is empty.
+
+Normalized evidence enters UNARCHI through the ordinary bounded observation
+cycle and provenance-backed persistent-memory path. Replaying the same evidence
+key is idempotent, so retries cannot create a second cognitive observation or a
+duplicate durable record. Export/restore preserves the resulting observation
+history and multimodal persistent memory.
+
+The deterministic v0.38 benchmark requires:
+
+verified image + audio + video + document + structured data -> one shared
+evidence contract -> explicit source hashes and transformation lineage ->
+durable modality-tagged memory -> exact replay causes no second observation ->
+unverified claim rejected without state change -> restart -> structured-data
+evidence remains retrievable with its original provenance.
+
+v0.38 accepts v0.37 and earlier supported exports for backward-compatible state
+restoration while new snapshots identify themselves as `unarchi-v0.38`.
+
+This is bounded functional evidence integration. It does not grant the engine
+camera, microphone, file-system, model, or external-action authority and does
+not establish subjective identity, sentience, phenomenal consciousness, or
+qualia.
+
+## Next checkpoint: v0.39 model and skill orchestration
+
+The next research step should select models and tools using declared
+capabilities, recent verified performance, cost, confidence, and outcome
+evidence while preserving independent verification and governance boundaries.

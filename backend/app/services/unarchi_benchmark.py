@@ -4,9 +4,13 @@ from copy import deepcopy
 from typing import Any
 
 from backend.app.services.unarchi_engine import UnarchiEngine
+from backend.app.services.unarchi_multimodal import (
+    ingest_multimodal_observation,
+    normalize_multimodal_observation,
+)
 
 
-BENCHMARK_VERSION = "unarchi-ablation-v0.37"
+BENCHMARK_VERSION = "unarchi-ablation-v0.38"
 
 
 def _failure_sensitization() -> dict[str, Any]:
@@ -5147,6 +5151,153 @@ def _verified_tool_feedback_loop() -> dict[str, Any]:
         "durable_source_refs": durable.source_refs,
     }
 
+
+def _multimodal_observation_normalization() -> dict[str, Any]:
+    engine = UnarchiEngine()
+    samples = (
+        (
+            "image",
+            "image/png",
+            "panel.png",
+            b"image-panel-v038",
+            "A warning indicator is active on the control panel.",
+            ("vision-caption:v1", "human-verified:v1"),
+        ),
+        (
+            "audio",
+            "audio/wav",
+            "alarm.wav",
+            b"audio-alarm-v038",
+            "A repeating high-priority alarm tone is present.",
+            ("audio-event:v1", "human-verified:v1"),
+        ),
+        (
+            "video",
+            "video/mp4",
+            "inspection.mp4",
+            b"video-inspection-v038",
+            "The inspected valve remains closed throughout the observed clip.",
+            ("keyframe-sampler:v1", "temporal-summary:v1"),
+        ),
+        (
+            "document",
+            "application/pdf",
+            "procedure.pdf",
+            b"document-procedure-v038",
+            "The procedure requires independent verification before release.",
+            ("pdf-text:v1", "section-summary:v1"),
+        ),
+        (
+            "structured_data",
+            "application/json",
+            "telemetry.json",
+            b'{"pressure":91,"limit":80}',
+            "Pressure is 91 while the configured limit is 80.",
+            ("json-parse:v1", "schema-validate:v1"),
+        ),
+    )
+
+    records = []
+    evidences = []
+    for index, (
+        modality,
+        media_type,
+        source_name,
+        source_bytes,
+        summary,
+        lineage,
+    ) in enumerate(samples):
+        evidence = normalize_multimodal_observation(
+            modality=modality,
+            media_type=media_type,
+            source_name=source_name,
+            source_bytes=source_bytes,
+            summary=summary,
+            confidence=0.90 - (index * 0.05),
+            verification_reason="verified_multimodal_observation",
+            source_refs=(f"verification:v038:{index}",),
+            transformation_lineage=lineage,
+        )
+        evidences.append(evidence)
+        records.append(
+            ingest_multimodal_observation(
+                engine,
+                evidence,
+                goal="integrate verified multimodal evidence",
+            )
+        )
+
+    history_after_first_pass = len(engine.observation_history)
+    replay = ingest_multimodal_observation(
+        engine,
+        evidences[0],
+        goal="integrate verified multimodal evidence",
+    )
+    replay_idempotent = (
+        replay.id == records[0].id
+        and len(engine.observation_history) == history_after_first_pass
+    )
+
+    rejected_without_state_change = False
+    state_before_rejection = engine.export_state()
+    try:
+        normalize_multimodal_observation(
+            modality="image",
+            media_type="image/png",
+            source_name="unverified.png",
+            source_bytes=b"unverified-v038",
+            summary="This claim must not enter cognitive state.",
+            confidence=0.8,
+            verification_reason="model_claim_only",
+            source_refs=("claim:v038",),
+            transformation_lineage=("vision-caption:v1",),
+        )
+    except ValueError:
+        rejected_without_state_change = engine.export_state() == state_before_rejection
+
+    restored = UnarchiEngine.from_export(engine.export_state())
+    hits = restored.retrieve_persistent_memory(
+        "pressure configured limit telemetry",
+        limit=5,
+    )
+
+    return {
+        "name": "multimodal_observation_normalization",
+        "expected_direction": (
+            "verified image, audio, video, document, and structured-data "
+            "observations share one provenance-preserving evidence contract"
+        ),
+        "passed": (
+            {item.modality for item in evidences}
+            == {"image", "audio", "video", "document", "structured_data"}
+            and all(item.transformation_lineage for item in evidences)
+            and all(
+                f"sha256:{item.source_sha256}" in item.source_refs
+                for item in evidences
+            )
+            and all(
+                record.kind.startswith("multimodal:")
+                for record in records
+            )
+            and replay_idempotent
+            and rejected_without_state_change
+            and len(restored.observation_history) == history_after_first_pass
+            and bool(hits)
+            and hits[0].kind == "multimodal:structured_data"
+        ),
+        "modalities": tuple(item.modality for item in evidences),
+        "lineage_explicit": all(
+            bool(item.transformation_lineage) for item in evidences
+        ),
+        "replay_idempotent": replay_idempotent,
+        "rejected_without_state_change": rejected_without_state_change,
+        "restart_preserved": (
+            len(restored.observation_history) == history_after_first_pass
+            and bool(hits)
+        ),
+        "top_retrieval_kind": hits[0].kind if hits else None,
+    }
+
 def run_unarchi_ablation_benchmark() -> dict[str, Any]:
     scenarios = [
         _failure_sensitization(),
@@ -5187,6 +5338,7 @@ def run_unarchi_ablation_benchmark() -> dict[str, Any]:
         _resource_aware_cognition(),
         _persistent_memory_retrieval_consolidation(),
         _verified_tool_feedback_loop(),
+        _multimodal_observation_normalization(),
     ]
     passed = sum(bool(item["passed"]) for item in scenarios)
     return {
