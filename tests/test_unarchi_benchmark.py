@@ -4,8 +4,8 @@ from backend.app.services.unarchi_benchmark import run_unarchi_ablation_benchmar
 def test_unarchi_ablation_benchmark_passes_all_scenarios() -> None:
     result = run_unarchi_ablation_benchmark()
 
-    assert result["scenario_count"] == 35
-    assert result["passed_scenarios"] == 35
+    assert result["scenario_count"] == 36
+    assert result["passed_scenarios"] == 36
     assert result["pass_rate"] == 1.0
     assert result["claims_phenomenal_consciousness"] is False
 
