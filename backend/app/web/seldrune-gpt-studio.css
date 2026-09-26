@@ -111,3 +111,18 @@
       color-mix(in srgb,var(--portal-accent) 30%,transparent),
       color-mix(in srgb,var(--portal-accent-2) 24%,transparent))!important;
 }
+.gpt-studio-runtime #seldrune-gpt-capabilities[data-state="ready"]{
+  color:#b7ffe4;
+  border-color:rgba(76,220,168,.35);
+}
+.gpt-studio-runtime #seldrune-gpt-capabilities[data-state="attention"]{
+  color:#ffe2a6;
+  border-color:rgba(255,192,89,.42);
+}
+.gpt-approval-card{
+  border-color:color-mix(in srgb,var(--portal-accent) 38%,var(--portal-line))!important;
+  background:linear-gradient(135deg,rgba(255,190,86,.055),rgba(255,255,255,.025))!important;
+}
+.gpt-approval-card>strong{color:#ffe2a6}
+.gpt-approval-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.gpt-approval-actions button{min-height:38px;padding:8px 13px}
