@@ -210,9 +210,15 @@ STAGES = (
         "Select models and tools using capability, cost, confidence, and outcomes.",
         "unarchi",
         1,
-        "pending",
+        "completed",
         ("unarchi_v38", "model_router_recency"),
         ("orchestration", "reasoning"),
+        evidence_refs=(
+            "pr:337",
+            "git:main:97c6923373c4951ea7c5c8abae5b74be9b6066ca",
+            "railway:0a0a59e2-47eb-4565-af03-b6d296236eeb",
+            "benchmark:model_and_skill_orchestration",
+        ),
     ),
     StageDefinition(
         "unarchi_v40",
