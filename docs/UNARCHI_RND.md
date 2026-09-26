@@ -2061,8 +2061,44 @@ This is functional orchestration research, not unrestricted autonomy. The
 selector cannot invoke a provider, approve a tool, spend money, or bypass
 existing permissions and evidence gates.
 
-## Next checkpoint: v0.40 full cognitive validation
+## v0.40 full cognitive validation checkpoint
 
-The next research step should run long-horizon adversarial, recovery,
-degradation, multimodal, routing, and orchestration benchmarks together before
-any v1.0 claim.
+UNARCHI v0.40 is a validation checkpoint rather than an expansion of external
+authority. It aggregates the highest-risk cognitive mechanisms into one
+deterministic gate before any v1.0 research-baseline claim.
+
+The v0.40 validation reruns the critical checkpoints for:
+
+- renewed degradation recovery;
+- repeated-episode evidence isolation;
+- multi-hypothesis arbitration;
+- hierarchical long-horizon planning and branch-local replanning;
+- resource-aware bounded cognition;
+- provenance-preserving persistent memory;
+- verified tool-outcome feedback;
+- multimodal evidence normalization; and
+- model/skill orchestration.
+
+It also injects fresh adversarial claims that attempt to enter state through
+unverified tool feedback, unverified multimodal evidence, and outcome-derived
+routing without provenance. Each must fail closed without mutating cognitive
+state. A final export/restore check requires identical bounded state after a
+validation episode.
+
+The deterministic v0.40 benchmark requires all nine critical scenario families
+to pass together, all three fresh adversarial claims to be rejected, restart
+continuity to hold, and both consciousness and general-intelligence claims to
+remain false.
+
+v0.40 accepts v0.39 and earlier supported exports for backward-compatible state
+restoration while new snapshots identify themselves as `unarchi-v0.40`.
+
+Passing this checkpoint can support a bounded **v1.0 research baseline** for the
+implemented architecture only. It is not evidence of AGI, subjective
+consciousness, unrestricted autonomy, or guaranteed real-world competence.
+
+## Post-v0.40 research direction
+
+Future work should be evidence-driven and domain-specific: improve measured
+generalization, reliability, cost, multimodal grounding, and governed execution
+only when independent benchmarks show a reproducible gain.
