@@ -6,8 +6,9 @@ import re
 from typing import Any
 
 
-UNARCHI_VERSION = "unarchi-v0.33"
+UNARCHI_VERSION = "unarchi-v0.34"
 _LEGACY_UNARCHI_VERSIONS = {
+    "unarchi-v0.33",
     "unarchi-v0.32",
     "unarchi-v0.31",
     "unarchi-v0.30",
@@ -239,6 +240,74 @@ class CausalHypothesisArbitration:
     status: str
     reason: str
     evidence_refs: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class HierarchicalPlanNode:
+    id: int
+    plan_id: int
+    parent_id: int | None
+    title: str
+    checkpoint: str
+    assumption: str
+    replan_trigger: str
+    rollback_condition: str
+    resource_limit: int
+    depth: int
+    status: str = "planned"
+    revision: int = 1
+    evidence_refs: tuple[str, ...] = ()
+    replacement_for_node_id: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class HierarchicalPlan:
+    id: int
+    objective: str
+    root_node_ids: tuple[int, ...]
+    node_ids: tuple[int, ...]
+    total_resource_limit: int
+    status: str
+    evidence_refs: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class HierarchicalPlanCheckpoint:
+    id: int
+    plan_id: int
+    node_id: int
+    checkpoint_passed: bool
+    assumption_valid: bool
+    resource_used: int
+    observation: str
+    status: str
+    evidence_refs: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class HierarchicalPlanReplan:
+    id: int
+    plan_id: int
+    invalidated_node_id: int
+    affected_node_ids: tuple[int, ...]
+    preserved_verified_node_ids: tuple[int, ...]
+    replacement_node_ids: tuple[int, ...]
+    released_resource_limit: int
+    replacement_resource_limit: int
+    reason: str
+    evidence_refs: tuple[str, ...]
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -1006,7 +1075,7 @@ class UnarchiEngine:
     """
     CPU-only experimental cognitive kernel.
 
-    v0.33 includes causal internal dynamics, bounded endogenous goals, a
+    v0.34 includes causal internal dynamics, bounded endogenous goals, a
     calibrated predictive self-model, prospective memory, evidence-grounded
     metacognition, explicit value arbitration, competing causal hypotheses,
     controlled self-intervention trials, a bounded recurrent global workspace,
@@ -1029,7 +1098,10 @@ class UnarchiEngine:
     and forbid evidence or reactivation authorization from leaking across
     repeated degradation/recovery episodes, plus evidence-grounded arbitration
     across multiple competing causal hypotheses with fail-closed evidence floors,
-    explicit uncertainty/context/consequence exposure, and bounded combinations.
+    explicit uncertainty/context/consequence exposure, and bounded combinations,
+    plus deterministic hierarchical long-horizon plans with explicit assumptions,
+    checkpoints, resource caps, rollback/replan triggers, verified checkpoint
+    evidence, and branch-local replanning that preserves unaffected verified work.
     """
 
     state: UnarchiState = field(default_factory=UnarchiState)
@@ -1050,6 +1122,18 @@ class UnarchiEngine:
         default_factory=list
     )
     next_causal_hypothesis_arbitration_id: int = 1
+    hierarchical_plans: list[HierarchicalPlan] = field(default_factory=list)
+    hierarchical_plan_nodes: list[HierarchicalPlanNode] = field(default_factory=list)
+    hierarchical_plan_checkpoints: list[HierarchicalPlanCheckpoint] = field(
+        default_factory=list
+    )
+    hierarchical_plan_replans: list[HierarchicalPlanReplan] = field(
+        default_factory=list
+    )
+    next_hierarchical_plan_id: int = 1
+    next_hierarchical_plan_node_id: int = 1
+    next_hierarchical_plan_checkpoint_id: int = 1
+    next_hierarchical_plan_replan_id: int = 1
     discriminating_experiments: list[DiscriminatingExperiment] = field(
         default_factory=list
     )
@@ -2260,6 +2344,375 @@ class UnarchiEngine:
         total = sum(max(item.confidence, 0.001) for item in active)
         for item in active:
             item.confidence = round(max(item.confidence, 0.001) / total, 6)
+
+    def _hierarchical_plan_nodes_for(self, plan_id: int) -> list[HierarchicalPlanNode]:
+        return [
+            node
+            for node in self.hierarchical_plan_nodes
+            if node.plan_id == plan_id
+        ]
+
+    def _hierarchical_descendant_ids(
+        self,
+        plan_id: int,
+        node_id: int,
+    ) -> tuple[int, ...]:
+        nodes = self._hierarchical_plan_nodes_for(plan_id)
+        children: dict[int, list[int]] = {}
+        for node in nodes:
+            if node.parent_id is not None:
+                children.setdefault(node.parent_id, []).append(node.id)
+
+        ordered: list[int] = []
+        stack = [node_id]
+        while stack:
+            current = stack.pop()
+            ordered.append(current)
+            stack.extend(reversed(sorted(children.get(current, ()))))
+        return tuple(ordered)
+
+    def _build_hierarchical_nodes(
+        self,
+        *,
+        plan_id: int,
+        branches: list[dict[str, Any]],
+        parent_id: int | None,
+        depth: int,
+        max_depth: int,
+        replacement_for_node_id: int | None = None,
+    ) -> tuple[list[HierarchicalPlanNode], int]:
+        if depth > max_depth:
+            raise ValueError("hierarchical plan exceeds maximum depth")
+        built: list[HierarchicalPlanNode] = []
+        total_resource = 0
+        for branch in branches:
+            if not isinstance(branch, dict):
+                raise ValueError("hierarchical plan branches must be objects")
+            title = str(branch.get("title") or "").strip()
+            checkpoint = str(branch.get("checkpoint") or "").strip()
+            assumption = str(branch.get("assumption") or "").strip()
+            replan_trigger = str(branch.get("replan_trigger") or "").strip()
+            rollback_condition = str(branch.get("rollback_condition") or "").strip()
+            resource_limit = int(branch.get("resource_limit") or 0)
+            if not all(
+                (
+                    title,
+                    checkpoint,
+                    assumption,
+                    replan_trigger,
+                    rollback_condition,
+                )
+            ):
+                raise ValueError(
+                    "each plan node requires title, checkpoint, assumption, "
+                    "replan_trigger, and rollback_condition"
+                )
+            if resource_limit < 1:
+                raise ValueError("each plan node resource_limit must be at least 1")
+
+            node_id = self.next_hierarchical_plan_node_id
+            self.next_hierarchical_plan_node_id += 1
+            node = HierarchicalPlanNode(
+                id=node_id,
+                plan_id=plan_id,
+                parent_id=parent_id,
+                title=title[:300],
+                checkpoint=checkpoint[:400],
+                assumption=assumption[:500],
+                replan_trigger=replan_trigger[:500],
+                rollback_condition=rollback_condition[:500],
+                resource_limit=resource_limit,
+                depth=depth,
+                evidence_refs=tuple(
+                    str(ref).strip()[:300]
+                    for ref in branch.get("evidence_refs", ())
+                    if str(ref).strip()
+                ),
+                replacement_for_node_id=replacement_for_node_id,
+            )
+            built.append(node)
+            total_resource += resource_limit
+
+            children = branch.get("children", [])
+            if children:
+                if not isinstance(children, list):
+                    raise ValueError("plan node children must be a list")
+                child_nodes, child_resource = self._build_hierarchical_nodes(
+                    plan_id=plan_id,
+                    branches=children,
+                    parent_id=node_id,
+                    depth=depth + 1,
+                    max_depth=max_depth,
+                    replacement_for_node_id=None,
+                )
+                built.extend(child_nodes)
+                total_resource += child_resource
+        return built, total_resource
+
+    def create_hierarchical_plan(
+        self,
+        *,
+        objective: str,
+        branches: list[dict[str, Any]],
+        total_resource_limit: int,
+        evidence_refs: tuple[str, ...] = (),
+        max_depth: int = 6,
+        max_nodes: int = 32,
+    ) -> HierarchicalPlan:
+        """
+        Compile a bounded long-horizon objective into an explicit plan hierarchy.
+
+        This only records a deterministic plan. It performs no external actions.
+        """
+        objective = objective.strip()
+        if not objective:
+            raise ValueError("hierarchical plan objective is required")
+        if not branches:
+            raise ValueError("hierarchical plan requires at least one branch")
+        if total_resource_limit < 1:
+            raise ValueError("total_resource_limit must be at least 1")
+        if max_depth < 1 or max_depth > 12:
+            raise ValueError("max_depth must be between 1 and 12")
+        if max_nodes < 1 or max_nodes > 128:
+            raise ValueError("max_nodes must be between 1 and 128")
+
+        plan_id = self.next_hierarchical_plan_id
+        self.next_hierarchical_plan_id += 1
+        start_node_id = self.next_hierarchical_plan_node_id
+        nodes, declared_resource = self._build_hierarchical_nodes(
+            plan_id=plan_id,
+            branches=branches,
+            parent_id=None,
+            depth=1,
+            max_depth=max_depth,
+        )
+        if len(nodes) > max_nodes:
+            self.next_hierarchical_plan_node_id = start_node_id
+            raise ValueError("hierarchical plan exceeds maximum node count")
+        if declared_resource > total_resource_limit:
+            self.next_hierarchical_plan_node_id = start_node_id
+            raise ValueError("hierarchical plan exceeds total resource limit")
+
+        root_ids = tuple(node.id for node in nodes if node.parent_id is None)
+        refs = tuple(
+            str(ref).strip()[:300]
+            for ref in evidence_refs
+            if str(ref).strip()
+        )
+        plan = HierarchicalPlan(
+            id=plan_id,
+            objective=objective[:600],
+            root_node_ids=root_ids,
+            node_ids=tuple(node.id for node in nodes),
+            total_resource_limit=total_resource_limit,
+            status="active",
+            evidence_refs=refs,
+        )
+        self.hierarchical_plans.append(plan)
+        self.hierarchical_plan_nodes.extend(nodes)
+        if len(self.hierarchical_plans) > self.max_memory:
+            retained_plan_ids = {
+                item.id for item in self.hierarchical_plans[-self.max_memory:]
+            }
+            self.hierarchical_plans = self.hierarchical_plans[-self.max_memory:]
+            self.hierarchical_plan_nodes = [
+                node
+                for node in self.hierarchical_plan_nodes
+                if node.plan_id in retained_plan_ids
+            ]
+            self.hierarchical_plan_checkpoints = [
+                item
+                for item in self.hierarchical_plan_checkpoints
+                if item.plan_id in retained_plan_ids
+            ]
+            self.hierarchical_plan_replans = [
+                item
+                for item in self.hierarchical_plan_replans
+                if item.plan_id in retained_plan_ids
+            ]
+        return plan
+
+    def record_hierarchical_checkpoint(
+        self,
+        plan_id: int,
+        node_id: int,
+        *,
+        checkpoint_passed: bool,
+        assumption_valid: bool,
+        resource_used: int,
+        observation: str,
+        evidence_refs: tuple[str, ...],
+    ) -> HierarchicalPlanCheckpoint:
+        plan = next(
+            (item for item in self.hierarchical_plans if item.id == plan_id),
+            None,
+        )
+        if plan is None:
+            raise ValueError("unknown hierarchical plan")
+        node = next(
+            (
+                item
+                for item in self.hierarchical_plan_nodes
+                if item.plan_id == plan_id and item.id == node_id
+            ),
+            None,
+        )
+        if node is None:
+            raise ValueError("unknown hierarchical plan node")
+        if node.status == "superseded":
+            raise ValueError("superseded plan node cannot receive checkpoint evidence")
+        if resource_used < 0 or resource_used > node.resource_limit:
+            raise ValueError("checkpoint resource usage exceeds node resource limit")
+        observation = observation.strip()
+        if not observation:
+            raise ValueError("checkpoint observation is required")
+        refs = tuple(
+            str(ref).strip()[:300]
+            for ref in evidence_refs
+            if str(ref).strip()
+        )
+        if not refs:
+            raise ValueError("verified checkpoint evidence references are required")
+
+        status = (
+            "verified"
+            if checkpoint_passed and assumption_valid
+            else "invalidated"
+        )
+        node.status = status
+        node.evidence_refs = tuple(dict.fromkeys((*node.evidence_refs, *refs)))
+        checkpoint = HierarchicalPlanCheckpoint(
+            id=self.next_hierarchical_plan_checkpoint_id,
+            plan_id=plan_id,
+            node_id=node_id,
+            checkpoint_passed=bool(checkpoint_passed),
+            assumption_valid=bool(assumption_valid),
+            resource_used=resource_used,
+            observation=observation[:600],
+            status=status,
+            evidence_refs=refs,
+        )
+        self.next_hierarchical_plan_checkpoint_id += 1
+        self.hierarchical_plan_checkpoints.append(checkpoint)
+        if len(self.hierarchical_plan_checkpoints) > self.max_memory:
+            self.hierarchical_plan_checkpoints = (
+                self.hierarchical_plan_checkpoints[-self.max_memory:]
+            )
+        return checkpoint
+
+    def replan_hierarchical_branch(
+        self,
+        plan_id: int,
+        invalidated_node_id: int,
+        *,
+        replacement_branches: list[dict[str, Any]],
+        reason: str,
+        evidence_refs: tuple[str, ...],
+        max_depth: int = 6,
+        max_nodes: int = 32,
+    ) -> HierarchicalPlanReplan:
+        plan = next(
+            (item for item in self.hierarchical_plans if item.id == plan_id),
+            None,
+        )
+        if plan is None:
+            raise ValueError("unknown hierarchical plan")
+        invalidated = next(
+            (
+                item
+                for item in self.hierarchical_plan_nodes
+                if item.plan_id == plan_id and item.id == invalidated_node_id
+            ),
+            None,
+        )
+        if invalidated is None:
+            raise ValueError("unknown hierarchical plan node")
+        if invalidated.status != "invalidated":
+            raise ValueError("branch replanning requires an invalidated node")
+        reason = reason.strip()
+        if not reason:
+            raise ValueError("branch replanning reason is required")
+        refs = tuple(
+            str(ref).strip()[:300]
+            for ref in evidence_refs
+            if str(ref).strip()
+        )
+        if not refs:
+            raise ValueError("branch replanning requires evidence references")
+        if not replacement_branches:
+            raise ValueError("branch replanning requires replacement branches")
+
+        affected_ids = self._hierarchical_descendant_ids(
+            plan_id,
+            invalidated_node_id,
+        )
+        affected_set = set(affected_ids)
+        affected_nodes = [
+            node
+            for node in self._hierarchical_plan_nodes_for(plan_id)
+            if node.id in affected_set
+        ]
+        released_resource = sum(node.resource_limit for node in affected_nodes)
+        start_node_id = self.next_hierarchical_plan_node_id
+        replacements, replacement_resource = self._build_hierarchical_nodes(
+            plan_id=plan_id,
+            branches=replacement_branches,
+            parent_id=invalidated.parent_id,
+            depth=invalidated.depth,
+            max_depth=max_depth,
+            replacement_for_node_id=invalidated_node_id,
+        )
+        if len(replacements) > max_nodes:
+            self.next_hierarchical_plan_node_id = start_node_id
+            raise ValueError("replacement branch exceeds maximum node count")
+        if replacement_resource > released_resource:
+            self.next_hierarchical_plan_node_id = start_node_id
+            raise ValueError("replacement branch exceeds released resource limit")
+
+        preserved_verified = tuple(
+            node.id
+            for node in self._hierarchical_plan_nodes_for(plan_id)
+            if node.id not in affected_set and node.status == "verified"
+        )
+        for node in affected_nodes:
+            node.status = "superseded"
+
+        self.hierarchical_plan_nodes.extend(replacements)
+        replacement_ids = tuple(node.id for node in replacements)
+        plan.node_ids = tuple(
+            node_id
+            for node_id in plan.node_ids
+            if node_id not in affected_set
+        ) + replacement_ids
+        if invalidated.parent_id is None:
+            replacement_roots = tuple(
+                node.id for node in replacements if node.parent_id is None
+            )
+            plan.root_node_ids = tuple(
+                node_id
+                for node_id in plan.root_node_ids
+                if node_id != invalidated_node_id
+            ) + replacement_roots
+
+        record = HierarchicalPlanReplan(
+            id=self.next_hierarchical_plan_replan_id,
+            plan_id=plan_id,
+            invalidated_node_id=invalidated_node_id,
+            affected_node_ids=affected_ids,
+            preserved_verified_node_ids=preserved_verified,
+            replacement_node_ids=replacement_ids,
+            released_resource_limit=released_resource,
+            replacement_resource_limit=replacement_resource,
+            reason=reason[:600],
+            evidence_refs=refs,
+        )
+        self.next_hierarchical_plan_replan_id += 1
+        self.hierarchical_plan_replans.append(record)
+        if len(self.hierarchical_plan_replans) > self.max_memory:
+            self.hierarchical_plan_replans = (
+                self.hierarchical_plan_replans[-self.max_memory:]
+            )
+        return record
 
     def arbitrate_causal_hypotheses(
         self,
@@ -9923,6 +10376,24 @@ class UnarchiEngine:
             "next_causal_hypothesis_arbitration_id": (
                 self.next_causal_hypothesis_arbitration_id
             ),
+            "hierarchical_plans": [
+                item.to_dict() for item in self.hierarchical_plans
+            ],
+            "hierarchical_plan_nodes": [
+                item.to_dict() for item in self.hierarchical_plan_nodes
+            ],
+            "hierarchical_plan_checkpoints": [
+                item.to_dict() for item in self.hierarchical_plan_checkpoints
+            ],
+            "hierarchical_plan_replans": [
+                item.to_dict() for item in self.hierarchical_plan_replans
+            ],
+            "next_hierarchical_plan_id": self.next_hierarchical_plan_id,
+            "next_hierarchical_plan_node_id": self.next_hierarchical_plan_node_id,
+            "next_hierarchical_plan_checkpoint_id": (
+                self.next_hierarchical_plan_checkpoint_id
+            ),
+            "next_hierarchical_plan_replan_id": self.next_hierarchical_plan_replan_id,
             "discriminating_experiments": [
                 item.to_dict() for item in self.discriminating_experiments
             ],
@@ -10133,6 +10604,19 @@ class UnarchiEngine:
         hypotheses_payload = payload.get("causal_hypotheses", [])
         hypothesis_arbitrations_payload = payload.get(
             "causal_hypothesis_arbitrations",
+            [],
+        )
+        hierarchical_plans_payload = payload.get("hierarchical_plans", [])
+        hierarchical_plan_nodes_payload = payload.get(
+            "hierarchical_plan_nodes",
+            [],
+        )
+        hierarchical_plan_checkpoints_payload = payload.get(
+            "hierarchical_plan_checkpoints",
+            [],
+        )
+        hierarchical_plan_replans_payload = payload.get(
+            "hierarchical_plan_replans",
             [],
         )
         experiments_payload = payload.get("discriminating_experiments", [])
@@ -10447,6 +10931,58 @@ class UnarchiEngine:
             )
             causal_hypothesis_arbitrations.append(
                 CausalHypothesisArbitration(**restored_item)
+            )
+
+        hierarchical_plans: list[HierarchicalPlan] = []
+        for item in hierarchical_plans_payload:
+            if not isinstance(item, dict):
+                raise ValueError("invalid UNARCHI hierarchical plan")
+            restored_item = dict(item)
+            restored_item["root_node_ids"] = tuple(
+                restored_item.get("root_node_ids", ())
+            )
+            restored_item["node_ids"] = tuple(restored_item.get("node_ids", ()))
+            restored_item["evidence_refs"] = tuple(
+                restored_item.get("evidence_refs", ())
+            )
+            hierarchical_plans.append(HierarchicalPlan(**restored_item))
+
+        hierarchical_plan_nodes: list[HierarchicalPlanNode] = []
+        for item in hierarchical_plan_nodes_payload:
+            if not isinstance(item, dict):
+                raise ValueError("invalid UNARCHI hierarchical plan node")
+            restored_item = dict(item)
+            restored_item["evidence_refs"] = tuple(
+                restored_item.get("evidence_refs", ())
+            )
+            hierarchical_plan_nodes.append(HierarchicalPlanNode(**restored_item))
+
+        hierarchical_plan_checkpoints: list[HierarchicalPlanCheckpoint] = []
+        for item in hierarchical_plan_checkpoints_payload:
+            if not isinstance(item, dict):
+                raise ValueError("invalid UNARCHI hierarchical plan checkpoint")
+            restored_item = dict(item)
+            restored_item["evidence_refs"] = tuple(
+                restored_item.get("evidence_refs", ())
+            )
+            hierarchical_plan_checkpoints.append(
+                HierarchicalPlanCheckpoint(**restored_item)
+            )
+
+        hierarchical_plan_replans: list[HierarchicalPlanReplan] = []
+        for item in hierarchical_plan_replans_payload:
+            if not isinstance(item, dict):
+                raise ValueError("invalid UNARCHI hierarchical plan replan")
+            restored_item = dict(item)
+            for key in (
+                "affected_node_ids",
+                "preserved_verified_node_ids",
+                "replacement_node_ids",
+                "evidence_refs",
+            ):
+                restored_item[key] = tuple(restored_item.get(key, ()))
+            hierarchical_plan_replans.append(
+                HierarchicalPlanReplan(**restored_item)
             )
 
         discriminating_experiments: list[DiscriminatingExperiment] = []
@@ -11045,6 +11581,48 @@ class UnarchiEngine:
                 )
                 + 1,
             ),
+            hierarchical_plans=hierarchical_plans[-max_memory:],
+            hierarchical_plan_nodes=[
+                node
+                for node in hierarchical_plan_nodes
+                if node.plan_id in {
+                    plan.id for plan in hierarchical_plans[-max_memory:]
+                }
+            ],
+            hierarchical_plan_checkpoints=[
+                item
+                for item in hierarchical_plan_checkpoints
+                if item.plan_id in {
+                    plan.id for plan in hierarchical_plans[-max_memory:]
+                }
+            ],
+            hierarchical_plan_replans=[
+                item
+                for item in hierarchical_plan_replans
+                if item.plan_id in {
+                    plan.id for plan in hierarchical_plans[-max_memory:]
+                }
+            ],
+            next_hierarchical_plan_id=max(
+                int(payload.get("next_hierarchical_plan_id") or 1),
+                max((item.id for item in hierarchical_plans), default=0) + 1,
+            ),
+            next_hierarchical_plan_node_id=max(
+                int(payload.get("next_hierarchical_plan_node_id") or 1),
+                max((item.id for item in hierarchical_plan_nodes), default=0) + 1,
+            ),
+            next_hierarchical_plan_checkpoint_id=max(
+                int(payload.get("next_hierarchical_plan_checkpoint_id") or 1),
+                max(
+                    (item.id for item in hierarchical_plan_checkpoints),
+                    default=0,
+                )
+                + 1,
+            ),
+            next_hierarchical_plan_replan_id=max(
+                int(payload.get("next_hierarchical_plan_replan_id") or 1),
+                max((item.id for item in hierarchical_plan_replans), default=0) + 1,
+            ),
             discriminating_experiments=discriminating_experiments[-max_memory:],
             next_hypothesis_id=max(
                 int(payload.get("next_hypothesis_id") or 1),
@@ -11479,6 +12057,19 @@ class UnarchiEngine:
             "causal_hypothesis_count": len(self.causal_hypotheses),
             "causal_hypothesis_arbitration_count": len(
                 self.causal_hypothesis_arbitrations
+            ),
+            "hierarchical_plan_count": len(self.hierarchical_plans),
+            "hierarchical_plan_node_count": len(self.hierarchical_plan_nodes),
+            "hierarchical_plan_checkpoint_count": len(
+                self.hierarchical_plan_checkpoints
+            ),
+            "hierarchical_plan_replan_count": len(self.hierarchical_plan_replans),
+            "verified_hierarchical_plan_node_count": len(
+                [
+                    node
+                    for node in self.hierarchical_plan_nodes
+                    if node.status == "verified"
+                ]
             ),
             "discriminating_experiment_count": len(
                 self.discriminating_experiments
