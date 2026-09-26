@@ -167,7 +167,7 @@ def test_snapshot_never_claims_phenomenal_consciousness() -> None:
     snapshot = engine.snapshot()
 
     assert snapshot["claims_phenomenal_consciousness"] is False
-    assert snapshot["version"] == "unarchi-v0.34"
+    assert snapshot["version"] == "unarchi-v0.35"
 
 
 def test_export_restore_preserves_identity_state_and_memory() -> None:
@@ -5692,7 +5692,7 @@ def test_v033_arbitration_survives_export_restore() -> None:
     )
     restored = UnarchiEngine.from_export(engine.export_state())
 
-    assert restored.snapshot()["version"] == "unarchi-v0.34"
+    assert restored.snapshot()["version"] == "unarchi-v0.35"
     assert restored.causal_hypothesis_arbitrations == engine.causal_hypothesis_arbitrations
     assert restored.causal_hypothesis_arbitrations[-1].id == arbitration.id
     assert restored.snapshot()["causal_hypothesis_arbitration_count"] == 1
@@ -5936,7 +5936,7 @@ def test_v034_hierarchical_planning_survives_export_restore() -> None:
 
     restored = UnarchiEngine.from_export(engine.export_state())
 
-    assert restored.snapshot()["version"] == "unarchi-v0.34"
+    assert restored.snapshot()["version"] == "unarchi-v0.35"
     assert restored.hierarchical_plans == engine.hierarchical_plans
     assert restored.hierarchical_plan_nodes == engine.hierarchical_plan_nodes
     assert restored.hierarchical_plan_checkpoints == engine.hierarchical_plan_checkpoints
@@ -5944,3 +5944,118 @@ def test_v034_hierarchical_planning_survives_export_restore() -> None:
     assert restored.snapshot()["hierarchical_plan_count"] == 1
     assert restored.snapshot()["hierarchical_plan_replan_count"] == 1
     assert restored.snapshot()["verified_hierarchical_plan_node_count"] == 1
+
+
+def _v035_options() -> list[dict[str, float | str]]:
+    return [
+        {
+            "name": "economical",
+            "expected_value": 0.80,
+            "money_cost": 2.0,
+            "compute_units": 20.0,
+            "latency_ms": 200.0,
+            "risk": 0.10,
+            "uncertainty": 0.10,
+            "information_gain": 0.35,
+            "reliability": 0.85,
+        },
+        {
+            "name": "costly-similar",
+            "expected_value": 0.82,
+            "money_cost": 8.0,
+            "compute_units": 80.0,
+            "latency_ms": 800.0,
+            "risk": 0.20,
+            "uncertainty": 0.10,
+            "information_gain": 0.40,
+            "reliability": 0.87,
+        },
+    ]
+
+
+def _v035_budgets() -> dict[str, float]:
+    return {
+        "money_budget": 10.0,
+        "compute_budget": 100.0,
+        "latency_budget_ms": 1000.0,
+        "max_risk": 0.50,
+        "max_uncertainty": 0.50,
+    }
+
+
+def test_v035_similar_value_prefers_lower_resource_burden() -> None:
+    engine = UnarchiEngine()
+
+    decision = engine.choose_resource_aware_option(
+        context="bounded release planning",
+        options=_v035_options(),
+        evidence_refs=("v035:test:comparable-value",),
+        **_v035_budgets(),
+    )
+
+    burdens = dict(decision.resource_burdens)
+    assert decision.status == "selected"
+    assert decision.selected_option == "economical"
+    assert burdens["economical"] < burdens["costly-similar"]
+    assert "lower-resource option" in decision.reason
+
+
+def test_v035_measured_information_gain_can_justify_resource_premium() -> None:
+    engine = UnarchiEngine()
+    options = _v035_options()
+    options[1] = {
+        **options[1],
+        "name": "informative-premium",
+        "information_gain": 0.95,
+        "reliability": 0.98,
+    }
+
+    decision = engine.choose_resource_aware_option(
+        context="pay more only for measured decision quality",
+        options=options,
+        evidence_refs=("v035:test:information-gain",),
+        **_v035_budgets(),
+    )
+
+    burdens = dict(decision.resource_burdens)
+    assert decision.selected_option == "informative-premium"
+    assert burdens["informative-premium"] > burdens["economical"]
+    assert "justifies" in decision.reason
+
+
+def test_v035_budget_violations_fail_closed_and_persist() -> None:
+    engine = UnarchiEngine()
+    options = _v035_options() + [
+        {
+            "name": "over-budget",
+            "expected_value": 1.0,
+            "money_cost": 20.0,
+            "compute_units": 120.0,
+            "latency_ms": 1200.0,
+            "risk": 0.65,
+            "uncertainty": 0.60,
+            "information_gain": 1.0,
+            "reliability": 1.0,
+        }
+    ]
+
+    decision = engine.choose_resource_aware_option(
+        context="hard resource boundaries",
+        options=options,
+        evidence_refs=("v035:test:hard-bounds",),
+        **_v035_budgets(),
+    )
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    assert dict(decision.rejected_options)["over-budget"] == (
+        "money,compute,latency,risk,uncertainty"
+    )
+    assert "over-budget" not in decision.feasible_names
+    assert restored.snapshot()["version"] == "unarchi-v0.35"
+    assert restored.snapshot()["resource_aware_decision_count"] == 1
+    assert restored.resource_aware_decisions == engine.resource_aware_decisions
+
+    legacy_payload = engine.export_state()
+    legacy_payload["version"] = "unarchi-v0.34"
+    legacy_restored = UnarchiEngine.from_export(legacy_payload)
+    assert legacy_restored.resource_aware_decisions == engine.resource_aware_decisions
