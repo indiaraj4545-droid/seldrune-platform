@@ -39,6 +39,22 @@ def test_gpt_operator_remains_truth_gated_and_multimodal():
     assert "Run with Seldrune" in html
 
 
+def test_creation_forge_routes_typed_projects_through_the_cognitive_operator():
+    html = (WEB / "index.html").read_text()
+    script = (WEB / "seldrune-gpt.js").read_text()
+    styles = (WEB / "seldrune-gpt-studio.css").read_text()
+
+    for mode in ("any", "app", "game", "song", "video"):
+        assert f'data-creation-mode="{mode}"' in html
+        assert f"    {mode}: {{" in script
+    assert 'id="seldrune-gpt-creation-status"' in html
+    assert "buildCreativeOrder(request)" in script
+    assert "const order = buildCreativeOrder(request);" in script
+    assert "audio as not rendered" in script
+    assert "video as not rendered" in script
+    assert ".gpt-creation-forge" in styles
+
+
 def test_portal_controller_defines_owner_workspaces_and_fixed_home():
     js = (WEB / "console-cosmic-tabs.js").read_text()
     for workspace in (

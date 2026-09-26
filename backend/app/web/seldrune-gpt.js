@@ -19,12 +19,58 @@
   const pdfPassword = document.querySelector('#seldrune-gpt-pdf-password');
   const capabilityStatus = document.querySelector('#seldrune-gpt-capabilities');
   const openToolsButton = document.querySelector('#seldrune-gpt-open-tools');
+  const creationStatus = document.querySelector('#seldrune-gpt-creation-status');
 
   const MAX_FILES = 6;
   const MAX_FILE_BYTES = 8 * 1024 * 1024;
   const MAX_PDF_EDIT_BYTES = 25 * 1024 * 1024;
   const MAX_TOTAL_BYTES = 32 * 1024 * 1024;
   const attachments = [];
+  let creationMode = 'any';
+
+  const CREATION_MODES = {
+    any: {
+      label: 'Anything',
+      guidance: '',
+      status: 'Anything · Seldrune will infer the deliverable and use configured tools. Media rendering depends on an enabled media provider.',
+    },
+    app: {
+      label: 'App',
+      guidance: 'Create a working app deliverable for the request. Use enabled development tools to write source and tests, run available checks, and report what was saved and verified. If no development tool can save source, return the source in the response and label it not persisted.',
+      status: 'App · source writing and verification use configured development tools; otherwise Seldrune returns a source proposal.',
+    },
+    game: {
+      label: 'Game',
+      guidance: 'Create a playable game deliverable for the request. Use enabled development tools to write source and tests, run available checks, and report what was saved and verified. If no development tool can save source, return the source in the response and label it not persisted.',
+      status: 'Game · source writing and verification use configured development tools; otherwise Seldrune returns a source proposal.',
+    },
+    song: {
+      label: 'Song',
+      guidance: 'Create an original song for the request. Provide lyrics, chords, tempo, structure, and production notes. If an enabled audio-generation tool is present, render audio and include its receipt. If not, return the text assets and clearly label the audio as not rendered.',
+      status: 'Song · lyrics and arrangement can be returned as text; rendered audio requires an enabled audio-generation provider.',
+    },
+    video: {
+      label: 'Video',
+      guidance: 'Create an original video package for the request: script, storyboard, shot list, and edit cues. If an enabled video-generation tool is present, render video and include its receipt. If not, return the text assets and clearly label the video as not rendered.',
+      status: 'Video · script and storyboard can be returned as text; rendered video requires an enabled video-generation provider.',
+    },
+  };
+
+  function setCreationMode(mode) {
+    const next = CREATION_MODES[mode] ? mode : 'any';
+    creationMode = next;
+    document.querySelectorAll('.gpt-creation-mode').forEach(button => {
+      const selected = button.dataset.creationMode === next;
+      button.classList.toggle('active', selected);
+      button.setAttribute('aria-pressed', String(selected));
+    });
+    if (creationStatus) creationStatus.textContent = CREATION_MODES[next].status;
+  }
+
+  function buildCreativeOrder(request) {
+    const guidance = CREATION_MODES[creationMode]?.guidance;
+    return guidance ? `${guidance}\n\nUser request: ${request}` : request;
+  }
 
   const MIME_BY_EXTENSION = {
     pdf: 'application/pdf',
@@ -329,9 +375,14 @@
 
   document.querySelectorAll('[data-gpt-prompt]').forEach(button => {
     button.addEventListener('click', () => {
+      if (button.dataset.creationMode) setCreationMode(button.dataset.creationMode);
       input.value = button.dataset.gptPrompt || '';
       input.focus();
     });
+  });
+
+  document.querySelectorAll('.gpt-creation-mode').forEach(button => {
+    button.addEventListener('click', () => setCreationMode(button.dataset.creationMode));
   });
 
   async function executeOrder(order, commandId = null, confirmed = false) {
@@ -488,14 +539,15 @@
   }
 
   executeButton?.addEventListener('click', async () => {
-    const order = input.value.trim();
-    if (!order) return;
+    const request = input.value.trim();
+    if (!request) return;
     if (attachments.length) {
       status.textContent = 'Analyze attachments with Chat first, then execute the resulting text order.';
       return;
     }
+    const order = buildCreativeOrder(request);
     setBusy(true, 'Seldrune Operator is planning and executing…');
-    addMessage('Owner order', order, 'user');
+    addMessage('Owner order · ' + CREATION_MODES[creationMode].label, request, 'user');
     input.value = '';
     try {
       let result = await executeOrder(order);

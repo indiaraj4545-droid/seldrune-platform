@@ -121,6 +121,25 @@
     <button type="button" class="gpt-quick-prompt" data-gpt-prompt="Inspect the Seldrune repository state and summarize the safest next engineering action.">Repository check</button>
     <button type="button" class="gpt-quick-prompt" data-gpt-prompt="Review current operations and identify blocked, failed, or approval-pending work.">Operations review</button>
     <button type="button" class="gpt-quick-prompt" data-gpt-prompt="Analyze the attached files and extract the most important findings, risks, and next actions.">Analyze attachments</button>
+    <section class="gpt-creation-forge" aria-labelledby="gpt-creation-title">
+      <p class="eyebrow">CREATION FORGE</p>
+      <h3 id="gpt-creation-title">Choose what to create</h3>
+      <p>Pick a deliverable, describe it below, then run a Seldrune mission.</p>
+      <div class="gpt-creation-modes" role="group" aria-label="Creation type">
+        <button type="button" class="gpt-creation-mode active" data-creation-mode="any" aria-pressed="true">Anything</button>
+        <button type="button" class="gpt-creation-mode" data-creation-mode="app" aria-pressed="false">App</button>
+        <button type="button" class="gpt-creation-mode" data-creation-mode="game" aria-pressed="false">Game</button>
+        <button type="button" class="gpt-creation-mode" data-creation-mode="song" aria-pressed="false">Song</button>
+        <button type="button" class="gpt-creation-mode" data-creation-mode="video" aria-pressed="false">Video</button>
+      </div>
+      <div class="gpt-creation-presets">
+        <button type="button" class="gpt-quick-prompt" data-creation-mode="app" data-gpt-prompt="Create a polished, responsive app for this idea. Return a runnable source structure, key screens, core behavior, and focused tests. Use enabled development tools when available, and report what was actually saved and verified.">App prototype</button>
+        <button type="button" class="gpt-quick-prompt" data-creation-mode="game" data-gpt-prompt="Create a small playable game for this idea. Include the game loop, controls, accessible feedback, and focused tests. Use enabled development tools when available, and report what was actually saved and verified.">Playable game</button>
+        <button type="button" class="gpt-quick-prompt" data-creation-mode="song" data-gpt-prompt="Create an original song for this idea. Provide lyrics, chords, tempo, structure, and production notes. If an audio-generation tool is enabled, render audio and include its receipt; otherwise clearly say the audio is not rendered.">Original song</button>
+        <button type="button" class="gpt-quick-prompt" data-creation-mode="video" data-gpt-prompt="Create an original video for this idea. Provide the script, storyboard, shot list, and edit cues. If a video-generation tool is enabled, render the video and include its receipt; otherwise clearly say the video is not rendered.">Video storyboard</button>
+      </div>
+      <small id="seldrune-gpt-creation-status" class="gpt-creation-status" aria-live="polite">Anything · Seldrune will infer the deliverable and use configured tools. Media rendering depends on an enabled media provider.</small>
+    </section>
     <div class="gpt-capability-note">
       <span>ATTACHMENTS</span>
       <small>Chat attachments: up to 6 files · 8 MB each · 20 MB total</small>
