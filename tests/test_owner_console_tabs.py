@@ -15,7 +15,6 @@ def test_owner_console_uses_single_owner_portal_shell():
     assert "/console-assets/seldrune-gpt-studio.css" in html
     assert "/console-assets/console-nexus-arena.css" in html
     assert "/console-assets/console-nexus-arena.js" in html
-    assert "/console-assets/nexus-alien-predator.svg" in html
 
     # Engineering/version presentation layers stay out of the normal owner portal.
     assert "/console-assets/console-xenobiotic.css" not in html
@@ -165,6 +164,7 @@ def test_nexus_duel_and_observatory_use_measured_system_data():
     assert 'api("/agents")' in script
     assert 'api("/tasks")' in script
     assert 'document.getElementById("sti-verified")' in script
+    assert "nexus-alien-predator.svg" in script
     assert "failedTasks" in script
     assert "CONFIGURATION NEEDED" in script
     assert "No system state was inferred from missing data." in script
