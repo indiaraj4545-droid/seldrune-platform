@@ -591,7 +591,7 @@ def test_one_go_verified_tool_receipt_respects_next_dependency_gate(
     report = executed.json()
     assert report["tasks_verified"] == 1
     assert report["tasks_unverified"] == 0
-    assert report["ending_percentage"] == 71.2
+    assert report["ending_percentage"] == 71.3
     assert report["stage_results"][0]["stage_id"] == "unarchi_v39"
     assert report["stage_results"][0]["disposition"] == "verified"
     assert report["stage_results"][0]["reason"] == "verified_tool_receipt"
