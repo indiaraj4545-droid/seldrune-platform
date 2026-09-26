@@ -1786,12 +1786,68 @@ This remains bounded functional causal research. Evidence-grounded hypothesis
 arbitration does not establish subjective identity, sentience, phenomenal
 consciousness, qualia, or unrestricted real-world causation.
 
-## Next checkpoint: v0.34 hierarchical long-horizon planning
+## v0.34 hierarchical long-horizon planning checkpoint
 
-The next research step should convert an objective into bounded goals,
-sub-goals, checkpoints and replanning triggers while preserving explicit
-evidence, resource limits and rollback conditions across the hierarchy.
+UNARCHI v0.34 adds a deterministic bounded hierarchy for long-horizon
+objectives. The hierarchy is an explicit research plan, not an autonomous
+external executor.
 
-The measurable target is plan continuity under change: when verified evidence
-invalidates an intermediate assumption, only the affected branch should be
-replanned while unaffected verified work remains reusable.
+Each plan node records:
+
+- a goal or sub-goal title and parent relationship;
+- one explicit checkpoint;
+- the assumption that permits that branch to continue;
+- the evidence condition that should trigger replanning;
+- the rollback condition for that branch;
+- a bounded resource allocation;
+- current planning status and retained evidence references.
+
+Plan creation is fail-closed when required planning fields are absent, depth or
+node bounds are exceeded, or declared branch resources exceed the plan-wide
+resource ceiling.
+
+A checkpoint cannot be promoted from narrative text alone. It requires explicit
+evidence references and records measured resource usage. A checkpoint becomes
+`verified` only when both the checkpoint and its underlying assumption remain
+valid. Otherwise the node becomes `invalidated`.
+
+Replanning is branch-local. Only an invalidated node can start a replacement
+branch. The invalidated node and its descendants become superseded, while
+verified nodes outside that branch keep their original identifiers, evidence,
+and verified status. The replacement branch cannot consume more declared
+resources than the invalidated branch releases.
+
+Every replan record therefore exposes:
+
+- the invalidated node;
+- the complete affected descendant set;
+- unaffected verified nodes preserved for reuse;
+- replacement node identifiers;
+- released versus replacement resource limits;
+- the evidence and reason that justified the branch change.
+
+The deterministic v0.34 benchmark requires:
+
+multi-branch plan -> independent branch verified -> separate intermediate
+assumption contradicted by evidence -> only that branch invalidated -> bounded
+replacement branch -> unrelated verified branch keeps the same node identity
+and evidence -> export/restore preserves the selective replan exactly.
+
+v0.34 accepts v0.33, v0.32, v0.31 and v0.30 exports for backward-compatible
+state restoration while new snapshots identify themselves as
+`unarchi-v0.34`.
+
+This is bounded functional planning research. It does not establish subjective
+identity, sentience, phenomenal consciousness, qualia, or unrestricted
+real-world autonomy.
+
+## Next checkpoint: v0.35 resource-aware cognition
+
+The next research step should make money, compute, latency, risk, and
+uncertainty first-class planning variables so plans can explicitly trade
+resource consumption against expected information and task value.
+
+The measurable target is bounded resource allocation: when two feasible plan
+branches offer similar expected value, the lower-cost branch should be preferred
+unless measured information gain or reliability justifies the additional
+resource use.

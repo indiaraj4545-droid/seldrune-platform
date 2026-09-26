@@ -167,7 +167,7 @@ def test_snapshot_never_claims_phenomenal_consciousness() -> None:
     snapshot = engine.snapshot()
 
     assert snapshot["claims_phenomenal_consciousness"] is False
-    assert snapshot["version"] == "unarchi-v0.33"
+    assert snapshot["version"] == "unarchi-v0.34"
 
 
 def test_export_restore_preserves_identity_state_and_memory() -> None:
@@ -5692,7 +5692,255 @@ def test_v033_arbitration_survives_export_restore() -> None:
     )
     restored = UnarchiEngine.from_export(engine.export_state())
 
-    assert restored.snapshot()["version"] == "unarchi-v0.33"
+    assert restored.snapshot()["version"] == "unarchi-v0.34"
     assert restored.causal_hypothesis_arbitrations == engine.causal_hypothesis_arbitrations
     assert restored.causal_hypothesis_arbitrations[-1].id == arbitration.id
     assert restored.snapshot()["causal_hypothesis_arbitration_count"] == 1
+
+
+def _v034_plan_branches() -> list[dict[str, object]]:
+    return [
+        {
+            "title": "Foundation",
+            "checkpoint": "foundation contract verified",
+            "assumption": "existing interfaces remain compatible",
+            "replan_trigger": "interface evidence contradicts compatibility",
+            "rollback_condition": "foundation verification fails",
+            "resource_limit": 25,
+            "children": [
+                {
+                    "title": "Integration",
+                    "checkpoint": "integration test suite passes",
+                    "assumption": "provider contract remains stable",
+                    "replan_trigger": "provider contract changes",
+                    "rollback_condition": "integration regression appears",
+                    "resource_limit": 20,
+                }
+            ],
+        },
+        {
+            "title": "Independent validation",
+            "checkpoint": "independent validation receipt exists",
+            "assumption": "validation environment is representative",
+            "replan_trigger": "environment mismatch is measured",
+            "rollback_condition": "validation evidence is invalid",
+            "resource_limit": 20,
+        },
+    ]
+
+
+def test_v034_hierarchical_plan_builds_bounded_tree() -> None:
+    engine = UnarchiEngine()
+    plan = engine.create_hierarchical_plan(
+        objective="ship a verified long-horizon release",
+        branches=_v034_plan_branches(),
+        total_resource_limit=80,
+        evidence_refs=("v034:objective",),
+    )
+    nodes = {
+        node.id: node
+        for node in engine.hierarchical_plan_nodes
+        if node.plan_id == plan.id
+    }
+
+    assert plan.status == "active"
+    assert len(plan.root_node_ids) == 2
+    assert len(plan.node_ids) == 3
+    assert sum(node.resource_limit for node in nodes.values()) == 65
+    assert max(node.depth for node in nodes.values()) == 2
+    assert all(node.checkpoint for node in nodes.values())
+    assert all(node.assumption for node in nodes.values())
+    assert all(node.replan_trigger for node in nodes.values())
+    assert all(node.rollback_condition for node in nodes.values())
+
+
+def test_v034_checkpoint_requires_machine_evidence_and_respects_resource_cap() -> None:
+    engine = UnarchiEngine()
+    plan = engine.create_hierarchical_plan(
+        objective="verify bounded release",
+        branches=_v034_plan_branches(),
+        total_resource_limit=80,
+    )
+    node_id = plan.root_node_ids[0]
+
+    try:
+        engine.record_hierarchical_checkpoint(
+            plan.id,
+            node_id,
+            checkpoint_passed=True,
+            assumption_valid=True,
+            resource_used=5,
+            observation="looks good",
+            evidence_refs=(),
+        )
+    except ValueError as exc:
+        assert "evidence references" in str(exc)
+    else:
+        raise AssertionError("checkpoint without evidence must fail closed")
+
+    node = next(item for item in engine.hierarchical_plan_nodes if item.id == node_id)
+    try:
+        engine.record_hierarchical_checkpoint(
+            plan.id,
+            node_id,
+            checkpoint_passed=True,
+            assumption_valid=True,
+            resource_used=node.resource_limit + 1,
+            observation="over budget",
+            evidence_refs=("ci:over-budget",),
+        )
+    except ValueError as exc:
+        assert "resource usage exceeds" in str(exc)
+    else:
+        raise AssertionError("checkpoint must respect node resource limit")
+
+
+def test_v034_replans_only_invalidated_branch_and_preserves_verified_work() -> None:
+    engine = UnarchiEngine()
+    plan = engine.create_hierarchical_plan(
+        objective="deliver a multi-branch verified program",
+        branches=_v034_plan_branches(),
+        total_resource_limit=80,
+        evidence_refs=("v034:plan",),
+    )
+    roots = list(plan.root_node_ids)
+    foundation_id = roots[0]
+    validation_id = roots[1]
+
+    verified = engine.record_hierarchical_checkpoint(
+        plan.id,
+        validation_id,
+        checkpoint_passed=True,
+        assumption_valid=True,
+        resource_used=10,
+        observation="independent validation receipt is valid",
+        evidence_refs=("ci:validation-green",),
+    )
+    invalidated = engine.record_hierarchical_checkpoint(
+        plan.id,
+        foundation_id,
+        checkpoint_passed=False,
+        assumption_valid=False,
+        resource_used=15,
+        observation="interface compatibility assumption contradicted",
+        evidence_refs=("ci:interface-break",),
+    )
+
+    before_validation = next(
+        node for node in engine.hierarchical_plan_nodes if node.id == validation_id
+    )
+    assert before_validation.status == "verified"
+    assert invalidated.status == "invalidated"
+
+    replan = engine.replan_hierarchical_branch(
+        plan.id,
+        foundation_id,
+        replacement_branches=[
+            {
+                "title": "Compatibility adapter",
+                "checkpoint": "adapter contract verified",
+                "assumption": "adapter isolates the interface break",
+                "replan_trigger": "adapter does not isolate incompatibility",
+                "rollback_condition": "adapter validation fails",
+                "resource_limit": 30,
+                "children": [
+                    {
+                        "title": "Adapter integration",
+                        "checkpoint": "adapter integration passes",
+                        "assumption": "downstream behavior remains stable",
+                        "replan_trigger": "downstream regression is measured",
+                        "rollback_condition": "adapter introduces regression",
+                        "resource_limit": 10,
+                    }
+                ],
+            }
+        ],
+        reason="verified interface evidence invalidated the original branch",
+        evidence_refs=("ci:interface-break", "review:v034-replan"),
+    )
+
+    after_validation = next(
+        node for node in engine.hierarchical_plan_nodes if node.id == validation_id
+    )
+    old_foundation = next(
+        node for node in engine.hierarchical_plan_nodes if node.id == foundation_id
+    )
+    replacement_nodes = [
+        node
+        for node in engine.hierarchical_plan_nodes
+        if node.id in replan.replacement_node_ids
+    ]
+
+    assert verified.node_id == validation_id
+    assert validation_id in replan.preserved_verified_node_ids
+    assert after_validation.id == validation_id
+    assert after_validation.status == "verified"
+    assert old_foundation.status == "superseded"
+    assert foundation_id in replan.affected_node_ids
+    assert set(replan.affected_node_ids).isdisjoint(replan.replacement_node_ids)
+    assert replan.replacement_resource_limit <= replan.released_resource_limit
+    assert all(
+        node.replacement_for_node_id == foundation_id
+        for node in replacement_nodes
+        if node.parent_id is None
+    )
+    assert validation_id in plan.node_ids
+    assert foundation_id not in plan.node_ids
+
+
+def test_v034_hierarchical_planning_survives_export_restore() -> None:
+    engine = UnarchiEngine()
+    plan = engine.create_hierarchical_plan(
+        objective="preserve plan continuity across restart",
+        branches=_v034_plan_branches(),
+        total_resource_limit=80,
+        evidence_refs=("v034:restart",),
+    )
+    invalidated_id = plan.root_node_ids[0]
+    preserved_id = plan.root_node_ids[1]
+
+    engine.record_hierarchical_checkpoint(
+        plan.id,
+        preserved_id,
+        checkpoint_passed=True,
+        assumption_valid=True,
+        resource_used=8,
+        observation="verified branch complete",
+        evidence_refs=("ci:preserved",),
+    )
+    engine.record_hierarchical_checkpoint(
+        plan.id,
+        invalidated_id,
+        checkpoint_passed=False,
+        assumption_valid=False,
+        resource_used=10,
+        observation="assumption invalidated",
+        evidence_refs=("ci:invalidated",),
+    )
+    engine.replan_hierarchical_branch(
+        plan.id,
+        invalidated_id,
+        replacement_branches=[
+            {
+                "title": "Replacement root",
+                "checkpoint": "replacement verified",
+                "assumption": "replacement removes invalid assumption",
+                "replan_trigger": "replacement assumption fails",
+                "rollback_condition": "replacement checkpoint fails",
+                "resource_limit": 30,
+            }
+        ],
+        reason="replace invalidated branch",
+        evidence_refs=("ci:invalidated",),
+    )
+
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    assert restored.snapshot()["version"] == "unarchi-v0.34"
+    assert restored.hierarchical_plans == engine.hierarchical_plans
+    assert restored.hierarchical_plan_nodes == engine.hierarchical_plan_nodes
+    assert restored.hierarchical_plan_checkpoints == engine.hierarchical_plan_checkpoints
+    assert restored.hierarchical_plan_replans == engine.hierarchical_plan_replans
+    assert restored.snapshot()["hierarchical_plan_count"] == 1
+    assert restored.snapshot()["hierarchical_plan_replan_count"] == 1
+    assert restored.snapshot()["verified_hierarchical_plan_node_count"] == 1
