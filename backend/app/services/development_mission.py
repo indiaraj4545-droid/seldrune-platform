@@ -129,9 +129,15 @@ STAGES = (
         "Turn one objective into goals, subgoals, checkpoints, and replanning.",
         "unarchi",
         3,
-        "pending",
+        "completed",
         ("unarchi_v33",),
         ("planning", "reasoning"),
+        evidence_refs=(
+            "pr:319",
+            "git:main:1ed2b054eb68fef09cef7840997d9feaaa92595b",
+            "railway:b63da220-1c78-4c09-8b45-798cfec6d47f",
+            "benchmark:hierarchical_long_horizon_planning",
+        ),
     ),
     StageDefinition(
         "unarchi_v35",
