@@ -366,7 +366,18 @@ def create_mission_agent(
 
 def test_one_go_blocks_compiled_work_before_model_without_tools(
     client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    for name in (
+        "SELDRUNE_GITHUB_TOOL_CREDENTIAL",
+        "SELDRUNE_GITHUB_APP_PRIVATE_KEY",
+        "SELDRUNE_GITHUB_APP_ID",
+        "SELDRUNE_GITHUB_APP_INSTALLATION_ID",
+        "SELDRUNE_GITHUB_TOOL_TOKEN",
+        "GITHUB_TOKEN",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
     token, organization_id = register_owner(client)
     headers = {"Authorization": f"Bearer {token}"}
     base = f"/api/v1/organizations/{organization_id}"
@@ -394,8 +405,8 @@ def test_one_go_blocks_compiled_work_before_model_without_tools(
     assert report["tasks_blocked"] == 6
     assert report["tasks_failed"] == 0
     assert report["recovery_rounds"] == 3
-    assert report["recovery_attempts"] == 0
-    assert report["recovery_configuration_gates"] == 0
+    assert report["recovery_attempts"] == 5
+    assert report["recovery_configuration_gates"] == 5
     assert report["recovery_owner_gates"] == 0
     assert report["recovery_external_resource_gates"] == 0
     assert {
@@ -409,7 +420,11 @@ def test_one_go_blocks_compiled_work_before_model_without_tools(
         "factory_build_test",
     }
     assert all(
-        item["reason"].startswith("compiled_contract_not_executable:")
+        item["disposition"] == "blocked"
+        for item in report["stage_results"]
+    )
+    assert all(
+        item["contract_execution"]["executed_steps"] == 0
         for item in report["stage_results"]
         if item["stage_id"] != "pdf_local_labels"
     )
