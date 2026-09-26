@@ -168,10 +168,10 @@ def test_development_mission_calculates_evidence_weighted_progress() -> None:
     }
 
     assert mission["version"] == "cognitive-execution-v2"
-    assert mission["overall_percentage"] == 71.8
-    assert mission["remaining_percentage"] == 28.2
+    assert mission["overall_percentage"] == 73.4
+    assert mission["remaining_percentage"] == 26.6
     assert workstreams["unarchi"]["percentage"] == 100.0
-    assert workstreams["model_bus"]["percentage"] == 85.0
+    assert workstreams["model_bus"]["percentage"] == 95.0
     assert workstreams["console"]["percentage"] == 90.0
     assert workstreams["live_media"]["percentage"] == 25.0
     assert workstreams["live_media"]["paused"] is True
@@ -194,9 +194,12 @@ def test_development_mission_calculates_evidence_weighted_progress() -> None:
     assert stages["unarchi_v40"]["status"] == "completed"
     assert stages["unarchi_v40"]["completion_source"] == "roadmap_evidence"
     assert "pr:339" in stages["unarchi_v40"]["evidence_refs"]
+    assert stages["model_verifier_fallback"]["status"] == "completed"
+    assert stages["model_verifier_fallback"]["completion_source"] == "roadmap_evidence"
+    assert "pr:341" in stages["model_verifier_fallback"]["evidence_refs"]
     assert set(mission["parallel_ready_stage_ids"]) == {
-        "model_verifier_fallback",
         "local_model_pool",
+        "cost_aware_model_router",
         "console_observability",
         "pdf_local_labels",
         "provider_connectors",
@@ -221,11 +224,11 @@ def test_mission_sync_persists_one_master_and_queues_ready_wave(
     assert first.status_code == 200
     payload = first.json()
     assert payload["created"] is True
-    assert payload["overall_percentage"] == 71.8
+    assert payload["overall_percentage"] == 73.4
     assert payload["auto_queued_count"] == 5
     assert set(payload["auto_queued_stage_ids"]) == {
-        "model_verifier_fallback",
         "local_model_pool",
+        "cost_aware_model_router",
         "console_observability",
         "pdf_local_labels",
         "provider_connectors",
@@ -293,8 +296,8 @@ def test_mission_queue_ready_is_idempotent(client: TestClient) -> None:
     assert queued.status_code == 200
     assert queued.json()["queued_count"] == 0
     assert set(queued.json()["ready_stage_ids"]) == {
-        "model_verifier_fallback",
         "local_model_pool",
+        "cost_aware_model_router",
         "console_observability",
         "pdf_local_labels",
         "provider_connectors",
@@ -379,8 +382,8 @@ def test_one_go_blocks_compiled_work_before_model_without_tools(
     assert executed.status_code == 200
     report = executed.json()
     assert report["controller_version"] == "one-go-v1"
-    assert report["starting_percentage"] == 71.8
-    assert report["ending_percentage"] == 71.8
+    assert report["starting_percentage"] == 73.4
+    assert report["ending_percentage"] == 73.4
     assert report["waves_executed"] == 1
     assert report["tasks_executed"] == 0
     assert report["tasks_verified"] == 0
@@ -408,7 +411,7 @@ def test_one_go_blocks_compiled_work_before_model_without_tools(
         headers=headers,
     )
     assert mission.status_code == 200
-    assert mission.json()["overall_percentage"] == 71.8
+    assert mission.json()["overall_percentage"] == 73.4
     assert mission.json()["one_go_execution"]["tasks_verified"] == 0
 
     invocations = client.get(
@@ -518,7 +521,7 @@ def test_one_go_verified_tool_receipt_respects_next_dependency_gate(
     report = executed.json()
     assert report["tasks_verified"] == 1
     assert report["tasks_unverified"] == 0
-    assert report["ending_percentage"] == 71.8
+    assert report["ending_percentage"] == 73.4
     assert report["stage_results"][0]["stage_id"] == "unarchi_v40"
     assert report["stage_results"][0]["disposition"] == "verified"
     assert report["stage_results"][0]["reason"] == "verified_tool_receipt"
@@ -529,7 +532,7 @@ def test_one_go_verified_tool_receipt_respects_next_dependency_gate(
     )
     assert mission.status_code == 200
     payload = mission.json()
-    assert payload["overall_percentage"] == 71.8
+    assert payload["overall_percentage"] == 73.4
     stages = {
         item["id"]: item
         for item in payload["stages"]

@@ -307,9 +307,16 @@ STAGES = (
         "Verify model outputs and escalate only when cheaper paths fail.",
         "model_bus",
         10,
-        "pending",
+        "completed",
         ("model_router_unified",),
         ("validation", "models"),
+        evidence_refs=(
+            "pr:341",
+            "git:main:e0f11e4107133276effa157b4146b19bd21ba623",
+            "railway:000efbaf-cde7-4921-8f33-6a3ca902130c",
+            "code:backend/app/services/model_verifier.py",
+            "docs:MODEL_VERIFIER.md",
+        ),
     ),
     StageDefinition(
         "local_model_pool",
