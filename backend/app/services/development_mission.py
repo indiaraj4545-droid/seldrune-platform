@@ -226,9 +226,15 @@ STAGES = (
         "Run long-horizon adversarial and recovery benchmarks before v1.0.",
         "unarchi",
         2,
-        "pending",
+        "completed",
         ("unarchi_v39",),
         ("validation", "research"),
+        evidence_refs=(
+            "pr:339",
+            "git:main:1867b8d2e5ce7e56facd7e35708734ca66a954b3",
+            "railway:06895922-9f9b-4b86-ae61-9c6979f6fc7f",
+            "benchmark:full_cognitive_validation",
+        ),
     ),
     StageDefinition(
         "model_gateway_core",
