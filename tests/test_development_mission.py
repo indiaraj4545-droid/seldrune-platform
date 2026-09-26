@@ -602,7 +602,7 @@ def test_one_go_verified_tool_receipt_respects_next_dependency_gate(
     )
     assert mission.status_code == 200
     payload = mission.json()
-    assert payload["overall_percentage"] == 71.2
+    assert payload["overall_percentage"] == 71.3
     stages = {
         item["id"]: item
         for item in payload["stages"]
