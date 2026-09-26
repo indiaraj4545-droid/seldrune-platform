@@ -607,9 +607,10 @@ def test_one_go_verified_tool_receipt_respects_next_dependency_gate(
     assert stages["model_router_unified"]["completion_source"] == "roadmap_evidence"
     assert stages["unarchi_v38"]["status"] == "completed"
     assert stages["unarchi_v38"]["completion_source"] == "runtime_verified"
-    assert stages["unarchi_v39"]["ready"] is True
-    assert stages["unarchi_v39"]["dependencies_complete"] is True
-    assert "unarchi_v39" in payload["parallel_ready_stage_ids"]
+    assert stages["unarchi_v39"]["ready"] is False
+    assert stages["unarchi_v39"]["dependencies_complete"] is False
+    assert "unarchi_v39" not in payload["parallel_ready_stage_ids"]
+    assert "model_router_recency" in stages["unarchi_v39"]["depends_on"]
 
 
 def test_one_go_respects_autonomous_execution_governance(
