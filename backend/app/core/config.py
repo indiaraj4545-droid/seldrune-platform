@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     agent_auto_grant_production_tools: bool = False
     model_provider: str = "mock"
     model_default: str = "mock-v1"
+    model_compatible_base_url: str | None = None
+    model_compatible_api_key: str | None = None
     model_economy: str = "gpt-5.6-luna"
     model_balanced: str = "gpt-5.6-terra"
     model_premium: str = "gpt-5.6-sol"
@@ -97,8 +99,10 @@ class Settings(BaseSettings):
         smtp_credentials = [bool(self.smtp_username), bool(self.smtp_password)]
         if any(smtp_credentials) and not all(smtp_credentials):
             raise ValueError("SMTP username and password must be configured together")
-        if self.model_provider not in {"mock", "openai"}:
-            raise ValueError("SELDRUNE_MODEL_PROVIDER must be mock or openai")
+        if self.model_provider not in {"mock", "openai", "openai_compatible"}:
+            raise ValueError(
+                "SELDRUNE_MODEL_PROVIDER must be mock, openai, or openai_compatible"
+            )
         if self.model_timeout_seconds <= 0:
             raise ValueError("SELDRUNE_MODEL_TIMEOUT_SECONDS must be positive")
         if self.model_max_output_tokens <= 0:
