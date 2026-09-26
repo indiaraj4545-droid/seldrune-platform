@@ -1472,9 +1472,9 @@ class UnarchiEngine:
             freshness = self._persistent_memory_freshness(record)
             provenance_signal = _clamp(len(record.source_refs) / 2.0)
             score = _clamp(
-                (similarity * 0.50)
-                + (record.confidence * 0.20)
-                + (record.importance * 0.15)
+                (similarity * 0.60)
+                + (record.confidence * 0.15)
+                + (record.importance * 0.10)
                 + (freshness * 0.10)
                 + (provenance_signal * 0.05)
             )
