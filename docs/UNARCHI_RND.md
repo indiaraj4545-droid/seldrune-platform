@@ -2021,8 +2021,48 @@ camera, microphone, file-system, model, or external-action authority and does
 not establish subjective identity, sentience, phenomenal consciousness, or
 qualia.
 
-## Next checkpoint: v0.39 model and skill orchestration
+## v0.39 model and skill orchestration checkpoint
 
-The next research step should select models and tools using declared
-capabilities, recent verified performance, cost, confidence, and outcome
-evidence while preserving independent verification and governance boundaries.
+UNARCHI v0.39 adds a deterministic advisory selector that can compare model
+routes and governed tool/skill routes under one evidence contract. It does not
+execute either route; execution remains in the existing model and tool
+gateways.
+
+Each candidate declares:
+
+- route kind (model or tool) and stable identifier;
+- capabilities;
+- estimated cost;
+- bounded confidence;
+- optional recent and lifetime verified success rates; and
+- provenance references for any outcome-derived trust.
+
+A route is ineligible when required capabilities are missing, cost exceeds the
+explicit budget, confidence falls below the configured floor, or outcome-based
+trust is claimed without evidence references. Recent outcome evidence affects
+selection only after the bounded sample floor is met; otherwise the selector
+falls back to verified lifetime evidence or a neutral prior.
+
+Eligible routes are scored from capability match, confidence, verified
+outcomes, and normalized cost. Deterministic tie-breaking prefers lower cost
+before route kind and identifier, making the decision reproducible.
+
+The deterministic v0.39 benchmark requires:
+
+two reasoning models with similar verified quality but different cost ->
+efficient high-trust model selected -> a validation task with a specialized
+zero-cost governed tool -> tool selected -> a seemingly perfect route with no
+provenance -> rejected fail-closed.
+
+v0.39 accepts v0.38 and earlier supported exports for backward-compatible state
+restoration while new snapshots identify themselves as `unarchi-v0.39`.
+
+This is functional orchestration research, not unrestricted autonomy. The
+selector cannot invoke a provider, approve a tool, spend money, or bypass
+existing permissions and evidence gates.
+
+## Next checkpoint: v0.40 full cognitive validation
+
+The next research step should run long-horizon adversarial, recovery,
+degradation, multimodal, routing, and orchestration benchmarks together before
+any v1.0 claim.
