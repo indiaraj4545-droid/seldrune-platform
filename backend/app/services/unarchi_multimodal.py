@@ -61,8 +61,13 @@ def _media_type_matches(modality: str, media_type: str) -> bool:
                     "presentationml.presentation"
                 ),
             }
-            or media_type.startswith("text/")
-            and media_type not in {"text/csv"}
+            or (
+                media_type.startswith("text/")
+                and media_type not in {
+                    "text/csv",
+                    "text/tab-separated-values",
+                }
+            )
         )
     if modality == "structured_data":
         return media_type in {
