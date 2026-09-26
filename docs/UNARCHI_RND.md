@@ -1933,8 +1933,51 @@ This is bounded functional memory engineering. Persistent retrieval does not
 establish subjective identity, sentience, phenomenal consciousness, qualia, or
 unrestricted real-world autonomy.
 
-## Next checkpoint: v0.37 controlled environment interaction
+## v0.37 controlled environment interaction checkpoint
 
-The next research step should feed verified tool outcomes back into the
-cognitive state while preserving governance, budget, provenance, and
-reversibility boundaries.
+UNARCHI v0.37 connects the existing governed tool-evidence path to the cognitive
+kernel without giving the kernel authority to create, approve, execute, retry,
+or mutate tool runs.
+
+A tool result can influence UNARCHI only after the repository evidence verifier
+returns `verified_tool_receipt`. The feedback adapter re-validates the task,
+tool-run scope, succeeded status, expected tool slug, and receipt identity
+before passing a normalized outcome into the engine.
+
+The engine then requires both canonical provenance references:
+
+- `receipt:<receipt-id>`; and
+- `tool-run:<tool-run-id>`.
+
+Verified results update bounded learned state and create a provenance-backed
+persistent-memory record. The recorded interaction survives export/restore and
+is auditable by receipt and tool-run identity.
+
+Receipt replay is idempotent: feeding the same verified run again returns the
+existing interaction and does not increment experience, add duplicate durable
+memory, or compound learned state.
+
+Unverified model claims, tampered receipts, failed verification, or incomplete
+provenance fail closed before cognitive state changes. This keeps tool
+governance and execution authority in the existing gateway while allowing
+verified environmental outcomes to become evidence for later reasoning.
+
+The deterministic v0.37 benchmark requires:
+
+verified receipt -> one cognitive-state update -> durable provenance-backed
+memory -> identical receipt replay causes no second update -> unsupported
+model-only claim is rejected with zero state change -> export/restore preserves
+the verified interaction and its durable evidence.
+
+v0.37 accepts v0.36 and earlier supported exports for backward-compatible state
+restoration while new snapshots identify themselves as `unarchi-v0.37`.
+
+This is controlled functional feedback, not unrestricted autonomy. The engine
+still cannot independently perform external actions and these mechanisms do not
+establish subjective identity, sentience, phenomenal consciousness, or qualia.
+
+## Next checkpoint: v0.38 multimodal observations
+
+The next research step should normalize verified image, audio, video, document,
+and structured-data observations into provenance-backed evidence while keeping
+source modality, confidence, and transformation lineage explicit.

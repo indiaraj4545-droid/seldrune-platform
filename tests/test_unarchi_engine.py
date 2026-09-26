@@ -167,7 +167,7 @@ def test_snapshot_never_claims_phenomenal_consciousness() -> None:
     snapshot = engine.snapshot()
 
     assert snapshot["claims_phenomenal_consciousness"] is False
-    assert snapshot["version"] == "unarchi-v0.36"
+    assert snapshot["version"] == "unarchi-v0.37"
 
 
 def test_export_restore_preserves_identity_state_and_memory() -> None:
@@ -5692,7 +5692,7 @@ def test_v033_arbitration_survives_export_restore() -> None:
     )
     restored = UnarchiEngine.from_export(engine.export_state())
 
-    assert restored.snapshot()["version"] == "unarchi-v0.36"
+    assert restored.snapshot()["version"] == "unarchi-v0.37"
     assert restored.causal_hypothesis_arbitrations == engine.causal_hypothesis_arbitrations
     assert restored.causal_hypothesis_arbitrations[-1].id == arbitration.id
     assert restored.snapshot()["causal_hypothesis_arbitration_count"] == 1
@@ -5936,7 +5936,7 @@ def test_v034_hierarchical_planning_survives_export_restore() -> None:
 
     restored = UnarchiEngine.from_export(engine.export_state())
 
-    assert restored.snapshot()["version"] == "unarchi-v0.36"
+    assert restored.snapshot()["version"] == "unarchi-v0.37"
     assert restored.hierarchical_plans == engine.hierarchical_plans
     assert restored.hierarchical_plan_nodes == engine.hierarchical_plan_nodes
     assert restored.hierarchical_plan_checkpoints == engine.hierarchical_plan_checkpoints
@@ -6051,7 +6051,7 @@ def test_v035_budget_violations_fail_closed_and_persist() -> None:
         "money,compute,latency,risk,uncertainty"
     )
     assert "over-budget" not in decision.feasible_names
-    assert restored.snapshot()["version"] == "unarchi-v0.36"
+    assert restored.snapshot()["version"] == "unarchi-v0.37"
     assert restored.snapshot()["resource_aware_decision_count"] == 1
     assert restored.resource_aware_decisions == engine.resource_aware_decisions
 
@@ -6099,7 +6099,7 @@ def test_v036_persistent_memory_survives_working_memory_overflow_and_restart() -
         "schema rollback receipt 0052"
     )
 
-    assert restored.snapshot()["version"] == "unarchi-v0.36"
+    assert restored.snapshot()["version"] == "unarchi-v0.37"
     assert restored_hits
     assert restored_hits[0].record_id == durable.id
     assert restored.persistent_memory[0].source_refs == durable.source_refs
@@ -6203,3 +6203,131 @@ def test_v036_persistent_memory_requires_provenance_and_accepts_v035_exports() -
 
     assert restored.persistent_memory[0].id == record.id
     assert restored.persistent_memory[0].source_refs == ("evidence:v036",)
+
+
+def test_v037_verified_tool_outcome_updates_state_and_durable_memory() -> None:
+    engine = UnarchiEngine()
+    before = engine.state.experience_count
+
+    outcome = engine.ingest_verified_tool_outcome(
+        tool_slug="internal-json-validate",
+        receipt_id="tool-run-verified-1",
+        tool_run_id="00000000-0000-0000-0000-000000000001",
+        goal="validate generated configuration",
+        output_summary='{"valid":true}',
+        verification_reason="verified_tool_receipt",
+        source_refs=(
+            "receipt:tool-run-verified-1",
+            "tool-run:00000000-0000-0000-0000-000000000001",
+        ),
+        predicted_success=0.7,
+    )
+
+    assert engine.state.experience_count == before + 1
+    assert outcome.status == "ingested"
+    assert outcome.state_experience_count == before + 1
+    assert engine.snapshot()["verified_tool_outcome_count"] == 1
+    durable = next(
+        item
+        for item in engine.persistent_memory
+        if item.id == outcome.persistent_memory_id
+    )
+    assert durable.kind == "verified_tool_outcome"
+    assert durable.confidence == 1.0
+    assert "receipt:tool-run-verified-1" in durable.source_refs
+
+
+def test_v037_verified_tool_outcome_is_idempotent_by_receipt_and_run() -> None:
+    engine = UnarchiEngine()
+    kwargs = {
+        "tool_slug": "internal-json-validate",
+        "receipt_id": "tool-run-verified-2",
+        "tool_run_id": "00000000-0000-0000-0000-000000000002",
+        "goal": "validate generated configuration",
+        "output_summary": '{"valid":true}',
+        "verification_reason": "verified_tool_receipt",
+        "source_refs": (
+            "receipt:tool-run-verified-2",
+            "tool-run:00000000-0000-0000-0000-000000000002",
+        ),
+    }
+
+    first = engine.ingest_verified_tool_outcome(**kwargs)
+    experience_count = engine.state.experience_count
+    memory_count = len(engine.persistent_memory)
+    second = engine.ingest_verified_tool_outcome(**kwargs)
+
+    assert second == first
+    assert engine.state.experience_count == experience_count
+    assert len(engine.persistent_memory) == memory_count
+    assert len(engine.verified_tool_outcomes) == 1
+
+
+def test_v037_unverified_or_incomplete_tool_evidence_fails_closed() -> None:
+    engine = UnarchiEngine()
+    before = engine.export_state()
+
+    try:
+        engine.ingest_verified_tool_outcome(
+            tool_slug="internal-json-validate",
+            receipt_id="unverified",
+            tool_run_id="00000000-0000-0000-0000-000000000003",
+            goal="validate generated configuration",
+            output_summary='{"valid":true}',
+            verification_reason="model_claim_only",
+            source_refs=(
+                "receipt:unverified",
+                "tool-run:00000000-0000-0000-0000-000000000003",
+            ),
+        )
+    except ValueError as exc:
+        assert "verified_tool_receipt" in str(exc)
+    else:
+        raise AssertionError("unverified tool result changed cognitive state")
+
+    assert engine.export_state() == before
+
+    try:
+        engine.ingest_verified_tool_outcome(
+            tool_slug="internal-json-validate",
+            receipt_id="verified-but-incomplete",
+            tool_run_id="00000000-0000-0000-0000-000000000004",
+            goal="validate generated configuration",
+            output_summary='{"valid":true}',
+            verification_reason="verified_tool_receipt",
+            source_refs=("receipt:verified-but-incomplete",),
+        )
+    except ValueError as exc:
+        assert "provenance" in str(exc)
+    else:
+        raise AssertionError("incomplete provenance changed cognitive state")
+
+    assert engine.export_state() == before
+
+
+def test_v037_verified_tool_outcomes_survive_restart_and_v036_exports_load() -> None:
+    engine = UnarchiEngine()
+    outcome = engine.ingest_verified_tool_outcome(
+        tool_slug="internal-sha256-text",
+        receipt_id="tool-run-verified-5",
+        tool_run_id="00000000-0000-0000-0000-000000000005",
+        goal="bind an artifact to deterministic evidence",
+        output_summary='{"algorithm":"sha256","digest":"abc"}',
+        verification_reason="verified_tool_receipt",
+        source_refs=(
+            "receipt:tool-run-verified-5",
+            "tool-run:00000000-0000-0000-0000-000000000005",
+        ),
+    )
+    restored = UnarchiEngine.from_export(engine.export_state())
+
+    assert restored.snapshot()["version"] == "unarchi-v0.37"
+    assert restored.verified_tool_outcomes == engine.verified_tool_outcomes
+    assert restored.verified_tool_outcomes[0].id == outcome.id
+
+    legacy = engine.export_state()
+    legacy["version"] = "unarchi-v0.36"
+    legacy.pop("verified_tool_outcomes", None)
+    legacy.pop("next_verified_tool_outcome_id", None)
+    restored_legacy = UnarchiEngine.from_export(legacy)
+    assert restored_legacy.verified_tool_outcomes == []
