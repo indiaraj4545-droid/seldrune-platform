@@ -6,7 +6,7 @@ from typing import Any
 from backend.app.services.unarchi_engine import UnarchiEngine
 
 
-BENCHMARK_VERSION = "unarchi-ablation-v0.35"
+BENCHMARK_VERSION = "unarchi-ablation-v0.36"
 
 
 def _failure_sensitization() -> dict[str, Any]:
@@ -4957,6 +4957,116 @@ def _resource_aware_cognition() -> dict[str, Any]:
         ),
     }
 
+
+def _persistent_memory_retrieval_consolidation() -> dict[str, Any]:
+    engine = UnarchiEngine(
+        max_memory=16,
+        max_persistent_memory=8,
+        max_active_persistent_memories=3,
+    )
+    ci = engine.remember_persistent_memory(
+        content="Release beta passed all repository CI tests.",
+        source_refs=("ci:beta",),
+        confidence=0.92,
+        importance=0.80,
+    )
+    ready = engine.remember_persistent_memory(
+        content="Release beta passed production readiness and schema validation.",
+        source_refs=("ready:beta",),
+        confidence=0.90,
+        importance=0.85,
+    )
+    consolidated = engine.consolidate_persistent_memories(
+        (ci.id, ready.id),
+        summary=(
+            "Release beta is verified by repository CI plus independent "
+            "production-readiness and schema evidence."
+        ),
+        source_refs=("merge:beta",),
+    )
+    weak = engine.remember_persistent_memory(
+        content="Temporary speculative UI wording.",
+        source_refs=("note:temporary",),
+        confidence=0.10,
+        importance=0.10,
+    )
+    protected = engine.remember_persistent_memory(
+        content="Owner-approved rollback recovery evidence must be retained.",
+        source_refs=("owner:rollback",),
+        confidence=0.20,
+        importance=0.20,
+        protected=True,
+    )
+
+    for index in range(24):
+        engine.learn(
+            observation=f"Transient working-memory event {index}",
+            goal="exercise bounded working memory",
+            action="record transient event",
+            outcome="transient event recorded",
+            success=True,
+            reward=0.1,
+            predicted_success=0.8,
+        )
+
+    strong = engine.remember_persistent_memory(
+        content="Fresh signed release beta deployment receipt.",
+        source_refs=("deploy:beta:signed", "receipt:beta"),
+        confidence=0.98,
+        importance=0.95,
+    )
+    hits = engine.retrieve_persistent_memory(
+        "release beta readiness schema evidence",
+        limit=3,
+    )
+    restored = UnarchiEngine.from_export(engine.export_state())
+    restored_hits = restored.retrieve_persistent_memory(
+        "release beta readiness schema evidence",
+        limit=3,
+    )
+    by_id = {item.id: item for item in engine.persistent_memory}
+    restored_by_id = {item.id: item for item in restored.persistent_memory}
+
+    return {
+        "name": "persistent_memory_retrieval_consolidation",
+        "expected_direction": (
+            "provenance-backed evidence survives working-memory overflow, "
+            "consolidates without duplicate retrieval, ranks deterministically, "
+            "and forgets weak unprotected records before protected evidence"
+        ),
+        "passed": (
+            len(engine.memory) == 16
+            and by_id[ci.id].status == "consolidated"
+            and by_id[ready.id].status == "consolidated"
+            and consolidated.source_refs
+            == ("ci:beta", "ready:beta", "merge:beta")
+            and by_id[weak.id].status == "forgotten"
+            and by_id[protected.id].status == "active"
+            and by_id[strong.id].status == "active"
+            and bool(hits)
+            and hits[0].record_id == consolidated.id
+            and bool(restored_hits)
+            and restored_hits[0].record_id == consolidated.id
+            and restored_by_id[protected.id].protected is True
+            and restored.snapshot()["persistent_memory_active_count"] == 3
+        ),
+        "working_memory_size": len(engine.memory),
+        "consolidated_id": consolidated.id,
+        "consolidated_sources": consolidated.source_refs,
+        "weak_status": by_id[weak.id].status,
+        "protected_status": by_id[protected.id].status,
+        "strong_status": by_id[strong.id].status,
+        "top_retrieval_id": hits[0].record_id if hits else None,
+        "restart_top_retrieval_id": (
+            restored_hits[0].record_id if restored_hits else None
+        ),
+        "restart_preserved": (
+            bool(restored_hits)
+            and restored_hits[0].record_id == consolidated.id
+            and restored_by_id[protected.id].protected is True
+        ),
+    }
+
 def run_unarchi_ablation_benchmark() -> dict[str, Any]:
     scenarios = [
         _failure_sensitization(),
@@ -4995,6 +5105,7 @@ def run_unarchi_ablation_benchmark() -> dict[str, Any]:
         _multi_hypothesis_arbitration(),
         _hierarchical_long_horizon_planning(),
         _resource_aware_cognition(),
+        _persistent_memory_retrieval_consolidation(),
     ]
     passed = sum(bool(item["passed"]) for item in scenarios)
     return {
