@@ -5879,7 +5879,11 @@ def test_v034_replans_only_invalidated_branch_and_preserves_verified_work() -> N
     assert foundation_id in replan.affected_node_ids
     assert set(replan.affected_node_ids).isdisjoint(replan.replacement_node_ids)
     assert replan.replacement_resource_limit <= replan.released_resource_limit
-    assert all(node.replacement_for_node_id == foundation_id for node in replacement_nodes if node.parent_id is None)
+    assert all(
+        node.replacement_for_node_id == foundation_id
+        for node in replacement_nodes
+        if node.parent_id is None
+    )
     assert validation_id in plan.node_ids
     assert foundation_id not in plan.node_ids
 
