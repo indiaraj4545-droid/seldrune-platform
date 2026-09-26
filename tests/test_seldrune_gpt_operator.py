@@ -75,6 +75,8 @@ def test_gpt_capabilities_report_registered_tools_and_provider_readiness(
     )
     assert response.status_code == 200
     body = response.json()
+    assert body["mode"] == "cognitive-owner-operator"
+    assert "single-request cognitive plan" in body["execution"]
     assert body["provider_readiness"]["github"] is True
     assert body["provider_readiness"]["gmail"] is False
     assert body["provider_readiness"]["render"] is False
