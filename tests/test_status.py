@@ -151,3 +151,31 @@ def test_explicit_release_sha_precedes_platform_fallbacks(monkeypatch) -> None:
         "sha": "explicit-release-sha",
         "source": "seldrune",
     }
+
+
+
+def test_compatible_model_provider_is_ready_with_configured_endpoint(
+    monkeypatch,
+) -> None:
+    expected_revision = status_route._expected_schema_revision()
+    assert expected_revision is not None
+    monkeypatch.setattr(settings, "environment", "production")
+    monkeypatch.setattr(settings, "model_provider", "openai_compatible")
+    monkeypatch.setattr(
+        settings,
+        "model_compatible_base_url",
+        "http://localhost:11434/v1",
+    )
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    with _client_with_schema(expected_revision) as test_client:
+        response = test_client.get("/api/v1/ready")
+
+    assert response.status_code == 200
+    provider = response.json()["checks"]["model_provider"]
+    assert provider == {
+        "status": "ok",
+        "provider": "openai_compatible",
+        "model": settings.model_default,
+        "live_ai": True,
+    }
