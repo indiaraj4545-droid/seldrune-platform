@@ -30,3 +30,41 @@ Configure a compatible endpoint with:
 Agent provider policy remains authoritative because
 `allowed_model_providers` is checked before invocation. Existing `mock` and
 native `openai` requests keep their previous request and response contracts.
+
+
+## Recent-performance trust and drift routing
+
+The router can accept verified model-performance evidence in addition to static
+provider priority. Static capability and provider-policy checks remain
+authoritative; performance evidence never makes an unsupported provider
+eligible.
+
+Recent evidence is deliberately stronger than stale lifetime reputation:
+
+- only evidence marked verified, with a stable evidence key and provenance refs,
+  is eligible;
+- duplicate evidence keys are counted once;
+- the default recent window is seven days;
+- at least two recent verified samples are required before performance can
+  override static priority;
+- recent outcomes use a bounded time-decay weight, so the newest verified
+  outcomes matter most;
+- the effective trust score is 80% recent verified success and 20% lifetime
+  verified success;
+- candidates without enough recent evidence remain at a neutral trust score
+  when another candidate has actionable recent evidence;
+- if nobody has enough recent verified evidence, routing falls back exactly to
+  static priority;
+- recent-vs-lifetime divergence of 0.25 or more is exposed as drift rather than
+  silently hidden.
+
+The build_verified_model_performance_evidence function derives evidence from
+stored model invocations only when the parent task passes Seldrune's
+machine-verifiable completion-evidence gate. Running invocations and unverified
+task outcomes are excluded. A failed model attempt can be retained as negative
+evidence when the same task later reaches a verified outcome through a fallback
+path.
+
+This checkpoint does not autonomously enable providers, relax capability
+requirements, or bypass budget/security policy. v0.39 can build on this trust
+signal when it orchestrates models and skills.

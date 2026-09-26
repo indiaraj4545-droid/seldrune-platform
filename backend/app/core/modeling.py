@@ -35,11 +35,34 @@ class ModelRouteCandidate:
 
 
 @dataclass(frozen=True)
+class ModelRoutePerformanceEvidence:
+    provider: ModelProvider
+    model: str
+    succeeded: bool
+    age_seconds: int
+    evidence_key: str
+    evidence_refs: tuple[str, ...] = ()
+    verified: bool = True
+
+
+@dataclass(frozen=True)
+class ModelRoutePerformanceSummary:
+    recent_verified_samples: int = 0
+    lifetime_verified_samples: int = 0
+    recent_success_rate: float | None = None
+    lifetime_success_rate: float | None = None
+    trust_score: float | None = None
+    drift_detected: bool = False
+    evidence_refs: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class ModelRouteDecision:
     provider: ModelProvider
     model: str
     capabilities: ModelProviderCapabilities
     required_capabilities: tuple[str, ...]
+    performance: ModelRoutePerformanceSummary | None = None
 
 
 class InvocationStatus(StrEnum):
