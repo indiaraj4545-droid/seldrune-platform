@@ -95,10 +95,16 @@ def _status_payload(session: SessionDep) -> dict[str, Any]:
         "required": settings.environment.lower() in _PRODUCTION_ENVIRONMENTS,
         "current_error": database_error,
     }
-    provider_configured = (
-        settings.model_provider == "mock"
-        or bool(os.getenv("OPENAI_API_KEY", "").strip())
-    )
+    if settings.model_provider == "mock":
+        provider_configured = True
+    elif settings.model_provider == "openai":
+        provider_configured = bool(os.getenv("OPENAI_API_KEY", "").strip())
+    elif settings.model_provider == "openai_compatible":
+        provider_configured = bool(
+            (settings.model_compatible_base_url or "").strip()
+        )
+    else:
+        provider_configured = False
     schema_ready = not schema["required"] or schema["schema_current"]
     ready = database_healthy and provider_configured and schema_ready
     checks: dict[str, Any] = {
@@ -111,7 +117,10 @@ def _status_payload(session: SessionDep) -> dict[str, Any]:
             "status": "ok" if provider_configured else "unconfigured",
             "provider": settings.model_provider,
             "model": settings.model_default,
-            "live_ai": settings.model_provider == "openai" and provider_configured,
+            "live_ai": (
+                settings.model_provider in {"openai", "openai_compatible"}
+                and provider_configured
+            ),
         },
     }
     return {

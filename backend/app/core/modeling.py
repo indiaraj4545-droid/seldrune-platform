@@ -6,6 +6,40 @@ from typing import Any
 class ModelProvider(StrEnum):
     MOCK = "mock"
     OPENAI = "openai"
+    OPENAI_COMPATIBLE = "openai_compatible"
+
+
+@dataclass(frozen=True)
+class ModelProviderCapabilities:
+    text: bool = True
+    structured_output: bool = False
+    images: bool = False
+    files: bool = False
+    reasoning: bool = False
+
+    def supports(self, required: tuple[str, ...]) -> bool:
+        known = {"text", "structured_output", "images", "files", "reasoning"}
+        for capability in required:
+            if capability not in known:
+                raise ValueError(f"Unknown model capability: {capability}")
+            if not bool(getattr(self, capability)):
+                return False
+        return True
+
+
+@dataclass(frozen=True)
+class ModelRouteCandidate:
+    provider: ModelProvider
+    model: str
+    priority: int = 100
+
+
+@dataclass(frozen=True)
+class ModelRouteDecision:
+    provider: ModelProvider
+    model: str
+    capabilities: ModelProviderCapabilities
+    required_capabilities: tuple[str, ...]
 
 
 class InvocationStatus(StrEnum):
