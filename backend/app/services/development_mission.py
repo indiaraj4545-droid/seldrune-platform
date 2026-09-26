@@ -161,9 +161,15 @@ STAGES = (
         "Add long-term retrieval, consolidation, provenance, and bounded forgetting.",
         "unarchi",
         2,
-        "pending",
+        "completed",
         ("unarchi_v35",),
         ("memory", "engineering"),
+        evidence_refs=(
+            "pr:325",
+            "git:main:75d16094bdf6f4c7f67b7349d272c30cdb259797",
+            "railway:5a301ceb-cf54-4137-96b4-3988e68e12c0",
+            "benchmark:persistent_memory_retrieval_consolidation",
+        ),
     ),
     StageDefinition(
         "unarchi_v37",
