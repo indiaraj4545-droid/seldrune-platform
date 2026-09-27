@@ -22,10 +22,10 @@ The console reads Inbox and Sent through Zoho's Mail API. It stores OAuth tokens
 2. Ensure the root domain has a single SPF TXT record authorizing Zoho. If Zoho is the only sender, the value is:
 
    ```text
-   v=spf1 include:zohomail.com ~all
+   v=spf1 include:zoho.in ~all
    ```
 
-   If another service already sends as `@seldrune.in`, keep its SPF mechanism and add Zoho's `include:zohomail.com` to that same record. A domain must not publish multiple SPF records.
+   This production account is in Zoho's India data center. Check the exact value under **Zoho Mail Admin → Domains → seldrune.in → Email Configuration → SPF** before editing DNS. If another service also sends as `@seldrune.in`, merge its mechanism into the same record. A domain must not publish multiple SPF records.
 3. After DNS has propagated, return to Seldrune and choose **Verify SPF and DKIM**. The console asks Zoho to verify both records. Sending remains disabled until both report verified and DKIM is enabled.
 4. Send a new test message to Gmail and inspect its original headers. Confirm `spf=pass`, `dkim=pass` with `header.d=seldrune.in`, and `dmarc=pass` with `header.from=seldrune.in`. Previously quarantined messages will not be reprocessed automatically; test with a new message.
 
