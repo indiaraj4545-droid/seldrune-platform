@@ -550,7 +550,7 @@ function renderSettings(root) {
       authPanel.append(currentSpf);
     } else if (!auth?.spf_verified) {
       const suggestedSpf = document.createElement("small");
-      suggestedSpf.textContent = "If Zoho is the only sender, use one root TXT record: v=spf1 include:zohomail.com ~all. Merge other authorized senders into that same SPF record; do not add a second SPF record.";
+      suggestedSpf.textContent = "Use the exact root SPF TXT value shown in Zoho Mail Admin for this account's data center. Merge other authorized senders into that same SPF record; do not add a second SPF record.";
       authPanel.append(suggestedSpf);
     }
     const dkim = document.createElement("p");
