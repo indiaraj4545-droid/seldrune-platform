@@ -162,7 +162,10 @@ def start_zoho_mail_connection(
     if not settings.zoho_mail_client_id or not settings.zoho_mail_client_secret:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Zoho Mail OAuth credentials have not been configured for this Seldrune deployment.",
+            detail=(
+                "Zoho Mail OAuth credentials have not been configured for this "
+                "Seldrune deployment."
+            ),
         )
     state_value = secrets.token_urlsafe(32)
     state_hash = hashlib.sha256(state_value.encode("utf-8")).hexdigest()
@@ -467,7 +470,10 @@ def _zoho_domain_authentication(
         "message": (
             "Zoho confirms SPF and DKIM are enabled for this domain."
             if spf_verified and dkim_verified
-            else "Add or verify the Zoho SPF and DKIM records before sending to external recipients."
+            else (
+                "Add or verify the Zoho SPF and DKIM records before sending to "
+                "external recipients."
+            )
         ),
     }
 
