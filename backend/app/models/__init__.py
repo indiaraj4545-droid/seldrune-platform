@@ -8,7 +8,13 @@ from backend.app.models.life_lease import LifeLease
 from backend.app.models.life_worker_heartbeat import LifeWorkerHeartbeat
 from backend.app.models.login_failure import LoginFailure
 from backend.app.models.mailbox_access import MailboxAccess
-from backend.app.models.seldrune_mail import Mailbox, MailDomain, MailDraft
+from backend.app.models.seldrune_mail import (
+    Mailbox,
+    MailDomain,
+    MailDraft,
+    ZohoMailConnection,
+    ZohoMailOAuthState,
+)
 from backend.app.models.membership import Membership
 from backend.app.models.memory import MemoryItem
 from backend.app.models.mfa_recovery_code import MfaRecoveryCode
@@ -57,6 +63,8 @@ __all__ = [
     "MailboxAccess",
     "MailDomain",
     "MailDraft",
+    "ZohoMailConnection",
+    "ZohoMailOAuthState",
     "Membership",
     "MemoryItem",
     "MfaRecoveryCode",

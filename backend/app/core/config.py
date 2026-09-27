@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     smtp_password: str | None = None
     smtp_starttls: bool = True
     smtp_timeout_seconds: float = 10.0
+    zoho_mail_client_id: str | None = None
+    zoho_mail_client_secret: str | None = None
+    zoho_mail_data_center: str = "in"
     github_default_owner: str | None = "seldrune-platform"
     github_default_repo: str | None = "seldrune-platform"
     github_default_ref: str | None = "main"
@@ -100,6 +103,14 @@ class Settings(BaseSettings):
             raise ValueError("SELDRUNE_SMTP_PORT must be positive")
         if self.smtp_timeout_seconds <= 0:
             raise ValueError("SELDRUNE_SMTP_TIMEOUT_SECONDS must be positive")
+        if bool(self.zoho_mail_client_id) != bool(self.zoho_mail_client_secret):
+            raise ValueError(
+                "Zoho Mail client ID and client secret must be configured together"
+            )
+        if self.zoho_mail_data_center not in {
+            "com", "eu", "in", "com.au", "jp", "ca", "com.cn", "ae", "sa"
+        }:
+            raise ValueError("SELDRUNE_ZOHO_MAIL_DATA_CENTER is not supported")
         smtp_credentials = [bool(self.smtp_username), bool(self.smtp_password)]
         if any(smtp_credentials) and not all(smtp_credentials):
             raise ValueError("SMTP username and password must be configured together")

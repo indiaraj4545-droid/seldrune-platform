@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from tests.test_autonomous_execution import register_owner
 
 pytest_plugins = ["tests.test_autonomous_execution"]
@@ -168,3 +170,85 @@ def test_domain_verification_checks_real_txt_record(client, monkeypatch) -> None
     )
     assert verified.status_code == 200
     assert verified.json()["status"] == "verified"
+
+
+def test_zoho_send_is_blocked_until_spf_and_dkim_are_verified(client, monkeypatch) -> None:
+    from backend.app.api.routes import mail
+
+    owner_token, organization_id = register_owner(client)
+    headers = _headers(owner_token)
+    base = f"/api/v1/organizations/{organization_id}/mail"
+    setup = client.post(base + "/setup", headers=headers, json={})
+    mailbox_id = setup.json()["mailboxes"][0]["id"]
+    sent = []
+    monkeypatch.setattr(
+        mail,
+        "_zoho_connection",
+        lambda *args: SimpleNamespace(data_center="in", account_id="123"),
+    )
+    monkeypatch.setattr(
+        mail,
+        "_zoho_domain_authentication",
+        lambda **kwargs: {"ready": False, "spf_verified": True, "dkim_verified": False},
+    )
+    monkeypatch.setattr(mail, "zoho_send_message", lambda **kwargs: sent.append(kwargs))
+
+    response = client.post(
+        f"{base}/mailboxes/{mailbox_id}/send",
+        headers=headers,
+        json={"to": ["recipient@example.com"], "subject": "Test", "body": "Hello"},
+    )
+
+    assert response.status_code == 409
+    assert "SPF and DKIM" in response.json()["detail"]
+    assert sent == []
+
+
+def test_zoho_send_uses_connected_mailbox_after_authentication_passes(client, monkeypatch) -> None:
+    from backend.app.api.routes import mail
+
+    owner_token, organization_id = register_owner(client)
+    headers = _headers(owner_token)
+    base = f"/api/v1/organizations/{organization_id}/mail"
+    setup = client.post(base + "/setup", headers=headers, json={})
+    mailbox = setup.json()["mailboxes"][0]
+    sent = []
+    monkeypatch.setattr(
+        mail,
+        "_zoho_connection",
+        lambda *args: SimpleNamespace(data_center="in", account_id="123"),
+    )
+    monkeypatch.setattr(
+        mail,
+        "_zoho_domain_authentication",
+        lambda **kwargs: {"ready": True, "spf_verified": True, "dkim_verified": True},
+    )
+    monkeypatch.setattr(mail, "_zoho_access_token", lambda *args: "test-access-token")
+    monkeypatch.setattr(mail, "zoho_send_message", lambda **kwargs: sent.append(kwargs))
+
+    response = client.post(
+        f"{base}/mailboxes/{mailbox['id']}/send",
+        headers=headers,
+        json={
+            "to": ["recipient@example.com"],
+            "cc": ["copy@example.com"],
+            "subject": "Test",
+            "body": "Reviewed message",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"sent": True, "provider": "zoho"}
+    assert sent == [
+        {
+            "data_center": "in",
+            "account_id": "123",
+            "access_token": "test-access-token",
+            "from_address": "founder@seldrune.in",
+            "to": ["recipient@example.com"],
+            "cc": ["copy@example.com"],
+            "bcc": [],
+            "subject": "Test",
+            "content": "Reviewed message",
+        }
+    ]

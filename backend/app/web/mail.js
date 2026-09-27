@@ -1,13 +1,14 @@
 const $ = selector => document.querySelector(selector);
 const state = {
-  token: sessionStorage.seldruneMailToken || "",
+  token: sessionStorage.seldruneToken || "",
   organizationId: "",
   user: null,
   membership: null,
   workspace: null,
   mailboxId: "",
   view: "inbox",
-  editingDraftId: ""
+  editingDraftId: "",
+  deliverability: {}
 };
 
 async function request(path, options) {
@@ -49,6 +50,7 @@ function logout() {
   state.membership = null;
   state.workspace = null;
   sessionStorage.removeItem("seldruneMailToken");
+  sessionStorage.removeItem("seldruneToken");
   $("#login-password").value = "";
   $("#mail-app").classList.add("hidden");
   $("#login-view").classList.remove("hidden");
@@ -74,7 +76,22 @@ async function loadWorkspace() {
   if (state.workspace.setup_required && state.workspace.can_manage) {
     state.workspace = await request(orgPath("/setup"), {method:"POST", body:"{}"});
   }
-  $("#provider-state").textContent = state.workspace.delivery.ready ? "Mail host connected" : "Host setup needed";
+  state.deliverability = {};
+  await Promise.all((state.workspace.mailboxes || []).filter(item => item.provider_connected).map(async item => {
+    try {
+      state.deliverability[item.id] = await request(orgPath("/mailboxes/" + encodeURIComponent(item.id) + "/deliverability"));
+    } catch (error) {
+      state.deliverability[item.id] = {ready:false, message:error.message};
+    }
+  }));
+  const providerState = $("#provider-state");
+  const connected = Boolean(state.workspace.delivery.ready);
+  const statusDot = document.createElement("i");
+  providerState.replaceChildren(
+    statusDot,
+    document.createTextNode(connected ? "Zoho connected" : "Connect Zoho Mail")
+  );
+  providerState.classList.toggle("connected", connected);
   $("#compose-open").disabled = !state.workspace.mailboxes.some(item => item.access === "owner" || item.access === "write");
   renderMailboxSidebar();
   renderCurrentView();
@@ -199,15 +216,11 @@ function renderCurrentView() {
     renderDrafts(root);
     return;
   }
-  const message = state.view === "sent"
-    ? "Sent messages will appear here after an outbound mail host is connected."
-    : "Your Seldrune addresses are created, but no mail host is attached yet. Connect a mail host and configure its MX, SPF, and DKIM records to receive external email.";
-  const card = makeEmpty(state.view === "sent" ? "↗" : "✉", state.view === "sent" ? "Sent mail is waiting for a host" : "Your inbox is ready for its mail host", message, "Open domain & access setup", () => {
-    state.view = "settings";
-    renderCurrentView();
-  });
-  root.append(card);
-  if (!state.workspace.mailboxes.length) root.append(makeEmpty("＋", "Create a mailbox", "Initialize your Seldrune Mail workspace to create shared addresses.", null));
+  if (state.workspace.mailboxes.length) {
+    renderMessages(root, state.view === "sent" ? "Sent" : "Inbox");
+  } else {
+    root.append(makeEmpty("＋", "Create a mailbox", "Initialize your Seldrune Mail workspace to create shared addresses.", null));
+  }
 }
 
 async function initializeWorkspace() {
@@ -258,8 +271,8 @@ function renderShared(root) {
     const meta = document.createElement("div");
     meta.className = "mailbox-meta";
     const status = document.createElement("span");
-    status.className = "status-tag";
-    status.textContent = "Host required";
+    status.className = "status-tag" + (item.provider_connected ? " success" : "");
+    status.textContent = item.provider_connected ? "Zoho connected" : "Host required";
     const access = document.createElement("span");
     access.className = "status-tag success";
     access.textContent = item.access === "owner" ? "Owner access" : item.access + " access";
@@ -332,6 +345,96 @@ async function renderDrafts(root) {
   }
 }
 
+async function renderMessages(root, folder) {
+  const mailbox = state.workspace.mailboxes.find(item => item.id === state.mailboxId);
+  if (!mailbox) {
+    root.append(makeEmpty("✉", "Choose a mailbox", "Select a Seldrune mailbox to view its messages.", null));
+    return;
+  }
+  if (!mailbox.provider_connected) {
+    root.append(makeEmpty(
+      "✉",
+      "Connect Zoho Mail",
+      "Link this Seldrune mailbox to its Zoho account to load the live inbox and sent messages.",
+      "Open domain & access setup",
+      () => { state.view = "settings"; renderCurrentView(); }
+    ));
+    return;
+  }
+  const auth = state.deliverability[mailbox.id];
+  if (auth && !auth.ready) {
+    const warning = document.createElement("section");
+    warning.className = "mail-auth-warning";
+    const message = document.createElement("p");
+    message.textContent = "Sending is paused until SPF and DKIM pass. " + (auth.message || "Check Domains & access for the exact records.");
+    const action = document.createElement("button");
+    action.type = "button";
+    action.className = "small-button";
+    action.textContent = "Review authentication setup";
+    action.addEventListener("click", () => { state.view = "settings"; renderCurrentView(); });
+    warning.append(message, action);
+    root.append(warning);
+  }
+  try {
+    const result = await request(orgPath(
+      "/mailboxes/" + encodeURIComponent(mailbox.id) + "/messages?folder=" + encodeURIComponent(folder)
+    ));
+    const messages = result.messages || [];
+    if (!messages.length) {
+      root.append(makeEmpty(folder === "Sent" ? "↗" : "✉", "No messages yet", folder === "Sent" ? "Sent mail from this Zoho account will appear here." : "Messages delivered to this Zoho account will appear here.", null));
+      return;
+    }
+    const list = document.createElement("div");
+    list.className = "list-card mail-message-list";
+    messages.forEach(item => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "mail-message-row" + (item.unread ? " unread" : "");
+      row.addEventListener("click", () => openMessage(item));
+      const copy = document.createElement("span");
+      copy.className = "mail-message-copy";
+      const subject = document.createElement("strong");
+      subject.textContent = item.subject || "(no subject)";
+      const summary = document.createElement("small");
+      summary.textContent = (folder === "Sent" ? "To: " : "From: ") + (folder === "Sent" ? item.to : item.from) + (item.summary ? " · " + item.summary : "");
+      copy.append(subject, summary);
+      const date = document.createElement("time");
+      const timestamp = Number(item.received_at_ms || 0);
+      date.textContent = timestamp ? new Date(timestamp).toLocaleString() : "";
+      row.append(copy, date);
+      list.append(row);
+    });
+    root.append(list);
+  } catch (error) {
+    root.append(makeEmpty("!", "Messages unavailable", error.message, "Refresh", () => loadWorkspace()));
+  }
+}
+
+async function openMessage(message) {
+  const mailboxId = state.mailboxId;
+  try {
+    const detail = await request(
+      orgPath("/mailboxes/" + encodeURIComponent(mailboxId) + "/messages/" + encodeURIComponent(message.id) + "?folder_id=" + encodeURIComponent(message.folder_id))
+    );
+    $("#message-subject").textContent = message.subject || "(no subject)";
+    $("#message-from").textContent = "From: " + (message.from || "");
+    $("#message-to").textContent = "To: " + (message.to || "");
+    $("#message-body").textContent = detail.body_text || "";
+    const dialog = $("#message-dialog");
+    if (typeof dialog.showModal === "function") dialog.showModal();
+    else dialog.setAttribute("open", "");
+  } catch (error) {
+    flash(error.message);
+  }
+}
+
+function closeMessage() {
+  const dialog = $("#message-dialog");
+  if (typeof dialog.close === "function") dialog.close();
+  else dialog.removeAttribute("open");
+  $("#message-body").textContent = "";
+}
+
 function renderSettings(root) {
   const grid = document.createElement("div");
   grid.className = "settings-grid";
@@ -392,44 +495,101 @@ function renderSettings(root) {
   const deliveryCard = document.createElement("section");
   deliveryCard.className = "settings-card";
   const deliveryTitle = document.createElement("h2");
-  deliveryTitle.textContent = "Zoho Mail Free setup";
+  deliveryTitle.textContent = "Zoho Mail in Seldrune";
   const deliveryInfo = document.createElement("p");
-  deliveryInfo.textContent = "Zoho Mail Free is the selected host for founder@seldrune.in. It supports one domain, up to five users, and 5 GB per user. The free plan is web and mobile only, so it does not sync messages into Seldrune or Outlook. Seldrune AI drafts stay here and must be copied into Zoho before sending.";
+  deliveryInfo.textContent = "Connect the Zoho mailbox to read Inbox and Sent and send reviewed drafts from this console. Seldrune checks SPF and DKIM before enabling outgoing mail.";
   const deliveryTag = document.createElement("div");
   deliveryTag.className = "domain-row";
   const deliveryCopy = document.createElement("div");
   const deliveryName = document.createElement("strong");
   deliveryName.textContent = "Hosted inbox and sending";
   const deliveryState = document.createElement("small");
-  deliveryState.textContent = "Waiting for Zoho account setup and GoDaddy DNS records.";
+  deliveryState.textContent = state.workspace.delivery.ready
+    ? state.workspace.delivery.message
+    : "Connect a Zoho mailbox to load live email here.";
   deliveryCopy.append(deliveryName, deliveryState);
   const tag = document.createElement("span");
-  tag.className = "status-tag";
-  tag.textContent = "Setup needed";
+  tag.className = "status-tag" + (state.workspace.delivery.ready ? " success" : "");
+  tag.textContent = state.workspace.delivery.ready ? "Connected" : "Not connected";
   deliveryTag.append(deliveryCopy, tag);
   const providerActions = document.createElement("div");
   providerActions.className = "provider-actions";
-  const signupLink = document.createElement("a");
-  signupLink.className = "provider-link";
-  signupLink.href = "https://workplace.zoho.in/signup?type=org&plan=free";
-  signupLink.target = "_blank";
-  signupLink.rel = "noopener noreferrer";
-  signupLink.textContent = "Set up free mail ↗";
   const inboxLink = document.createElement("a");
-  inboxLink.className = "provider-link secondary-link";
+  inboxLink.className = "provider-link";
   inboxLink.href = "https://mail.zoho.in";
   inboxLink.target = "_blank";
   inboxLink.rel = "noopener noreferrer";
   inboxLink.textContent = "Open Zoho Mail ↗";
-  providerActions.append(signupLink, inboxLink);
+  const adminLink = document.createElement("a");
+  adminLink.className = "provider-link secondary-link";
+  adminLink.href = "https://mailadmin.zoho.in";
+  adminLink.target = "_blank";
+  adminLink.rel = "noopener noreferrer";
+  adminLink.textContent = "Open Zoho Admin ↗";
+  providerActions.append(inboxLink, adminLink);
   deliveryCard.append(deliveryTitle, deliveryInfo, deliveryTag, providerActions);
+
+  const activeMailbox = state.workspace.mailboxes.find(item => item.id === state.mailboxId)
+    || state.workspace.mailboxes[0];
+  const auth = activeMailbox && state.deliverability[activeMailbox.id];
+  if (activeMailbox && activeMailbox.provider_connected) {
+    const authPanel = document.createElement("div");
+    authPanel.className = "mail-auth-panel";
+    const authTitle = document.createElement("h3");
+    authTitle.textContent = "Sender authentication";
+    const authSummary = document.createElement("p");
+    authSummary.textContent = auth?.message || "Checking Zoho SPF and DKIM status…";
+    authPanel.append(authTitle, authSummary);
+    const spf = document.createElement("p");
+    spf.className = "mail-auth-record";
+    spf.textContent = "SPF: " + (auth?.spf_verified ? "Verified" : "Needs verification");
+    authPanel.append(spf);
+    if (auth?.spf_records?.length) {
+      const currentSpf = document.createElement("small");
+      currentSpf.textContent = "Current SPF: " + auth.spf_records.join(" · ");
+      authPanel.append(currentSpf);
+    } else if (!auth?.spf_verified) {
+      const suggestedSpf = document.createElement("small");
+      suggestedSpf.textContent = "If Zoho is the only sender, use one root TXT record: v=spf1 include:zohomail.com ~all. Merge other authorized senders into that same SPF record; do not add a second SPF record.";
+      authPanel.append(suggestedSpf);
+    }
+    const dkim = document.createElement("p");
+    dkim.className = "mail-auth-record";
+    dkim.textContent = "DKIM: " + (auth?.dkim_verified ? "Verified and enabled" : "Needs verification");
+    authPanel.append(dkim);
+    if (auth?.dkim_selector && auth?.dkim_record_value) {
+      const dkimName = document.createElement("small");
+      dkimName.textContent = "GoDaddy TXT name: " + auth.dkim_record_name;
+      const dkimValue = document.createElement("small");
+      dkimValue.className = "dns-value";
+      dkimValue.textContent = auth.dkim_record_value;
+      authPanel.append(dkimName, dkimValue);
+    }
+    if (state.workspace.can_manage) {
+      const controls = document.createElement("div");
+      controls.className = "provider-actions";
+      const dkimButton = document.createElement("button");
+      dkimButton.type = "button";
+      dkimButton.className = "secondary";
+      dkimButton.textContent = auth?.dkim_selector ? "Refresh DKIM record" : "Generate DKIM record";
+      dkimButton.addEventListener("click", () => createDkimRecord(activeMailbox.id));
+      const verifyButton = document.createElement("button");
+      verifyButton.type = "button";
+      verifyButton.className = "primary";
+      verifyButton.textContent = "Verify SPF and DKIM";
+      verifyButton.addEventListener("click", () => verifyDeliverability(activeMailbox.id));
+      controls.append(dkimButton, verifyButton);
+      authPanel.append(controls);
+    }
+    deliveryCard.append(authPanel);
+  }
 
   const mailboxCard = document.createElement("section");
   mailboxCard.className = "settings-card";
   const mailboxTitle = document.createElement("h2");
   mailboxTitle.textContent = "Mailbox identities";
   const mailboxInfo = document.createElement("p");
-  mailboxInfo.textContent = "Addresses are prepared for the domain. They will receive messages once its mail host and DNS are active.";
+  mailboxInfo.textContent = "Connect each Seldrune address to its Zoho mailbox to read mail here. Verify domain DNS before enabling outgoing messages.";
   mailboxCard.append(mailboxTitle, mailboxInfo);
   state.workspace.mailboxes.forEach(mailbox => {
     const row = document.createElement("div");
@@ -441,9 +601,19 @@ function renderSettings(root) {
     subtitle.textContent = mailbox.display_name;
     info.append(name, subtitle);
     const status = document.createElement("span");
-    status.className = "status-tag";
-    status.textContent = mailbox.access === "owner" ? "All owners" : mailbox.access;
+    status.className = "status-tag" + (mailbox.provider_connected ? " success" : "");
+    status.textContent = mailbox.provider_connected
+      ? "Zoho connected · " + mailbox.provider_email
+      : mailbox.access === "owner" ? "All owners" : mailbox.access;
     row.append(info, status);
+    if (state.workspace.can_manage) {
+      const connect = document.createElement("button");
+      connect.type = "button";
+      connect.className = "small-button";
+      connect.textContent = mailbox.provider_connected ? "Reconnect" : "Connect Zoho";
+      connect.addEventListener("click", () => connectZohoMailbox(mailbox.id));
+      row.append(connect);
+    }
     mailboxCard.append(row);
     if (state.workspace.can_manage) appendShareForm(mailboxCard, mailbox);
   });
@@ -626,6 +796,14 @@ function canWriteMailbox(mailboxId) {
   return Boolean(mailbox && (mailbox.access === "owner" || mailbox.access === "write"));
 }
 
+function updateSendButton() {
+  const mailboxId = $("#compose-mailbox").value;
+  const ready = Boolean(state.deliverability[mailboxId]?.ready);
+  const button = $("#send-mail");
+  button.disabled = !canWriteMailbox(mailboxId) || !ready;
+  button.title = ready ? "Send this message through Zoho Mail" : "Verify SPF and DKIM in Domains & access before sending";
+}
+
 function openCompose(draft) {
   const mailboxId = state.mailboxId;
   const readOnly = !canWriteMailbox(mailboxId);
@@ -651,6 +829,7 @@ function openCompose(draft) {
     $(selector).disabled = readOnly;
   });
   $("#compose-form button[type=submit]").disabled = readOnly;
+  updateSendButton();
   if (typeof dialog.showModal === "function") dialog.showModal();
   else dialog.setAttribute("open", "");
 }
@@ -664,6 +843,7 @@ function closeCompose() {
     $(selector).disabled = false;
   });
   $("#compose-form button[type=submit]").disabled = false;
+  $("#send-mail").disabled = true;
   state.editingDraftId = "";
 }
 
@@ -730,6 +910,100 @@ async function saveDraft(event) {
   } catch (error) { flash(error.message); }
 }
 
+async function sendMail() {
+  const mailboxId = $("#compose-mailbox").value;
+  if (!canWriteMailbox(mailboxId)) {
+    flash("You do not have permission to send from this mailbox.");
+    return;
+  }
+  if (!state.deliverability[mailboxId]?.ready) {
+    flash("Verify SPF and DKIM in Domains & access before sending.");
+    return;
+  }
+  const payload = {
+    to:splitEmails($("#compose-to").value),
+    cc:splitEmails($("#compose-cc").value),
+    bcc:splitEmails($("#compose-bcc").value),
+    subject:$("#compose-subject").value,
+    body:$("#compose-body").value
+  };
+  if (!payload.to.length) {
+    flash("Add at least one recipient before sending.");
+    return;
+  }
+  if (state.editingDraftId) payload.draft_id = state.editingDraftId;
+  const button = $("#send-mail");
+  button.disabled = true;
+  button.textContent = "Sending…";
+  try {
+    await request(orgPath("/mailboxes/" + encodeURIComponent(mailboxId) + "/send"), {
+      method:"POST",
+      body:JSON.stringify(payload)
+    });
+    state.mailboxId = mailboxId;
+    closeCompose();
+    state.view = "sent";
+    await loadWorkspace();
+    flash("Email sent through Zoho Mail");
+  } catch (error) {
+    flash(error.message);
+    updateSendButton();
+  } finally {
+    button.textContent = "Send email";
+  }
+}
+
+async function connectZohoMailbox(mailboxId) {
+  try {
+    const result = await request(orgPath("/zoho/connect"), {
+      method:"POST",
+      body:JSON.stringify({mailbox_id:mailboxId})
+    });
+    window.location.assign(result.authorization_url);
+  } catch (error) { flash(error.message); }
+}
+
+async function createDkimRecord(mailboxId) {
+  try {
+    state.deliverability[mailboxId] = await request(
+      orgPath("/mailboxes/" + encodeURIComponent(mailboxId) + "/deliverability/dkim"),
+      {method:"POST", body:"{}"}
+    );
+    renderCurrentView();
+    flash("Zoho DKIM record is ready. Add it at your DNS provider, then verify.");
+  } catch (error) { flash(error.message); }
+}
+
+async function verifyDeliverability(mailboxId) {
+  try {
+    state.deliverability[mailboxId] = await request(
+      orgPath("/mailboxes/" + encodeURIComponent(mailboxId) + "/deliverability/verify"),
+      {method:"POST", body:"{}"}
+    );
+    await loadWorkspace();
+    state.view = "settings";
+    renderCurrentView();
+    flash(state.deliverability[mailboxId].ready
+      ? "SPF and DKIM verified. Sending is enabled."
+      : "Zoho still cannot verify SPF and DKIM. Check the DNS records and retry.");
+  } catch (error) { flash(error.message); }
+}
+
+async function showZohoCallbackResult() {
+  const result = new URLSearchParams(window.location.search).get("zoho");
+  if (!result) return;
+  const messages = {
+    connected:"Zoho Mail connected to this Seldrune mailbox.",
+    wrong_mailbox:"The Zoho account does not contain this mailbox address. Connect the matching account.",
+    denied:"Zoho Mail connection was cancelled.",
+    expired:"The Zoho connection request expired. Start again.",
+    invalid:"The Zoho connection request was invalid. Start again.",
+    failed:"Zoho could not finish connecting. Check the OAuth app settings and try again."
+  };
+  history.replaceState({}, document.title, window.location.pathname);
+  flash(messages[result] || "Zoho Mail connection did not complete.");
+}
+
 $("#login-form").addEventListener("submit", async event => {
   event.preventDefault();
   setError("");
@@ -739,8 +1013,9 @@ $("#login-form").addEventListener("submit", async event => {
       body:JSON.stringify({email:$("#login-email").value, password:$("#login-password").value})
     });
     state.token = auth.access_token;
-    sessionStorage.seldruneMailToken = state.token;
+    sessionStorage.seldruneToken = state.token;
     await establishSession();
+    await showZohoCallbackResult();
   } catch (error) { setError(error.message); }
 });
 
@@ -749,7 +1024,12 @@ $("#compose-open").addEventListener("click", () => openCompose());
 $("#compose-close").addEventListener("click", closeCompose);
 $("#compose-cancel").addEventListener("click", closeCompose);
 $("#compose-form").addEventListener("submit", saveDraft);
+$("#send-mail").addEventListener("click", sendMail);
+$("#compose-mailbox").addEventListener("change", updateSendButton);
 $("#ai-draft").addEventListener("click", generateDraftBody);
+$("#mail-refresh").addEventListener("click", () => loadWorkspace().catch(error => flash(error.message)));
+$("#message-close").addEventListener("click", closeMessage);
+$("#message-dialog").addEventListener("close", () => { $("#message-body").textContent = ""; });
 document.querySelectorAll(".mail-nav button").forEach(button => {
   button.addEventListener("click", () => {
     state.view = button.dataset.view;
@@ -758,8 +1038,8 @@ document.querySelectorAll(".mail-nav button").forEach(button => {
 });
 
 if (state.token) {
-  establishSession().catch(error => {
-    logout();
-    setError(error.message);
-  });
+  establishSession().then(showZohoCallbackResult).catch(error => {
+      logout();
+      setError(error.message);
+    });
 }
