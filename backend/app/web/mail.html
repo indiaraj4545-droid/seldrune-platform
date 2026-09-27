@@ -6,6 +6,11 @@
   <meta name="theme-color" content="#101721">
   <title>Seldrune Mail</title>
   <link rel="stylesheet" href="/mail-assets/mail.css">
+  <style>
+    .provider-pill.connected{border-color:#284a40;background:#162922;color:var(--accent)}.provider-pill.connected i{background:var(--accent);box-shadow:0 0 10px #8bd8c399}
+    .mail-message-list{margin-top:16px}.mail-message-row{width:100%;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;align-items:center;text-align:left;padding:15px 18px;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--text)}
+    .mail-message-row:last-child{border-bottom:0}.mail-message-row:hover{background:#17222d}.mail-message-row.unread strong{color:var(--accent)}.mail-message-copy{min-width:0}.mail-message-copy strong,.mail-message-copy small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mail-message-copy strong{font-size:12px}.mail-message-copy small,.mail-message-row time{font-size:10px;color:var(--muted);margin-top:5px}.mail-auth-panel,.mail-auth-warning{margin-top:15px;padding:14px;border:1px solid #54462c;border-radius:10px;background:#1b1914}.mail-auth-panel h3{margin:0 0 8px;font-size:13px}.mail-auth-panel p,.mail-auth-warning p{font-size:11px;line-height:1.55;color:#d5c49f;margin:7px 0}.mail-auth-panel small{display:block;margin-top:7px;color:var(--muted);font-size:10px;line-height:1.6;overflow-wrap:anywhere}.mail-auth-panel .mail-auth-record{color:var(--text);font-weight:700}.message-dialog{border:1px solid #354555;border-radius:16px;width:min(720px,calc(100% - 24px));max-height:calc(100% - 24px);padding:22px;background:#111922;color:var(--text);box-shadow:0 30px 100px #000b}.message-dialog::backdrop{background:#03070bd1;backdrop-filter:blur(4px)}.message-dialog header{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.message-dialog h2{margin:0 0 8px;font-size:19px;overflow-wrap:anywhere}.message-dialog p{font-size:11px;color:var(--muted);overflow-wrap:anywhere}.message-dialog pre{max-height:55vh;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-family:inherit;font-size:12px;line-height:1.65;color:var(--text);border-top:1px solid var(--line);padding-top:14px}.mail-top-actions .small-button{white-space:nowrap}
+  </style>
   <script src="/mail-assets/mail.js" defer></script>
 </head>
 <body>
@@ -14,12 +19,12 @@
       <a class="mail-brand" href="/mail"><span class="brand-mark">S</span><span>Seldrune<small>MAIL</small></span></a>
       <p class="eyebrow">SELDRUNE HOSTED EMAIL</p>
       <h1>Set up Seldrune email.</h1>
-      <p class="muted">The target address is <strong>founder@seldrune.in</strong>. Zoho Mail Free supports up to five users on one domain with 5 GB per user. The free tier is web and mobile only; IMAP, POP, and ActiveSync are not included.</p>
+      <p class="muted">Connect the Zoho account for <strong>founder@seldrune.in</strong> to read Inbox and Sent, and send reviewed messages from this Seldrune console.</p>
       <div class="provider-actions">
         <a class="provider-link" href="https://mail.zoho.in" target="_blank" rel="noopener noreferrer">Open Zoho Mail ↗</a>
         <a class="provider-link secondary-link" href="https://workplace.zoho.in/signup?type=org&amp;plan=free" target="_blank" rel="noopener noreferrer">Set up free mail ↗</a>
       </div>
-      <p class="muted">Use Zoho to read and send mail. Seldrune sign-in manages shared addresses and AI drafts; those drafts are not sent automatically.</p>
+      <p class="muted">Your Seldrune sign-in also opens the console. Messages stay in Zoho; Seldrune checks SPF and DKIM before enabling sending.</p>
       <form id="login-form">
         <label>Email address<input id="login-email" type="email" autocomplete="username" required></label>
         <label>Password<input id="login-password" type="password" autocomplete="current-password" required></label>
@@ -59,6 +64,7 @@
         </div>
         <div class="mail-top-actions">
           <span id="provider-state" class="provider-pill"><i></i> Host setup needed</span>
+          <button id="mail-refresh" type="button" class="small-button">Refresh</button>
           <a href="/console" class="console-link">Open Seldrune ↗</a>
         </div>
       </header>
@@ -84,9 +90,13 @@
       </div>
       <label>Message<textarea id="compose-body" rows="9" maxlength="100000"></textarea></label>
       <p class="ai-note">AI uses your organization’s configured model and budget. Review every draft yourself.</p>
-      <p class="draft-note">Drafts are encrypted before they are saved. Sending is enabled after a mail host is connected.</p>
-      <div class="compose-actions"><button type="button" id="compose-cancel" class="secondary">Cancel</button><button type="submit" class="primary">Save draft</button></div>
+      <p class="draft-note">Drafts are encrypted before they are saved. Sending is enabled only after Zoho verifies SPF and DKIM.</p>
+      <div class="compose-actions"><button type="button" id="compose-cancel" class="secondary">Cancel</button><button type="submit" class="secondary">Save draft</button><button type="button" id="send-mail" class="primary" disabled>Send email</button></div>
     </form>
+  </dialog>
+  <dialog id="message-dialog" class="message-dialog">
+    <header><div><p class="eyebrow">SELDRUNE MAIL</p><h2 id="message-subject"></h2><p id="message-from"></p><p id="message-to"></p></div><button id="message-close" type="button" class="icon-button" aria-label="Close message">×</button></header>
+    <pre id="message-body"></pre>
   </dialog>
 </body>
 </html>
