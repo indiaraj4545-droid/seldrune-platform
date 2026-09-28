@@ -109,6 +109,66 @@ class VoiceRealismEvidence:
 
 
 @dataclass(frozen=True)
+class FaceRealismWarmupEvidence:
+    """Measured HD video evidence while the rolling quality window is filling."""
+
+    evaluator_id: str
+    evaluator_version: str
+    window_frames: int
+    required_window_frames: int
+    output_width: int
+    output_height: int
+    output_fps: float
+
+    def validate(self) -> None:
+        _evaluator(self.evaluator_id, self.evaluator_version)
+        if type(self.window_frames) is not int or self.window_frames < 1:
+            raise RealismEvidenceError("face warmup requires at least one observed frame")
+        if (
+            type(self.required_window_frames) is not int
+            or self.required_window_frames < 2
+            or self.window_frames >= self.required_window_frames
+        ):
+            raise RealismEvidenceError("face warmup window is invalid")
+        if type(self.output_width) is not int or type(self.output_height) is not int:
+            raise RealismEvidenceError("decoded face output dimensions are required")
+        if self.output_width < 1 or self.output_height < 1:
+            raise RealismEvidenceError("decoded face output dimensions must be positive")
+        _finite_number(self.output_fps, "output_fps", minimum=0.001)
+
+
+@dataclass(frozen=True)
+class VoiceRealismWarmupEvidence:
+    """Measured audio evidence while the rolling quality window is filling."""
+
+    evaluator_id: str
+    evaluator_version: str
+    window_duration_seconds: float
+    required_window_duration_seconds: float
+    sample_rate_hz: int
+    channels: int
+
+    def validate(self) -> None:
+        _evaluator(self.evaluator_id, self.evaluator_version)
+        observed = _finite_number(
+            self.window_duration_seconds,
+            "window_duration_seconds",
+            minimum=0.001,
+        )
+        required = _finite_number(
+            self.required_window_duration_seconds,
+            "required_window_duration_seconds",
+            minimum=0.001,
+        )
+        if observed >= required:
+            raise RealismEvidenceError("voice warmup window is invalid")
+        if type(self.sample_rate_hz) is not int or self.sample_rate_hz < 1:
+            raise RealismEvidenceError("decoded voice sample rate is required")
+        if type(self.channels) is not int or self.channels < 1:
+            raise RealismEvidenceError("decoded voice channel count is required")
+
+
+@dataclass(frozen=True)
 class FaceTransformOutput:
     payload: bytes
     evidence: FaceRealismEvidence
@@ -193,6 +253,49 @@ class RealismQualityPolicy:
         if missing or unknown:
             raise RealismEvidenceError("realism quality policy has missing or unknown fields")
         return cls(**config)
+
+
+def validate_face_warmup(
+    evidence: FaceRealismWarmupEvidence, policy: RealismQualityPolicy
+) -> dict[str, Any]:
+    """Validate honest pre-window video evidence without inventing quality scores."""
+    evidence.validate()
+    long_edge = max(evidence.output_width, evidence.output_height)
+    short_edge = min(evidence.output_width, evidence.output_height)
+    if (
+        evidence.required_window_frames != policy.min_face_window_frames
+        or long_edge < policy.min_video_width
+        or short_edge < policy.min_video_height
+        or evidence.output_fps < policy.min_video_fps
+    ):
+        raise RealismEvidenceError("face warmup output failed its HD transport requirements")
+    return {
+        "media_kind": "video",
+        "state": "warming",
+        **asdict(evidence),
+    }
+
+
+def validate_voice_warmup(
+    evidence: VoiceRealismWarmupEvidence, policy: RealismQualityPolicy
+) -> dict[str, Any]:
+    """Validate honest pre-window audio evidence without inventing similarity scores."""
+    evidence.validate()
+    if (
+        abs(
+            evidence.required_window_duration_seconds
+            - policy.min_voice_window_seconds
+        )
+        > 1e-9
+        or evidence.sample_rate_hz < policy.min_audio_sample_rate_hz
+        or evidence.channels not in (1, 2)
+    ):
+        raise RealismEvidenceError("voice warmup output failed its audio requirements")
+    return {
+        "media_kind": "audio",
+        "state": "warming",
+        **asdict(evidence),
+    }
 
 
 def validate_face_realism(
