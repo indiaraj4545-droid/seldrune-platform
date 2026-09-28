@@ -18,6 +18,8 @@ docker build -f services/live_media/Dockerfile.runpod -t seldrune-faceswap-worke
 
 The image pins the FaceFusion source revision used for the local integration and installs CUDA-enabled ONNX Runtime. FaceFusion downloads the selected model artifacts from its configured upstream provider when the first job runs.
 
+The `.github/workflows/runpod-worker-image.yml` workflow publishes a private GitHub Container Registry image from changes to the worker or Dockerfile. It tags the image as `ghcr.io/seldrune-platform/seldrune-faceswap-worker:latest` and with the source commit SHA. Because the Seldrune repository is private, RunPod needs a private registry credential with package-read access to pull it. Keep that credential in RunPod's registry-auth settings; do not put it in the workflow or Seldrune's browser client.
+
 Configure the Pod to run this image, set a random `SELDRUNE_FACESWAP_WORKER_TOKEN` environment value, and expose internal port `8000` as HTTP. The Pod proxy is internet-accessible, so keep the bearer token enabled and store its matching value only in the Seldrune server environment. Never place it in browser JavaScript.
 
 ## Seldrune settings
