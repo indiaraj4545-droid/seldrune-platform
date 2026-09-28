@@ -38,9 +38,12 @@ def _initialize(profile_path: Path) -> None:
 
     if not _INITIALIZED:
         output_placeholder = profile_path.parent / "unused-live-output.jpg"
-        args = vars(
-            create_program().parse_args(
-                [
+        previous_cwd = Path.cwd()
+        os.chdir(_FACEFUSION_ROOT)
+        try:
+            args = vars(
+                create_program().parse_args(
+                    [
                     "headless-run",
                     "--source-paths",
                     str(profile_path),
@@ -64,10 +67,12 @@ def _initialize(profile_path: Path) -> None:
                     "moderate",
                     "--log-level",
                     "error",
-                ]
+                    ]
+                )
             )
-        )
-        apply_args(args, state_manager.init_item)
+            apply_args(args, state_manager.init_item)
+        finally:
+            os.chdir(previous_cwd)
         _INITIALIZED = True
     else:
         state_manager.set_item("source_paths", [str(profile_path)])
