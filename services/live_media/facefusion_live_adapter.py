@@ -80,6 +80,9 @@ def _initialize(profile_path: Path) -> None:
     processor = load_processor_module("face_swapper")
     if not processor.pre_check() or not processor.pre_process("stream"):
         raise RuntimeError("FaceFusion live face processor is not ready")
+    # Materialize ONNX Runtime sessions before the WebRTC media clock starts.
+    if not processor.get_inference_pool():
+        raise RuntimeError("FaceFusion live inference pool did not initialize")
     _ACTIVE_PROFILE = str(profile_path)
 
 
@@ -140,6 +143,13 @@ def _transform_sync(
     if transformed.dtype.name != "uint8":
         transformed = transformed.clip(0, 255).astype("uint8")
     return _encode_jpeg(transformed)
+
+
+async def prepare_profile(profile_id: str) -> None:
+    """Resolve the authorized reference and warm CUDA/ONNX state before ready."""
+    profile_path = resolve_face_reference(profile_id)
+    async with _LOCK:
+        await asyncio.to_thread(_initialize, profile_path)
 
 
 async def transform_face(
