@@ -77,6 +77,14 @@ def worker_from_environment() -> tuple[
         _required_setting("SELDRUNE_SYNTHETIC_VIDEO_LABELER"),
         "SELDRUNE_SYNTHETIC_VIDEO_LABELER",
     )
+    face_evaluator = _load_async_adapter(
+        _required_setting("SELDRUNE_FACE_QUALITY_EVALUATOR"),
+        "SELDRUNE_FACE_QUALITY_EVALUATOR",
+    )
+    voice_evaluator = _load_async_adapter(
+        _required_setting("SELDRUNE_VOICE_QUALITY_EVALUATOR"),
+        "SELDRUNE_VOICE_QUALITY_EVALUATOR",
+    )
     try:
         realism_policy = RealismQualityPolicy.from_json(
             _required_setting("SELDRUNE_LIVE_REALISM_POLICY_JSON")
@@ -105,6 +113,8 @@ def worker_from_environment() -> tuple[
         transform_face=face_transform,
         transform_voice=voice_transform,
         label_synthetic_video=video_labeler,
+        evaluate_face=face_evaluator,
+        evaluate_voice=voice_evaluator,
         realism_policy=realism_policy,
         require_realism_evidence=True,
         max_sessions=int(os.getenv("SELDRUNE_LIVE_MAX_SESSIONS", "1")),
