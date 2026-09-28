@@ -18,6 +18,16 @@ jobs:
   build-and-publish:
     runs-on: ubuntu-latest
     steps:
+      - name: Reclaim disk space for CUDA image build
+        run: |
+          sudo rm -rf \
+            /usr/local/lib/android \
+            /usr/share/dotnet \
+            /opt/ghc \
+            /usr/local/share/boost \
+            /usr/local/share/chromium
+          df -h /
+
       - name: Check out Seldrune
         uses: actions/checkout@v4
 
