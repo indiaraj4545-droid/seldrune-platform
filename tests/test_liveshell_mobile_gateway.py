@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from backend.app.main import app
 from backend.app.api.routes.liveshell_mobile import (
     LiveSessionOffer,
+    _effective_video_resolution,
     _parse_gateway_session,
     create_liveshell_live_session,
 )
@@ -19,7 +20,7 @@ def valid_offer(**changes):
         "voice_profile_id": "approved-voice-1",
         "consent_confirmed": True,
         "synthetic_media_indicator_enabled": True,
-        "video_resolution": "720p",
+        "video_resolution": "1080p",
         "target_accelerator_profile": "rtx-4090",
     }
     values.update(changes)
@@ -35,6 +36,9 @@ def valid_gateway_response(**changes):
         "face_profile_authorized": True,
         "voice_profile_authorized": True,
         "synthetic_media_indicator_enabled": True,
+        "runpod_session_connected": True,
+        "session_ticket_validated": True,
+        "realism_evidence_required": True,
         "actual_accelerator_profile": "rtx-4090",
         "output_width": 1280,
         "output_height": 720,
@@ -51,6 +55,29 @@ def test_live_offer_accepts_4090_baseline_and_1080p_target():
     assert payload.target_accelerator_profile == "rtx-4090"
 
 
+def test_live_offer_accepts_rtx_pro_4500_se_profile():
+    payload = valid_offer(target_accelerator_profile="rtx-pro-4500-se")
+    response = valid_gateway_response(actual_accelerator_profile="rtx-pro-4500-se")
+    result = _parse_gateway_session(payload, response)
+    assert payload.target_accelerator_profile == "rtx-pro-4500-se"
+    assert result.actual_accelerator_profile == "rtx-pro-4500-se"
+
+
+def test_live_offer_defaults_to_1080p30_for_hd():
+    payload = valid_offer().model_dump(exclude={"video_resolution"})
+    assert LiveSessionOffer.model_validate(payload).video_resolution == "1080p"
+
+
+def test_live_offer_accepts_cloud_rtx_pro_6000_profile():
+    payload = valid_offer(target_accelerator_profile="rtx-pro-6000-blackwell")
+    response = valid_gateway_response(
+        actual_accelerator_profile="rtx-pro-6000-blackwell"
+    )
+    result = _parse_gateway_session(payload, response)
+    assert payload.target_accelerator_profile == "rtx-pro-6000-blackwell"
+    assert result.actual_accelerator_profile == "rtx-pro-6000-blackwell"
+
+
 def test_live_offer_rejects_unknown_gpu_target():
     with pytest.raises(ValidationError):
         valid_offer(target_accelerator_profile="rtx-4080")
@@ -62,7 +89,11 @@ def test_gateway_session_requires_matching_authorized_profiles():
     assert result.face_profile_authorized
     assert result.voice_profile_authorized
     assert result.synthetic_media_indicator_enabled
+    assert result.runpod_session_connected
+    assert result.session_ticket_validated
+    assert result.realism_evidence_required
     assert result.actual_accelerator_profile == "rtx-4090"
+    assert _effective_video_resolution(result.output_width, result.output_height) == "720p"
 
 
 @pytest.mark.parametrize(
@@ -71,6 +102,9 @@ def test_gateway_session_requires_matching_authorized_profiles():
         {"face_profile_authorized": False},
         {"voice_profile_authorized": False},
         {"synthetic_media_indicator_enabled": False},
+        {"runpod_session_connected": False},
+        {"session_ticket_validated": False},
+        {"realism_evidence_required": False},
         {"face_profile_id": "different-face"},
         {"voice_profile_id": "different-voice"},
     ],
@@ -139,10 +173,65 @@ def test_mobile_page_product_hub_and_assets_are_served():
 
     assert page.status_code == 200
     assert "LIVESHELL · MOBILE STUDIO" in page.text
+    assert 'value="rtx-pro-4500-se"' in page.text
+    assert 'value="rtx-pro-6000-blackwell"' in page.text
+    assert 'value="1080p" selected' in page.text
     assert faceswap_page.status_code == 200
     assert "Mobile FaceSwap" in faceswap_page.text
     assert products.status_code == 200
     assert 'href="/liveshell/mobile"' in products.text
     assert javascript.status_code == 200
+    assert "output.measurement_status === 'measured'" in javascript.text
+    assert "Awaiting first decoded frame" in javascript.text
+    assert "Browser decoded " in javascript.text
+    assert "FPS pending" in javascript.text
     assert stylesheet.status_code == 200
     assert faceswap_javascript.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"audio_sample_rate_hz": 44_100},
+        {"output_fps": 28.9},
+        {"output_width": 640, "output_height": 480},
+    ],
+)
+def test_gateway_rejects_unusable_media_metadata(changes):
+    with pytest.raises(HTTPException) as error:
+        _parse_gateway_session(valid_offer(), valid_gateway_response(**changes))
+    assert error.value.status_code == 502
+
+
+@pytest.mark.parametrize(
+    ("width", "height", "expected"),
+    [
+        (1920, 1080, "1080p"),
+        (1080, 1920, "1080p"),
+        (1280, 720, "720p"),
+        (720, 1280, "720p"),
+        (640, 480, None),
+    ],
+)
+def test_gateway_resolution_is_orientation_neutral(width, height, expected):
+    assert _effective_video_resolution(width, height) == expected
+
+
+def test_gateway_response_marks_media_output_pending_until_first_frame():
+    response = valid_gateway_response()
+    for field in (
+        "output_width",
+        "output_height",
+        "audio_sample_rate_hz",
+        "output_fps",
+    ):
+        response.pop(field)
+
+    result = _parse_gateway_session(valid_offer(), response)
+    assert result.runpod_session_connected
+    assert result.session_ticket_validated
+    assert result.realism_evidence_required
+    assert result.output_width is None
+    assert result.output_height is None
+    assert result.audio_sample_rate_hz is None
+    assert result.output_fps is None

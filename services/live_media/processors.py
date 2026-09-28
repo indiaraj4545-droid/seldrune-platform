@@ -6,6 +6,12 @@ from dataclasses import dataclass
 class MediaFrame:
     payload: bytes
     timestamp_ms: int
+    width: int | None = None
+    height: int | None = None
+    fps: float | None = None
+    sample_rate_hz: int | None = None
+    channels: int | None = None
+    pixel_format: str | None = None
 
 
 class VideoProcessor(ABC):

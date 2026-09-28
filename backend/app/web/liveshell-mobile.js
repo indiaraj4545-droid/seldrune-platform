@@ -3,11 +3,14 @@
   const token = sessionStorage.getItem('seldruneToken') || '';
   const state = {
     organizationId: '',
+    userId: '',
     gatewayConfigured: false,
     localStream: null,
     peer: null,
     sessionId: '',
     facingMode: 'user',
+    browserDecodedVideo: null,
+    outputProfile: null,
   };
 
   const api = async (path, options = {}) => {
@@ -34,6 +37,44 @@
 
   function setConnection(value) {
     q('#connection-state').textContent = value;
+  }
+
+  function renderOutputMetrics() {
+    const profile = state.outputProfile || {};
+    const decoded = state.browserDecodedVideo;
+    if (decoded) {
+      q('#output-metrics').textContent =
+        'Browser decoded ' + decoded.width + '×' + decoded.height + ' · FPS pending';
+    } else if (profile.width && profile.height) {
+      q('#output-metrics').textContent =
+        'Gateway profile ' + profile.width + '×' + profile.height + ' · unmeasured';
+    } else {
+      q('#output-metrics').textContent = 'Awaiting first decoded frame';
+    }
+
+    const sampleRate = profile.audio_sample_rate_hz || 0;
+    q('#audio-detail').textContent = profile.measurement_status === 'measured'
+      ? (sampleRate ? 'Measured ' + sampleRate + ' Hz return' : 'Return rate unreported')
+      : (sampleRate ? 'Gateway profile ' + sampleRate + ' Hz · unmeasured' : '48 kHz target · measurement pending');
+  }
+
+  function showBrowserVideoStatus() {
+    const decoded = state.browserDecodedVideo;
+    if (!decoded) return;
+    const shortEdge = Math.min(decoded.width, decoded.height);
+    const longEdge = Math.max(decoded.width, decoded.height);
+    const tier = shortEdge >= 1080 && longEdge >= 1920
+      ? '1080p'
+      : shortEdge >= 720 && longEdge >= 1280
+        ? '720p'
+        : '';
+    if (!tier) {
+      showStatus('The browser decoded video below the 720p minimum; FPS, audio, and quality evidence are pending.', 'error');
+    } else if (tier === '720p' && q('#resolution').value === '1080p') {
+      showStatus('The browser decoded the 720p fallback. FPS, audio, and evaluator evidence remain pending.', 'success');
+    } else {
+      showStatus('The browser decoded ' + tier + ' video. FPS, audio, and evaluator evidence remain pending.', 'success');
+    }
   }
 
   function captureConstraints() {
@@ -95,8 +136,25 @@
     const track = event.track;
     const stream = new MediaStream([track]);
     if (track.kind === 'video') {
-      q('#remote-video').srcObject = stream;
+      const video = q('#remote-video');
+      video.srcObject = stream;
       q('.output-card').classList.add('active');
+      video.addEventListener('loadeddata', () => {
+        const recordFrame = () => {
+          if (state.browserDecodedVideo || !video.videoWidth || !video.videoHeight) return;
+          state.browserDecodedVideo = {
+            width: video.videoWidth,
+            height: video.videoHeight,
+          };
+          renderOutputMetrics();
+          showBrowserVideoStatus();
+        };
+        if (typeof video.requestVideoFrameCallback === 'function') {
+          video.requestVideoFrameCallback(recordFrame);
+        } else {
+          recordFrame();
+        }
+      }, {once: true});
     } else if (track.kind === 'audio') {
       q('#remote-audio').srcObject = stream;
       q('#remote-audio').play().catch(() => {});
@@ -118,11 +176,22 @@
       return;
     }
 
+    state.browserDecodedVideo = null;
+    state.outputProfile = null;
     q('#connect-button').disabled = true;
     q('#preview-button').disabled = true;
     showStatus('Requesting camera and microphone…');
     setConnection('CONNECTING');
     try {
+      const grants = await api('/organizations/' + state.organizationId + '/liveshift/profile-authorizations');
+      const activeGrant = (kind, profileId) => grants.some(item =>
+        item.user_id === state.userId && item.profile_kind === kind &&
+        item.profile_id === profileId && item.status === 'approved'
+      );
+      if (!activeGrant('face', q('#face-profile').value.trim()) ||
+          !activeGrant('voice', q('#voice-profile').value.trim())) {
+        throw new Error('Both profiles need a current owner/admin approval. Open Profile authorization to enroll or review them.');
+      }
       const stream = await ensureCapture();
       const peer = new RTCPeerConnection({
         iceServers: [{urls: 'stun:stun.l.google.com:19302'}],
@@ -161,20 +230,37 @@
       const actualGpu = result.actual_accelerator_profile || 'worker GPU not reported';
       q('#gpu-detail').textContent = actualGpu;
       const output = result.output || {};
-      const dimensions = output.width && output.height
-        ? output.width + '×' + output.height + ' · ' + (output.fps || 'fps unreported')
-        : 'resolution unreported';
-      const sampleRate = output.audio_sample_rate_hz || 0;
-      q('#output-metrics').textContent = dimensions;
-      q('#audio-detail').textContent = sampleRate ? sampleRate + ' Hz return' : 'Return rate unreported';
+      const outputMeasured = output.measurement_status === 'measured';
+      state.outputProfile = output;
+      renderOutputMetrics();
       q('#proof-detail').textContent = 'Live session · evidence pending';
-      const requiredWidth = q('#resolution').value === '1080p' ? 1920 : 1280;
-      const requiredHeight = q('#resolution').value === '1080p' ? 1080 : 720;
 
-      if (output.width >= requiredWidth && output.height >= requiredHeight && output.fps >= 24 && sampleRate >= 48000) {
-        showStatus('Connected. The gateway reports the requested HD resolution, at least 24 fps, and 48 kHz audio; production evidence still needs a measured phone-session receipt.', 'success');
+      if (state.browserDecodedVideo) {
+        showBrowserVideoStatus();
+      } else if (outputMeasured) {
+        const sampleRate = output.audio_sample_rate_hz || 0;
+        const shortEdge = Math.min(output.width || 0, output.height || 0);
+        const longEdge = Math.max(output.width || 0, output.height || 0);
+        const fullHd = shortEdge >= 1080 && longEdge >= 1920;
+        const hdFallback = shortEdge >= 720 && longEdge >= 1280;
+        const meetsResolution = q('#resolution').value === '1080p'
+          ? (fullHd || hdFallback)
+          : hdFallback;
+        if (meetsResolution && output.fps >= 29 && sampleRate === 48000) {
+          showStatus(
+            fullHd || q('#resolution').value === '720p'
+              ? 'Connected. Measured HD video and 48 kHz audio passed; evaluator and latency evidence remain pending.'
+              : 'Connected at the measured 720p fallback. Evaluator and latency evidence remain pending.',
+            'success',
+          );
+        } else {
+          showStatus('Connected, but measured video or audio output is below the supported profile.', 'error');
+        }
       } else {
-        showStatus('Connected, but the gateway has not reported verified HD video and 48 kHz audio output.', 'error');
+        showStatus(
+          'Connected. Worker session validated; waiting for the first transformed frame. Audio and quality evidence remain pending.',
+          'success',
+        );
       }
       setConnection('NEGOTIATED');
     } catch (error) {
@@ -189,6 +275,8 @@
   async function stopLive(closeRemote = true) {
     const sessionId = state.sessionId;
     state.sessionId = '';
+    state.browserDecodedVideo = null;
+    state.outputProfile = null;
     if (closeRemote && sessionId && state.organizationId && token) {
       try {
         await api(
@@ -281,6 +369,7 @@
       const membership = me.memberships.find(item => item.role === 'owner') || me.memberships[0];
       if (!membership) throw new Error('No Seldrune organization is available for this account.');
       state.organizationId = membership.organization.id;
+      state.userId = me.user.id;
       const readiness = await api('/organizations/' + state.organizationId + '/liveshift/live/readiness');
       state.gatewayConfigured = Boolean(readiness.gateway_configured);
       if (state.gatewayConfigured) {
