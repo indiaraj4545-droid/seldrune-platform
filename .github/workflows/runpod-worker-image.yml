@@ -24,8 +24,18 @@ jobs:
             /usr/local/lib/android \
             /usr/share/dotnet \
             /opt/ghc \
+            /opt/hostedtoolcache \
+            /opt/az \
+            /opt/microsoft \
+            /usr/share/swift \
+            /usr/lib/jvm \
+            /usr/lib/llvm-* \
             /usr/local/share/boost \
-            /usr/local/share/chromium
+            /usr/local/share/chromium \
+            /usr/local/share/powershell \
+            /usr/local/lib/node_modules \
+            /home/runner/.cache
+          sudo docker system prune --all --force
           df -h /
 
       - name: Check out Seldrune
