@@ -86,7 +86,7 @@ def _initialize(profile_path: Path) -> None:
     _ACTIVE_PROFILE = str(profile_path)
 
 
-def _decode_jpeg(payload: bytes, width: int, height: int):
+def _decode_jpeg_bgr(payload: bytes, width: int, height: int):
     import numpy as np
 
     try:
@@ -99,12 +99,12 @@ def _decode_jpeg(payload: bytes, width: int, height: int):
     actual_height, actual_width = rgb.shape[:2]
     if (actual_width, actual_height) != (width, height):
         raise ValueError("live face JPEG dimensions do not match transport metadata")
-    return np.ascontiguousarray(rgb)
+    return np.ascontiguousarray(rgb[:, :, ::-1])
 
 
-def _encode_jpeg(rgb) -> bytes:
+def _encode_jpeg_bgr(bgr) -> bytes:
     output = io.BytesIO()
-    Image.fromarray(rgb, mode="RGB").save(
+    Image.fromarray(bgr[:, :, ::-1], mode="RGB").save(
         output,
         format="JPEG",
         quality=90,
@@ -131,7 +131,7 @@ def _transform_sync(
 
     from facefusion.streamer import process_stream_frame
 
-    source = _decode_jpeg(payload, width, height)
+    source = _decode_jpeg_bgr(payload, width, height)
     transformed = process_stream_frame(
         __import__("facefusion.vision", fromlist=["read_static_images"]).read_static_images(
             [str(profile_path)]
@@ -142,7 +142,7 @@ def _transform_sync(
         raise RuntimeError("FaceFusion live transform changed the frame geometry")
     if transformed.dtype.name != "uint8":
         transformed = transformed.clip(0, 255).astype("uint8")
-    return _encode_jpeg(transformed)
+    return _encode_jpeg_bgr(transformed)
 
 
 async def prepare_profile(profile_id: str) -> None:
