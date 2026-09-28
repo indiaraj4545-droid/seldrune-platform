@@ -55,6 +55,7 @@ SUPPORTED_ACCELERATOR_PROFILES = frozenset({
 
 Transform = Callable[..., Awaitable[bytes | FaceTransformOutput | VoiceTransformOutput]]
 VideoLabeler = Callable[[bytes], Awaitable[bytes]]
+ProfilePreparer = Callable[[str], Awaitable[None]]
 
 
 async def _invoke_transform(
@@ -384,6 +385,8 @@ class RunPodLiveWorkerServer:
         label_synthetic_video: VideoLabeler,
         evaluate_face: Callable[..., Awaitable[object]] | None = None,
         evaluate_voice: Callable[..., Awaitable[object]] | None = None,
+        prepare_face_profile: ProfilePreparer | None = None,
+        prepare_voice_profile: ProfilePreparer | None = None,
         max_sessions: int = 1,
         max_inflight_per_connection: int = 2,
         realism_policy: RealismQualityPolicy | None = None,
@@ -408,6 +411,8 @@ class RunPodLiveWorkerServer:
         self.label_synthetic_video = label_synthetic_video
         self.evaluate_face = evaluate_face
         self.evaluate_voice = evaluate_voice
+        self.prepare_face_profile = prepare_face_profile
+        self.prepare_voice_profile = prepare_voice_profile
         if require_realism_evidence and realism_policy is None:
             raise ValueError("strict live realism evidence requires a quality policy")
         self.max_sessions = max_sessions
@@ -477,6 +482,20 @@ class RunPodLiveWorkerServer:
             self._used_tickets[claims.ticket_id] = claims.expires_at
             self._active_sessions.add(claims.session_id)
             registered_session = claims.session_id
+            preparers = []
+            if self.prepare_face_profile is not None:
+                preparers.append(self.prepare_face_profile(claims.face_profile_id))
+            if self.prepare_voice_profile is not None:
+                preparers.append(self.prepare_voice_profile(claims.voice_profile_id))
+            if preparers:
+                try:
+                    await asyncio.gather(*preparers)
+                except Exception:
+                    await write_message(
+                        writer,
+                        {"type": "error", "code": "profile_preparation_failed"},
+                    )
+                    return
             ready_header: dict[str, Any] = {
                 "type": "ready",
                 "session_id": claims.session_id,
