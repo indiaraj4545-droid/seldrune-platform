@@ -86,7 +86,7 @@ def _ensure_facefusion_import_path() -> None:
         sys.path.insert(0, root)
 
 
-def _decode_rgb(payload: bytes):
+def _decode_bgr(payload: bytes):
     import numpy as np
 
     try:
@@ -95,8 +95,8 @@ def _decode_rgb(payload: bytes):
     except OSError as exc:
         raise ValueError("face evaluator requires a decodable final JPEG") from exc
     if rgb.ndim != 3 or rgb.shape[2] != 3:
-        raise ValueError("face evaluator requires RGB video output")
-    return np.ascontiguousarray(rgb)
+        raise ValueError("face evaluator requires three-channel video output")
+    return np.ascontiguousarray(rgb[:, :, ::-1])
 
 
 def _face_measurements(payload: bytes, profile_id: str) -> tuple[float, float, object]:
@@ -108,7 +108,7 @@ def _face_measurements(payload: bytes, profile_id: str) -> tuple[float, float, o
 
     profile_path = resolve_face_reference(profile_id)
     reference_frame = read_static_image(str(profile_path))
-    output_frame = _decode_rgb(payload)
+    output_frame = _decode_bgr(payload)
     reference_face = get_one_face(get_static_faces([reference_frame]))
     output_face = get_one_face(get_static_faces([output_frame]))
     if reference_face is None or output_face is None:
