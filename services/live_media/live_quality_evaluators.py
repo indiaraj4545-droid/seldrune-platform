@@ -234,20 +234,20 @@ def _voice_chunk(
 
     source_power = sum(value * value for value in source)
     output_power = sum(value * value for value in output)
-    dot = sum(a * b for a, b in zip(source, output))
+    dot = sum(a * b for a, b in zip(source, output, strict=True))
     if source_power > 1e-12 and output_power > 1e-12:
         correlation = dot / math.sqrt(source_power * output_power)
     else:
         correlation = 1.0 if source_power <= 1e-12 and output_power <= 1e-12 else 0.0
     speaker_preservation = _clamp_score(correlation)
 
-    error_power = sum((a - b) ** 2 for a, b in zip(source, output))
+    error_power = sum((a - b) ** 2 for a, b in zip(source, output, strict=True))
     content_preservation = _clamp_score(
         1.0 - error_power / max(source_power, 1e-9)
     )
     clipped = sum(abs(value) >= 0.995 for value in output) / max(len(output), 1)
     dropout = sum(
-        abs(a) >= 0.01 and abs(b) < 0.0005 for a, b in zip(source, output)
+        abs(a) >= 0.01 and abs(b) < 0.0005 for a, b in zip(source, output, strict=True)
     ) / max(len(output), 1)
     rms_in = math.sqrt(source_power / max(len(source), 1))
     rms_out = math.sqrt(output_power / max(len(output), 1))
