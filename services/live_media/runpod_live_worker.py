@@ -34,6 +34,19 @@ def _load_async_adapter(setting: str, name: str) -> Adapter:
 
 
 
+def _load_profile_preparer(setting: str, name: str) -> Adapter:
+    """Require a sibling async prepare_profile hook for cold-start control."""
+    module_name, separator, _ = setting.partition(":")
+    if not separator or not module_name:
+        raise RuntimeError(f"{name} must use the module:callable format")
+    module = importlib.import_module(module_name)
+    preparer = getattr(module, "prepare_profile", None)
+    if not callable(preparer) or not asyncio.iscoroutinefunction(preparer):
+        raise RuntimeError(f"{name} module must expose async prepare_profile")
+    return preparer
+
+
+
 def detect_actual_accelerator_profile() -> str:
     """Map the visible CUDA device to a supported profile; never trust a requested target."""
     try:
@@ -73,9 +86,25 @@ def worker_from_environment() -> tuple[
         _required_setting("SELDRUNE_VOICE_TRANSFORM_ADAPTER"),
         "SELDRUNE_VOICE_TRANSFORM_ADAPTER",
     )
+    face_preparer = _load_profile_preparer(
+        _required_setting("SELDRUNE_FACE_TRANSFORM_ADAPTER"),
+        "SELDRUNE_FACE_TRANSFORM_ADAPTER",
+    )
+    voice_preparer = _load_profile_preparer(
+        _required_setting("SELDRUNE_VOICE_TRANSFORM_ADAPTER"),
+        "SELDRUNE_VOICE_TRANSFORM_ADAPTER",
+    )
     video_labeler = _load_async_adapter(
         _required_setting("SELDRUNE_SYNTHETIC_VIDEO_LABELER"),
         "SELDRUNE_SYNTHETIC_VIDEO_LABELER",
+    )
+    face_evaluator = _load_async_adapter(
+        _required_setting("SELDRUNE_FACE_QUALITY_EVALUATOR"),
+        "SELDRUNE_FACE_QUALITY_EVALUATOR",
+    )
+    voice_evaluator = _load_async_adapter(
+        _required_setting("SELDRUNE_VOICE_QUALITY_EVALUATOR"),
+        "SELDRUNE_VOICE_QUALITY_EVALUATOR",
     )
     try:
         realism_policy = RealismQualityPolicy.from_json(
@@ -105,6 +134,10 @@ def worker_from_environment() -> tuple[
         transform_face=face_transform,
         transform_voice=voice_transform,
         label_synthetic_video=video_labeler,
+        evaluate_face=face_evaluator,
+        evaluate_voice=voice_evaluator,
+        prepare_face_profile=face_preparer,
+        prepare_voice_profile=voice_preparer,
         realism_policy=realism_policy,
         require_realism_evidence=True,
         max_sessions=int(os.getenv("SELDRUNE_LIVE_MAX_SESSIONS", "1")),

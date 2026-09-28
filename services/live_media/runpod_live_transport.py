@@ -25,11 +25,17 @@ from typing import Any
 from uuid import uuid4
 
 from .realism_quality_gate import (
+    FaceRealismEvidence,
+    FaceRealismWarmupEvidence,
     FaceTransformOutput,
     RealismQualityPolicy,
+    VoiceRealismEvidence,
+    VoiceRealismWarmupEvidence,
     VoiceTransformOutput,
     validate_face_realism,
+    validate_face_warmup,
     validate_voice_realism,
+    validate_voice_warmup,
 )
 from .avsync import AVSyncState
 from .realism_quality_gate import RealismEvidenceError
@@ -49,6 +55,7 @@ SUPPORTED_ACCELERATOR_PROFILES = frozenset({
 
 Transform = Callable[..., Awaitable[bytes | FaceTransformOutput | VoiceTransformOutput]]
 VideoLabeler = Callable[[bytes], Awaitable[bytes]]
+ProfilePreparer = Callable[[str], Awaitable[None]]
 
 
 async def _invoke_transform(
@@ -79,6 +86,25 @@ async def _invoke_transform(
     if len(positional) >= 3 or has_varargs:
         return await adapter(payload, profile_id, metadata)
     return await adapter(payload, profile_id)
+
+
+async def _invoke_quality_evaluator(
+    adapter: Callable[..., Awaitable[object]],
+    output_payload: bytes,
+    profile_id: str,
+    *,
+    source_payload: bytes,
+    media_metadata: dict[str, Any],
+    processing_ms: float,
+) -> object:
+    """Evaluate the final outbound payload after disclosure labeling."""
+    return await adapter(
+        output_payload,
+        profile_id,
+        source_payload=source_payload,
+        media_metadata=media_metadata,
+        processing_ms=processing_ms,
+    )
 
 
 class StreamProtocolError(ValueError):
@@ -357,6 +383,10 @@ class RunPodLiveWorkerServer:
         transform_face: Transform,
         transform_voice: Transform,
         label_synthetic_video: VideoLabeler,
+        evaluate_face: Callable[..., Awaitable[object]] | None = None,
+        evaluate_voice: Callable[..., Awaitable[object]] | None = None,
+        prepare_face_profile: ProfilePreparer | None = None,
+        prepare_voice_profile: ProfilePreparer | None = None,
         max_sessions: int = 1,
         max_inflight_per_connection: int = 2,
         realism_policy: RealismQualityPolicy | None = None,
@@ -379,6 +409,10 @@ class RunPodLiveWorkerServer:
         self.transform_face = transform_face
         self.transform_voice = transform_voice
         self.label_synthetic_video = label_synthetic_video
+        self.evaluate_face = evaluate_face
+        self.evaluate_voice = evaluate_voice
+        self.prepare_face_profile = prepare_face_profile
+        self.prepare_voice_profile = prepare_voice_profile
         if require_realism_evidence and realism_policy is None:
             raise ValueError("strict live realism evidence requires a quality policy")
         self.max_sessions = max_sessions
@@ -448,6 +482,20 @@ class RunPodLiveWorkerServer:
             self._used_tickets[claims.ticket_id] = claims.expires_at
             self._active_sessions.add(claims.session_id)
             registered_session = claims.session_id
+            preparers = []
+            if self.prepare_face_profile is not None:
+                preparers.append(self.prepare_face_profile(claims.face_profile_id))
+            if self.prepare_voice_profile is not None:
+                preparers.append(self.prepare_voice_profile(claims.voice_profile_id))
+            if preparers:
+                try:
+                    await asyncio.gather(*preparers)
+                except Exception:
+                    await write_message(
+                        writer,
+                        {"type": "error", "code": "profile_preparation_failed"},
+                    )
+                    return
             ready_header: dict[str, Any] = {
                 "type": "ready",
                 "session_id": claims.session_id,
@@ -487,43 +535,112 @@ class RunPodLiveWorkerServer:
                             "width", "height", "fps", "sample_rate_hz", "channels", "pixel_format"
                         )
                     }
+                    transform_started = perf_counter()
                     if kind == MediaKind.VIDEO:
                         model_output = await _invoke_transform(
                             self.transform_face, payload, profile_id, media_metadata
                         )
+                        legacy_face_evidence = None
                         if isinstance(model_output, FaceTransformOutput):
-                            if self.realism_policy is None:
-                                raise RuntimeError("face quality policy is not configured")
                             transformed = model_output.payload
-                            quality_evidence = validate_face_realism(
-                                model_output.evidence, self.realism_policy
-                            )
-                        elif isinstance(model_output, bytes) and not self.require_realism_evidence:
+                            legacy_face_evidence = model_output.evidence
+                        elif isinstance(model_output, bytes):
                             transformed = model_output
                         else:
-                            raise RuntimeError("face adapter must return measured realism evidence")
+                            raise RuntimeError("face adapter returned an invalid output")
                         if not isinstance(transformed, bytes) or not transformed:
                             raise RuntimeError("face transform returned no output")
+
+                        # Disclosure is part of the final outbound image, so production
+                        # quality evaluation runs after the label has been rendered.
                         transformed = await self.label_synthetic_video(transformed)
+                        transform_ms = max(
+                            (perf_counter() - transform_started) * 1000, 0.001
+                        )
+                        if self.require_realism_evidence:
+                            if self.realism_policy is None:
+                                raise RuntimeError("face quality policy is not configured")
+                            if self.evaluate_face is not None:
+                                measured = await _invoke_quality_evaluator(
+                                    self.evaluate_face,
+                                    transformed,
+                                    profile_id,
+                                    source_payload=payload,
+                                    media_metadata=media_metadata,
+                                    processing_ms=transform_ms,
+                                )
+                                if isinstance(measured, FaceRealismEvidence):
+                                    quality_evidence = validate_face_realism(
+                                        measured, self.realism_policy
+                                    )
+                                elif isinstance(measured, FaceRealismWarmupEvidence):
+                                    quality_evidence = validate_face_warmup(
+                                        measured, self.realism_policy
+                                    )
+                                else:
+                                    raise RuntimeError(
+                                        "face evaluator returned invalid evidence"
+                                    )
+                            elif legacy_face_evidence is not None:
+                                # Kept for injected unit-test workers only. The
+                                # environment entrypoint requires post-label evaluators.
+                                quality_evidence = validate_face_realism(
+                                    legacy_face_evidence, self.realism_policy
+                                )
+                            else:
+                                raise RuntimeError(
+                                    "face adapter must provide measured realism evidence"
+                                )
                     else:
                         model_output = await _invoke_transform(
                             self.transform_voice, payload, profile_id, media_metadata
                         )
+                        legacy_voice_evidence = None
                         if isinstance(model_output, VoiceTransformOutput):
-                            if self.realism_policy is None:
-                                raise RuntimeError("voice quality policy is not configured")
                             transformed = model_output.payload
-                            quality_evidence = validate_voice_realism(
-                                model_output.evidence, self.realism_policy
-                            )
-                        elif isinstance(model_output, bytes) and not self.require_realism_evidence:
+                            legacy_voice_evidence = model_output.evidence
+                        elif isinstance(model_output, bytes):
                             transformed = model_output
                         else:
-                            raise RuntimeError(
-                                "voice adapter must return measured realism evidence"
-                            )
+                            raise RuntimeError("voice adapter returned an invalid output")
                         if not isinstance(transformed, bytes) or not transformed:
                             raise RuntimeError("voice transform returned no output")
+
+                        transform_ms = max(
+                            (perf_counter() - transform_started) * 1000, 0.001
+                        )
+                        if self.require_realism_evidence:
+                            if self.realism_policy is None:
+                                raise RuntimeError("voice quality policy is not configured")
+                            if self.evaluate_voice is not None:
+                                measured = await _invoke_quality_evaluator(
+                                    self.evaluate_voice,
+                                    transformed,
+                                    profile_id,
+                                    source_payload=payload,
+                                    media_metadata=media_metadata,
+                                    processing_ms=transform_ms,
+                                )
+                                if isinstance(measured, VoiceRealismEvidence):
+                                    quality_evidence = validate_voice_realism(
+                                        measured, self.realism_policy
+                                    )
+                                elif isinstance(measured, VoiceRealismWarmupEvidence):
+                                    quality_evidence = validate_voice_warmup(
+                                        measured, self.realism_policy
+                                    )
+                                else:
+                                    raise RuntimeError(
+                                        "voice evaluator returned invalid evidence"
+                                    )
+                            elif legacy_voice_evidence is not None:
+                                quality_evidence = validate_voice_realism(
+                                    legacy_voice_evidence, self.realism_policy
+                                )
+                            else:
+                                raise RuntimeError(
+                                    "voice adapter must provide measured realism evidence"
+                                )
                     if not isinstance(transformed, bytes) or not transformed:
                         raise RuntimeError("media transform returned no output")
                     inference_ms = max((perf_counter() - started) * 1000, 0.001)
