@@ -193,8 +193,15 @@
         throw new Error('Both profiles need a current owner/admin approval. Open Profile authorization to enroll or review them.');
       }
       const stream = await ensureCapture();
+      const iceConfiguration = await api(
+        '/organizations/' + state.organizationId + '/liveshift/live/ice-servers'
+      );
+      if (!iceConfiguration || !Array.isArray(iceConfiguration.ice_servers) ||
+          !iceConfiguration.ice_servers.length) {
+        throw new Error('The LiveShell gateway returned no ICE servers.');
+      }
       const peer = new RTCPeerConnection({
-        iceServers: [{urls: 'stun:stun.l.google.com:19302'}],
+        iceServers: iceConfiguration.ice_servers,
       });
       state.peer = peer;
       for (const track of stream.getTracks()) peer.addTrack(track, stream);
