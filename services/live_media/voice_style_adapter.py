@@ -88,6 +88,11 @@ def _transform_sync(
     return result
 
 
+async def prepare_profile(profile_id: str) -> None:
+    """Validate the authorized voice-style profile before session admission."""
+    await asyncio.to_thread(load_voice_style, profile_id)
+
+
 async def transform_voice(
     payload: bytes,
     profile_id: str,
