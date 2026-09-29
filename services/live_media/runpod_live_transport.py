@@ -97,7 +97,7 @@ async def _invoke_quality_evaluator(
     media_metadata: dict[str, Any],
     processing_ms: float,
 ) -> object:
-    """Evaluate the final outbound payload after disclosure labeling."""
+    """Evaluate the transformed worker payload before the final gateway marker."""
     return await adapter(
         output_payload,
         profile_id,
@@ -501,7 +501,7 @@ class RunPodLiveWorkerServer:
                 "session_id": claims.session_id,
                 "video_profile": "hd-720p30-minimum",
                 "audio_sample_rate_hz": 48000,
-                "synthetic_video_label_required": True,
+                "synthetic_disclosure_validation_required": True,
                 "realism_evidence_required": self.require_realism_evidence,
             }
             if self.actual_accelerator_profile is not None:
@@ -552,9 +552,18 @@ class RunPodLiveWorkerServer:
                         if not isinstance(transformed, bytes) or not transformed:
                             raise RuntimeError("face transform returned no output")
 
-                        # Disclosure is part of the final outbound image, so production
-                        # quality evaluation runs after the label has been rendered.
-                        transformed = await self.label_synthetic_video(transformed)
+                        # The configured disclosure stage validates the transformed JPEG
+                        # and fails closed on bad configuration. The participant-visible
+                        # marker is rendered exactly once by the WebRTC gateway after this
+                        # worker result returns, so this stage must not add a second badge.
+                        validated_video = await self.label_synthetic_video(transformed)
+                        if (
+                            not isinstance(validated_video, bytes)
+                            or validated_video != transformed
+                        ):
+                            raise RuntimeError(
+                                "worker disclosure stage must return the original video bytes"
+                            )
                         transform_ms = max(
                             (perf_counter() - transform_started) * 1000, 0.001
                         )
@@ -659,7 +668,7 @@ class RunPodLiveWorkerServer:
                         "timestamp_ms": timestamp_ms,
                         "sequence": header["sequence"],
                         "inference_ms": inference_ms,
-                        "synthetic_label_applied": kind == MediaKind.VIDEO,
+                        "synthetic_disclosure_validated": kind == MediaKind.VIDEO,
                         "sample_rate_hz": header.get("sample_rate_hz"),
                         "channels": header.get("channels"),
                         "width": header.get("width"),
@@ -840,7 +849,7 @@ class RunPodLiveWorkerClient:
         if (
             ready.header.get("type") != "ready"
             or ready.header.get("session_id") != session_id
-            or ready.header.get("synthetic_video_label_required") is not True
+            or ready.header.get("synthetic_disclosure_validation_required") is not True
         ):
             writer.close()
             await writer.wait_closed()
@@ -891,7 +900,7 @@ class RunPodLiveWorkerClient:
                     or header.get("timestamp_ms") != expected_timestamp
                     or header.get("pixel_format") != expected_pixel_format
                     or (
-                        header.get("synthetic_label_applied") is not True
+                        header.get("synthetic_disclosure_validated") is not True
                         and header.get("media_kind") == MediaKind.VIDEO
                     )
                 ):
