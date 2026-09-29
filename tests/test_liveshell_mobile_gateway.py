@@ -42,6 +42,8 @@ def valid_gateway_response(**changes):
         "face_profile_authorized": True,
         "voice_profile_authorized": True,
         "synthetic_media_indicator_enabled": True,
+        "marker_x": 1.0,
+        "marker_y": 0.0,
         "runpod_session_connected": True,
         "session_ticket_validated": True,
         "realism_evidence_required": True,
@@ -100,6 +102,12 @@ def test_gateway_session_requires_matching_authorized_profiles():
     assert result.realism_evidence_required
     assert result.actual_accelerator_profile == "rtx-4090"
     assert _effective_video_resolution(result.output_width, result.output_height) == "720p"
+
+
+def test_gateway_rejects_unmatched_marker_position():
+    with pytest.raises(HTTPException) as error:
+        _parse_gateway_session(valid_offer(marker_x=0.25), valid_gateway_response())
+    assert error.value.status_code == 502
 
 
 @pytest.mark.parametrize(
