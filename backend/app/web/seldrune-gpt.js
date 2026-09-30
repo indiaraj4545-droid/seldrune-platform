@@ -199,10 +199,12 @@
   function classifyOutputKind(request, mode = creationMode) {
     const text = `${mode === 'any' ? '' : mode} ${request}`.toLowerCase();
     if (/\b(game|playable|gameplay|level design)\b/.test(text)) return 'game';
+    const mediaForExistingApp = /\b(song|music|lyrics|soundtrack|audio|video|film|movie|clip|storyboard|image|illustration|picture|visual|poster|artwork)\b.{0,60}\b(?:for|about)\s+(?:(?:my|our|the|an?)\s+)?(?:app|application|website|web app)\b/.test(text);
+    const appIntent = /\b(app|application|website|web app|software|program|source code|coding)\b/.test(text) && !mediaForExistingApp;
+    if (appIntent) return 'app';
     if (/\b(song|music|lyrics|soundtrack|audio)\b/.test(text)) return 'song';
     if (/\b(video|film|movie|clip|storyboard)\b/.test(text)) return 'video';
     if (/\b(image|illustration|picture|visual|poster|artwork|3d scene|3d model)\b/.test(text)) return 'visual';
-    if (/\b(app|application|website|web app|software|program|script|source code|coding)\b/.test(text)) return 'app';
     if (/\b(pdf|document|spreadsheet|presentation|report)\b/.test(text)) return 'document';
     if (/\b(build|test|preview|pipeline|repository|repo|feature|bug)\b/.test(text)) return 'build';
     return 'creative';
@@ -1255,6 +1257,7 @@
         'Seldrune RapidBuild Loop coding request.',
         target,
         `Build goal: ${brief}`,
+        'When building or cloning a camera or microphone app hosted on the authenticated Seldrune origin, load <script src="/console-assets/seldrune-media.js" data-default="true" defer></script> before app code and use navigator.mediaDevices.getUserMedia for all capture. Tell the owner to enable Use Seldrune Media by default in /media. Preserve fail-closed behavior; never silently fall back to raw device media. For apps hosted on other origins, do not claim this same-origin client is installed.',
         'Use connected GitHub tools to create a branch named for this isolated change, write the requested source and focused tests to repository files, and report the exact changed paths. Run the repository checks using an actually configured CI workflow and report the returned status and run URL. If Railway is connected, use only an existing preview environment and report its deployment receipt. Do not merge a pull request, deploy to production, create new paid services, or spend outside existing budget controls. If any required provider is missing, stop before external changes and return the missing provider details. Never claim files, tests, or previews exist without a tool receipt.',
       ].join('\n\n');
       const fallbackBrief = `${brief}\n\nTarget repository or project: ${repository || 'not specified'}.`;
