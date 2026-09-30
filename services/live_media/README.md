@@ -32,6 +32,7 @@ Configure these gateway environment variables:
 | `SELDRUNE_LIVE_WORKER_REGION` | Worker region label bound to the session. |
 | `SELDRUNE_LIVE_ICE_SERVERS_JSON` | Optional JSON array of STUN entries and gateway-only static ICE entries. Do not put static TURN entries here when dynamic TURN is enabled. |
 | `SELDRUNE_LIVE_TURN_PROVIDER` | `coturn` (default) or `cloudflare`. Cloudflare issues short-lived credentials from the gateway. |
+| `SELDRUNE_LIVE_GATEWAY_TURN_TRANSPORT` | `provider` (default), `udp`, or `tcp`. Restrict gateway-side TURN selection when the host cannot use UDP; browser ICE still receives the provider's full URL list. |
 | `SELDRUNE_LIVE_TURN_URLS_JSON` | Coturn only: JSON array of `turn:` or `turns:` relay URLs. |
 | `SELDRUNE_LIVE_TURN_SHARED_SECRET` | Coturn only: `static-auth-secret`; at least 32 random bytes. It stays inside the gateway. |
 | `SELDRUNE_CLOUDFLARE_TURN_KEY_ID` | Cloudflare only: 32-character TURN key ID. |
@@ -60,6 +61,46 @@ disconnected for 15 seconds releases its gateway and GPU worker session; a
 reconnection within that window preserves the call. Failed or closed peers
 release immediately. The browser uses the same grace window and stops local
 camera and microphone capture when the connection does not return.
+
+## RunPod Pod deployment settings
+
+The live worker is a long-running Pod service on TCP port 8765. Use a RunPod API key
+only from the operator or deployment environment for creating/managing the Pod; the
+key is not a Pod runtime variable and must not be placed in the image or worker secrets.
+
+In RunPod **Credentials → Secrets**, create these entries. RunPod requires names to
+start with `RUNPOD_SECRET_`; the worker resolves that prefix automatically:
+
+| RunPod secret name | Value |
+| --- | --- |
+| `RUNPOD_SECRET_SELDRUNE_LIVE_WORKER_TOKEN` | At least 32 random bytes; must match the gateway's `SELDRUNE_LIVE_WORKER_TOKEN`. |
+| `RUNPOD_SECRET_SELDRUNE_LIVE_TICKET_SECRET` | At least 32 random bytes; must match the gateway's `SELDRUNE_LIVE_TICKET_SECRET`. |
+| `RUNPOD_SECRET_SELDRUNE_LIVE_TLS_CERT` | TLS certificate chain PEM for the worker hostname. |
+| `RUNPOD_SECRET_SELDRUNE_LIVE_TLS_KEY` | Matching unencrypted private-key PEM. |
+
+Inline TLS PEM is loaded through an anonymous in-memory file; alternatively, set the
+unprefixed `SELDRUNE_LIVE_TLS_CERT` and `SELDRUNE_LIVE_TLS_KEY` variables to mounted
+certificate file paths. The certificate hostname must match the gateway's
+`SELDRUNE_LIVE_WORKER_TLS_NAME`.
+
+Set these non-secret Pod environment values to the import paths and policy supplied by
+the deployment:
+
+- `SELDRUNE_FACE_TRANSFORM_ADAPTER`
+- `SELDRUNE_VOICE_TRANSFORM_ADAPTER`
+- `SELDRUNE_SYNTHETIC_VIDEO_LABELER`
+- `SELDRUNE_FACE_QUALITY_EVALUATOR`
+- `SELDRUNE_VOICE_QUALITY_EVALUATOR`
+- `SELDRUNE_LIVE_REALISM_POLICY_JSON`
+- `SELDRUNE_LIVE_WORKER_HOST=0.0.0.0`
+- `SELDRUNE_LIVE_WORKER_PORT=8765`
+
+Adapter and evaluator values must resolve to installed async callables, and the
+transform adapter modules must each expose an async `prepare_profile` function.
+Mount reviewed private profile media at `/workspace/seldrune-live-profiles`; do not
+put profile media in the image. Expose the worker's TCP port 8765 to the gateway,
+use a certificate valid for the exposed hostname, and provision an accelerator that
+the worker recognizes before enabling live sessions.
 
 ## RunPod worker wire format
 
