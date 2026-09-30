@@ -100,6 +100,8 @@ services:
         sync: false
       - key: SELDRUNE_LIVESHIFT_WORKER_TOKEN
         sync: false
+      - key: SELDRUNE_LIVE_PROFILE_AUTHORIZER_TOKEN
+        sync: false
       - key: SELDRUNE_FACESWAP_WORKER_URL
         sync: false
       - key: SELDRUNE_FACESWAP_WORKER_TOKEN
