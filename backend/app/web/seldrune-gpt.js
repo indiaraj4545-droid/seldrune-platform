@@ -38,7 +38,7 @@
     any: {
       label: 'Anything',
       guidance: '',
-      status: 'Anything · Seldrune will infer the deliverable and use configured tools. Media rendering depends on an enabled media provider.',
+      status: 'Text chat · use Media to start an audio or video job.',
     },
     app: {
       label: 'App',
@@ -76,6 +76,12 @@
       button.setAttribute('aria-pressed', String(selected));
     });
     if (creationStatus) creationStatus.textContent = CREATION_MODES[next].status;
+    if (modePill) {
+      const mediaLabel = next === 'song' ? 'Media · Audio brief'
+        : next === 'video' ? 'Media · Video brief' : 'Text chat';
+      modePill.textContent = mediaLabel;
+      modePill.classList.toggle('active', next !== 'any');
+    }
   }
 
   function buildCreativeOrder(request) {
@@ -507,8 +513,10 @@
     pdfPasswordWrap?.classList.toggle('hidden', !hasPdf);
     dropzone?.classList.toggle('ai-pdf-mode', aiPdfMode);
     if (modePill) {
-      modePill.textContent = aiPdfMode ? 'AI PDF Editor' : 'Seldrune AI';
-      modePill.classList.toggle('active', aiPdfMode);
+      const mediaLabel = creationMode === 'song' ? 'Media · Audio brief'
+        : creationMode === 'video' ? 'Media · Video brief' : 'Text chat';
+      modePill.textContent = aiPdfMode ? 'AI PDF Editor' : mediaLabel;
+      modePill.classList.toggle('active', aiPdfMode || creationMode !== 'any');
     }
     if (chatButton) {
       chatButton.innerHTML = aiPdfMode
@@ -751,12 +759,20 @@
     button.addEventListener('click', () => {
       if (button.dataset.creationMode) setCreationMode(button.dataset.creationMode);
       input.value = button.dataset.gptPrompt || '';
-      input.focus();
+      const startedFromMedia = Boolean(button.closest('#seldrune-media-creation'));
+      if (startedFromMedia) window.seldrunePortal?.activate('operator');
+      requestAnimationFrame(() => input.focus());
     });
   });
 
   document.querySelectorAll('.gpt-creation-mode').forEach(button => {
-    button.addEventListener('click', () => setCreationMode(button.dataset.creationMode));
+    button.addEventListener('click', () => {
+      setCreationMode(button.dataset.creationMode);
+      if (button.closest('#seldrune-media-creation')) {
+        window.seldrunePortal?.activate('operator');
+        requestAnimationFrame(() => input?.focus());
+      }
+    });
   });
 
   async function runCognitiveRequest(order, commandId = null, confirmed = false) {
@@ -785,8 +801,12 @@
   function requestNeedsAction(request, mode = creationMode, hasAttachments = false) {
     if (hasAttachments) return false;
     if (mode === 'app' || mode === 'game') return true;
-    if (['song', 'video', 'visual'].includes(mode)) return mediaToolReady(mode);
     const text = String(request || '').trim();
+    const mediaIntent = /\b(create|generate|make|compose|produce|render)\b.{0,70}\b(audio|song|music|video|film|movie|clip)\b/i.test(text);
+    const inferredMediaKind = classifyOutputKind(text, 'any');
+    if (['song', 'video', 'visual'].includes(mode)) {
+      return mediaIntent && inferredMediaKind === mode && mediaToolReady(mode);
+    }
     const startsAsInfoQuestion = /^(how do i|how can i|what is|what are|why|who|when|where|explain|tell me about|compare|summari[sz]e|recommend|suggest|brainstorm)\b/i.test(text);
     const directBuildRequest = /\b(create|build|develop|implement|write|generate|make|fix|update|deploy|run|test|commit|push|connect|activate|configure|publish|schedule|send|delete|remove|purchase|transfer|sign|hire|fire)\b.{0,90}\b(app|application|game|website|web app|software|code|script|repository|repo|branch|feature|bug|server|service|project|account|email|message|invoice|contract|job|event|media|image|video|audio|song)\b/i.test(text);
     const directExternalAction = /\b(deploy|run|execute|perform|fix|update|change|activate|configure|connect|commit|push|merge|publish|schedule|send|delete|remove|purchase|transfer|sign|hire|fire|open a pull request|create (?:a |an )?(?:repository|repo|branch))\b/i.test(text);
@@ -795,7 +815,10 @@
       return codeDelivery && /^(?:can you|could you|please|i want you to)\b/i.test(text);
     }
     const kind = classifyOutputKind(text, mode);
-    if (['song', 'video', 'visual'].includes(kind)) return mediaToolReady(kind);
+    if (['song', 'video', 'visual'].includes(kind)) {
+      // Media creation is opt-in from the Media workspace; ordinary chat stays text-only.
+      return mode !== 'any' && mediaIntent && inferredMediaKind === kind && mediaToolReady(kind);
+    }
     return directExternalAction || codeDelivery;
   }
 
@@ -1277,20 +1300,25 @@
     const message = input.value.trim();
     if (!message) return;
 
-    const pdfAttachments = attachments.filter(
-      item => item.media_type === 'application/pdf',
-    );
-    if (pdfAttachments.length === 1 && attachments.length === 1) {
-      await runAiPdfEdit(message, pdfAttachments[0]);
-      return;
+    const mediaModeUsed = ['song', 'video'].includes(creationMode);
+    try {
+      const pdfAttachments = attachments.filter(
+        item => item.media_type === 'application/pdf',
+      );
+      if (pdfAttachments.length === 1 && attachments.length === 1) {
+        await runAiPdfEdit(message, pdfAttachments[0]);
+        return;
+      }
+      const outgoingAttachments = attachments.map(item => ({
+        name: item.name,
+        media_type: item.media_type,
+        data_base64: item.data_base64,
+      }));
+      const attachmentNames = attachments.map(item => item.name);
+      await runUniversalMessage(message, outgoingAttachments, attachmentNames);
+    } finally {
+      if (mediaModeUsed) setCreationMode('any');
     }
-    const outgoingAttachments = attachments.map(item => ({
-      name: item.name,
-      media_type: item.media_type,
-      data_base64: item.data_base64,
-    }));
-    const attachmentNames = attachments.map(item => item.name);
-    await runUniversalMessage(message, outgoingAttachments, attachmentNames);
   });
 
   document.addEventListener('seldrune:portal-ready', () => {
