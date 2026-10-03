@@ -10,10 +10,11 @@
     ["connections", "CONNECT", "↗"],
     ["sense", "SENSE", "◉"],
     ["contact", "CONTACT", "✉"],
+    ["settings", "SETTINGS", "✧"],
   ];
 
   const PRIMARY_WORKSPACES = new Set([
-    "home", "operator", "media", "connections", "contact",
+    "home", "operator", "media", "connections", "contact", "settings",
   ]);
 
   const DESCRIPTIONS = {
@@ -27,6 +28,7 @@
     connections: "Connect verified AI, code, email, and deployment services; manage creation tools in one place.",
     sense: "System health, provider status, and owner continuity preferences.",
     contact: "Contact Seldrune or report a portal issue.",
+    settings: "Choose a live background, typography, and visual style for every workspace.",
   };
 
   function initOwnerPortal() {
@@ -242,7 +244,7 @@
       <div id="portal-settings-content">
         <div class="empty">Loading portal preferences…</div>
       </div>`;
-    grid("intelligence")?.append(portalSettings);
+    grid("settings")?.append(portalSettings);
     move(".treasury", "intelligence");
     move(".governance-policy", "intelligence");
 

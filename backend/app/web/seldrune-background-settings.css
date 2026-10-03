@@ -1,0 +1,419 @@
+/* Clear, changeable Seldrune backgrounds for every owner workspace. */
+:root {
+  --seldrune-background-shade: .08;
+}
+
+body.owner-portal {
+  position: relative !important;
+  isolation: isolate;
+  min-height: 100vh;
+  color: #17243a;
+  font-family: Inter, "Aptos", "Segoe UI", system-ui, sans-serif;
+  background-color: #07101e !important;
+  background-image: none !important;
+  background-attachment: fixed;
+}
+
+body.owner-portal::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 1;
+  background-image:
+    linear-gradient(145deg,
+      rgb(3 8 18 / var(--seldrune-background-shade, .08)),
+      rgb(3 8 18 / var(--seldrune-background-shade, .08))),
+    var(--seldrune-background-art, url("/console-assets/seldrune-celestial-hero.png"));
+  background-position: center, center 42%;
+  background-size: cover, cover;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+}
+
+body.owner-portal #console-view,
+body.owner-portal #console-view > main,
+body.owner-portal #owner-portal-root,
+body.owner-portal .owner-portal-root,
+body.owner-portal .owner-portal-panel {
+  background: transparent !important;
+  background-image: none !important;
+}
+
+html[data-seldrune-background="aurora"] body.owner-portal {
+  --seldrune-background-art:
+    radial-gradient(ellipse at 18% 20%, rgb(35 205 181 / 52%), transparent 38%),
+    radial-gradient(ellipse at 78% 28%, rgb(92 106 244 / 50%), transparent 42%),
+    linear-gradient(145deg, #061b2b 0%, #0b3a49 48%, #11112e 100%);
+}
+
+html[data-seldrune-background="nebula"] body.owner-portal {
+  --seldrune-background-art:
+    radial-gradient(ellipse at 25% 30%, rgb(183 73 246 / 56%), transparent 40%),
+    radial-gradient(ellipse at 78% 22%, rgb(42 123 235 / 47%), transparent 38%),
+    radial-gradient(ellipse at 55% 90%, rgb(233 70 143 / 30%), transparent 44%),
+    linear-gradient(145deg, #08091e 0%, #15143c 52%, #080a20 100%);
+}
+
+html[data-seldrune-background="ocean"] body.owner-portal {
+  --seldrune-background-art:
+    radial-gradient(ellipse at 20% 18%, rgb(31 171 219 / 45%), transparent 40%),
+    radial-gradient(ellipse at 78% 66%, rgb(23 113 148 / 50%), transparent 45%),
+    linear-gradient(145deg, #061725 0%, #073b54 48%, #071426 100%);
+}
+
+html[data-seldrune-background="eclipse"] body.owner-portal {
+  --seldrune-background-art:
+    radial-gradient(circle at 72% 24%, rgb(118 102 220 / 38%), transparent 26%),
+    radial-gradient(ellipse at 18% 85%, rgb(31 92 137 / 36%), transparent 42%),
+    linear-gradient(145deg, #090d1b 0%, #1b2037 54%, #080d19 100%);
+}
+
+html[data-seldrune-background="custom"] body.owner-portal {
+  --seldrune-background-art: var(--seldrune-custom-art, url("/console-assets/seldrune-celestial-hero.png"));
+}
+
+html[data-seldrune-font="humanist"] body.owner-portal {
+  font-family: "Avenir Next", "Trebuchet MS", "Segoe UI", sans-serif;
+}
+
+html[data-seldrune-font="editorial"] body.owner-portal {
+  font-family: "Aptos", "Segoe UI", system-ui, sans-serif;
+}
+
+html[data-seldrune-font="editorial"] body.owner-portal .owner-portal-heading h1,
+html[data-seldrune-font="editorial"] body.owner-portal .owner-home-intro h2,
+html[data-seldrune-font="editorial"] body.owner-portal .panel h2,
+html[data-seldrune-font="editorial"] body.owner-portal .panel h3 {
+  font-family: Georgia, "Times New Roman", serif;
+  letter-spacing: .01em;
+}
+
+body.owner-portal button,
+body.owner-portal input,
+body.owner-portal select,
+body.owner-portal textarea {
+  font-family: inherit;
+}
+
+body.owner-portal .cosmic-page-heading {
+  align-items: center;
+}
+
+body.owner-portal .cosmic-page-heading h1 {
+  color: #f8fbff !important;
+  text-shadow: 0 2px 14px rgb(0 0 0 / 55%);
+  font-size: clamp(28px, 3vw, 42px);
+  font-weight: 750;
+  letter-spacing: .055em;
+  line-height: 1.12;
+}
+
+body.owner-portal .cosmic-page-heading p {
+  color: #b9fff1 !important;
+  text-shadow: 0 1px 9px rgb(0 0 0 / 65%);
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: .16em;
+}
+
+body.owner-portal .cosmic-page-heading small {
+  color: #eff4ff !important;
+  text-shadow: 0 1px 10px rgb(0 0 0 / 70%);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.owner-portal .panel,
+.owner-portal .metrics article,
+.owner-portal .command-card,
+.owner-portal .runtime-status,
+.owner-portal .agent-scorecard,
+.owner-portal .portal-quick-card,
+.owner-portal .gpt-thread .command-card {
+  border-color: rgb(183 201 226 / 92%) !important;
+  background: rgb(247 250 255 / 88%) !important;
+  box-shadow: 0 12px 34px rgb(9 24 48 / 13%);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+}
+
+.owner-portal .panel:hover,
+.owner-portal .metrics article:hover,
+.owner-portal .command-card:hover,
+.owner-portal .agent-scorecard:hover,
+.owner-portal .portal-quick-card:hover {
+  border-color: #8fa9cf !important;
+  box-shadow: 0 16px 38px rgb(9 24 48 / 17%);
+}
+
+#seldrune-appearance-settings {
+  grid-column: 1 / -1;
+  color: #17243a;
+}
+
+#seldrune-appearance-settings .seldrune-appearance-heading {
+  margin-bottom: 18px;
+}
+
+#seldrune-appearance-settings .seldrune-appearance-heading h2 {
+  margin: 0 0 6px;
+  color: #14223a;
+  font-size: clamp(22px, 2vw, 30px);
+  line-height: 1.2;
+}
+
+#seldrune-appearance-settings .seldrune-appearance-heading p,
+#seldrune-appearance-settings .seldrune-appearance-help,
+#seldrune-appearance-settings .seldrune-appearance-status {
+  color: #40516a;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.seldrune-background-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+  gap: 12px;
+}
+
+.seldrune-background-option {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr) 22px;
+  align-items: center;
+  gap: 12px;
+  min-height: 86px;
+  padding: 10px;
+  color: #17243a;
+  text-align: left;
+  border: 1px solid #ccd7e8;
+  border-radius: 15px;
+  background: rgb(255 255 255 / 90%);
+  cursor: pointer;
+  transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease;
+}
+
+.seldrune-background-option:hover {
+  border-color: #7092c6;
+  box-shadow: 0 8px 22px rgb(24 48 84 / 12%);
+  transform: translateY(-1px);
+}
+
+.seldrune-background-option[aria-pressed="true"] {
+  border: 2px solid #375e9e;
+  box-shadow: 0 0 0 3px rgb(69 113 177 / 15%);
+}
+
+.seldrune-background-preview {
+  display: block;
+  width: 76px;
+  height: 62px;
+  border-radius: 10px;
+  background-size: cover;
+  background-position: center;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 24%);
+}
+
+.seldrune-preview-celestial {
+  background-image: url("/console-assets/seldrune-celestial-hero.png");
+}
+
+.seldrune-preview-aurora {
+  background-image: radial-gradient(ellipse at 20% 20%, #4dcbb3, transparent 55%), linear-gradient(135deg, #081b30, #394caa);
+}
+
+.seldrune-preview-nebula {
+  background-image: radial-gradient(ellipse at 25% 24%, #c35be4, transparent 55%), radial-gradient(ellipse at 78% 30%, #347bcf, transparent 56%), linear-gradient(135deg, #08091e, #272051);
+}
+
+.seldrune-preview-ocean {
+  background-image: radial-gradient(ellipse at 25% 20%, #28a6c4, transparent 55%), linear-gradient(135deg, #071b2c, #08617a);
+}
+
+.seldrune-preview-eclipse {
+  background-image: radial-gradient(circle at 70% 30%, #8474db, transparent 38%), linear-gradient(135deg, #0b1020, #30394f);
+}
+
+.seldrune-preview-custom {
+  background-image: linear-gradient(135deg, #e8eef8, #6f8fc2 48%, #15233a);
+}
+
+.seldrune-background-option-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.seldrune-background-option-copy strong {
+  font-size: 14px;
+  line-height: 1.25;
+}
+
+.seldrune-background-option-copy small {
+  color: #4c5d75;
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.seldrune-background-check {
+  color: #315994;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.seldrune-appearance-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr));
+  gap: 14px;
+  margin-top: 20px;
+}
+
+.seldrune-appearance-control {
+  display: grid;
+  gap: 9px;
+  padding: 15px;
+  color: #17243a;
+  border: 1px solid #d3ddec;
+  border-radius: 14px;
+  background: rgb(255 255 255 / 78%);
+}
+
+.seldrune-appearance-control > span,
+.seldrune-appearance-control > strong {
+  color: #17243a;
+  font-size: 14px;
+  font-weight: 750;
+}
+
+.seldrune-appearance-control small {
+  color: #4c5d75;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.seldrune-appearance-control select {
+  width: 100%;
+  min-height: 44px;
+  padding: 9px 11px;
+  color: #17243a;
+  border: 1px solid #aebdd2;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.seldrune-shade-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.seldrune-shade-row input {
+  width: 100%;
+  accent-color: #3c66a5;
+}
+
+.seldrune-shade-row output {
+  min-width: 44px;
+  color: #243a5a;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: right;
+}
+
+.seldrune-custom-image-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.seldrune-image-file-label,
+.seldrune-appearance-reset {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 46px;
+  padding: 10px 16px;
+  color: #f7faff;
+  font-size: 14px;
+  font-weight: 750;
+  border: 1px solid #31578e;
+  border-radius: 11px;
+  background: linear-gradient(135deg, #244f88, #3c6eaf);
+  cursor: pointer;
+}
+
+.seldrune-image-file-label:hover,
+.seldrune-appearance-reset:hover {
+  filter: brightness(1.08);
+}
+
+.seldrune-image-file-label input {
+  max-width: min(62vw, 230px);
+  color: #f7faff;
+  font-size: 12px;
+}
+
+.seldrune-image-file-label input::file-selector-button {
+  min-height: 34px;
+  margin-right: 9px;
+  padding: 5px 9px;
+  color: #193153;
+  font: inherit;
+  font-weight: 700;
+  border: 1px solid #c4d0e2;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.seldrune-appearance-reset {
+  color: #243650;
+  border-color: #b8c6d9;
+  background: #fff;
+}
+
+.seldrune-appearance-status {
+  min-height: 22px;
+  margin: 12px 0 0;
+}
+
+@media (max-width: 640px) {
+  body.owner-portal::before {
+    background-attachment: scroll, scroll;
+  }
+
+  .seldrune-background-option {
+    grid-template-columns: 68px minmax(0, 1fr) 20px;
+    min-height: 78px;
+    padding: 8px;
+    gap: 10px;
+  }
+
+  .seldrune-background-preview {
+    width: 68px;
+    height: 58px;
+  }
+
+  .seldrune-custom-image-actions {
+    align-items: stretch;
+  }
+
+  .seldrune-image-file-label {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .seldrune-image-file-label input {
+    max-width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .seldrune-background-option {
+    transition: none;
+  }
+}
