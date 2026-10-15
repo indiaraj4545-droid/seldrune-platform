@@ -270,6 +270,12 @@ def test_status_diagnostics_omit_non_integer_returncodes(monkeypatch, returncode
         (b"[FACEFUSION.TO_VIDEO] merging video failed", "output_encode"),
         (b"[FACEFUSION.TO_VIDEO] processing to video failed", "output_encode"),
         (b"private arbitrary failure", "unknown"),
+        (b"ModuleNotFoundError: private", "dependency_runtime"),
+        (b"ImportError: private", "dependency_runtime"),
+        (b"FileNotFoundError: private", "filesystem"),
+        (b"PermissionError: private", "filesystem"),
+        (b"[FACEFUSION.CORE] processor private could not be loaded", "processor_load"),
+        (b"Traceback (most recent call last): private", "python_runtime"),
     ],
 )
 def test_subprocess_failure_classifies_real_upstream_messages_without_retaining_output(
@@ -303,3 +309,7 @@ def test_owner_status_drops_unapproved_failure_code(monkeypatch):
     )
     assert response.status_code == 200
     assert response.json()["diagnostics"] == {"stage": "face_swap"}
+
+
+def test_empty_subprocess_output_has_fixed_safe_category():
+    assert worker._classify_command_failure(b" \n\t") == "empty_output"

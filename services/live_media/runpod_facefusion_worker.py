@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 FAILURE_CODES = frozenset({
     "model_download", "model_load", "invalid_arguments", "no_source_face",
     "cuda_runtime", "input_decode", "output_encode", "unknown",
+    "dependency_runtime", "filesystem", "processor_load", "python_runtime", "empty_output",
 })
 
 
@@ -50,6 +51,12 @@ def _classify_command_failure(output: bytes) -> str:
     of its underlying cause. Unrecognized failures remain unknown.
     """
     patterns = (
+        ("dependency_runtime", rb"(?:modulenotfounderror:|importerror:|"
+                               rb"error while loading shared libraries:)"),
+        ("filesystem", rb"(?:permissionerror:|filenotfounderror:|"
+                       rb"can't open file [^\r\n]*\[errno [^\r\n]+)"),
+        ("processor_load",
+         rb"processor [^\r\n]+ (?:could not be loaded|not implemented correctly)"),
         ("invalid_arguments",
          rb"error: (?:unrecognized arguments:|argument [^\r\n]*invalid choice:)"),
         ("no_source_face", rb"no source face detected"),
@@ -65,6 +72,10 @@ def _classify_command_failure(output: bytes) -> str:
     for code, pattern in patterns:
         if re.search(pattern, output, re.IGNORECASE):
             return code
+    if b"Traceback (most recent call last):" in output:
+        return "python_runtime"
+    if not output.strip():
+        return "empty_output"
     return "unknown"
 
 
