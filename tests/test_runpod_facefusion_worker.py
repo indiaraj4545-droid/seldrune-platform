@@ -192,15 +192,16 @@ def test_processing_failure_logs_only_safe_diagnostics_and_returns_generic_error
         ("processing", 200),
     ],
 )
+@pytest.mark.parametrize("failure_code", sorted(worker.FAILURE_CODES))
 def test_status_diagnostics_require_auth_owner_and_failed_job(
-    monkeypatch, scenario, expected_status
+    monkeypatch, scenario, expected_status, failure_code
 ):
     org_id = "00000000-0000-0000-0000-000000000001"
     user_id = "00000000-0000-0000-0000-000000000002"
     other_id = "00000000-0000-0000-0000-000000000003"
     job_id = "a" * 32
     safe = {"stage": "face_swap", "exception_class": "_CommandError", "returncode": 17,
-            "failure_code": "model_download"}
+            "failure_code": failure_code}
     raw_detail = "private exception stderr command credentials media"
     job = {
         "job_id": job_id,
@@ -228,7 +229,7 @@ def test_status_diagnostics_require_auth_owner_and_failed_job(
     else:
         assert "diagnostics" not in response.json()
         assert "face_swap" not in response.text
-        assert "model_download" not in response.text
+        assert failure_code not in response.text
     if expected_status == 404:
         assert response.json() == {"detail": "Face-swap job not found."}
 
@@ -313,3 +314,54 @@ def test_owner_status_drops_unapproved_failure_code(monkeypatch):
 
 def test_empty_subprocess_output_has_fixed_safe_category():
     assert worker._classify_command_failure(b" \n\t") == "empty_output"
+
+
+@pytest.mark.parametrize(
+    ("exception_type", "code"),
+    [
+        (AttributeError, "python_attribute"), (TypeError, "python_type"),
+        (ValueError, "python_value"), (KeyError, "python_key"),
+        (IndexError, "python_index"), (NameError, "python_name"),
+        (UnboundLocalError, "python_name"), (AssertionError, "python_assertion"),
+        (MemoryError, "python_memory"), (RuntimeError, "python_runtime"),
+    ],
+)
+def test_python_exception_type_classification_never_retains_traceback(
+    monkeypatch, tmp_path, caplog, exception_type, code
+):
+    import traceback
+
+    private = "Bearer private-token /private/media arbitrary-secret-detail"
+    try:
+        raise exception_type(private)
+    except exception_type:
+        # A synthetic local traceback only; never read a real job's raw output.
+        transient = traceback.format_exc().encode()
+    process = SimpleNamespace(
+        returncode=1, communicate=AsyncMock(return_value=(transient, None))
+    )
+    monkeypatch.setattr(worker.asyncio, "create_subprocess_exec", AsyncMock(return_value=process))
+    with pytest.raises(worker._CommandError) as caught:
+        asyncio.run(worker._run_command(["private-command"], cwd=tmp_path, timeout=1))
+    assert caught.value.__dict__ == {"returncode": 1, "failure_code": code}
+    assert str(caught.value) == "Media processing failed."
+    assert not caplog.records
+
+
+def test_python_exception_classification_uses_last_terminal_type_only():
+    trace = (
+        b"Traceback (most recent call last):\nValueError: private\n"
+        b"During handling of the above exception, another exception occurred:\n"
+        b"Traceback (most recent call last):\n"
+        b"  private frame mentions AttributeError: private\nTypeError: private\n"
+    )
+    assert worker._classify_command_failure(trace) == "python_type"
+    assert worker._classify_command_failure(b"TypeError: private") == "unknown"
+    assert worker._classify_command_failure(
+        b"Traceback (most recent call last):\n  private frame TypeError: private\n"
+        b"CustomError: private"
+    ) == "python_runtime"
+    assert worker._classify_command_failure(
+        b"Traceback (most recent call last):\nValueError: private\n"
+        b"Traceback (most recent call last):\nCustomError: private"
+    ) == "python_runtime"

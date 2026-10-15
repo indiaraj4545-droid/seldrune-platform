@@ -40,6 +40,8 @@ FAILURE_CODES = frozenset({
     "model_download", "model_load", "invalid_arguments", "no_source_face",
     "cuda_runtime", "input_decode", "output_encode", "unknown",
     "dependency_runtime", "filesystem", "processor_load", "python_runtime", "empty_output",
+    "python_attribute", "python_type", "python_value", "python_key", "python_index",
+    "python_name", "python_assertion", "python_memory",
 })
 
 
@@ -73,6 +75,26 @@ def _classify_command_failure(output: bytes) -> str:
         if re.search(pattern, output, re.IGNORECASE):
             return code
     if b"Traceback (most recent call last):" in output:
+        # Match Python's terminal exception lines, not arbitrary words in frames
+        # or messages. Chained tracebacks use the final terminal exception;
+        # an unrecognized outer exception must not inherit an inner category.
+        # Only fixed built-in types are mapped; never retain a match or message.
+        exception_codes = {
+            b"AttributeError": "python_attribute",
+            b"TypeError": "python_type",
+            b"ValueError": "python_value",
+            b"KeyError": "python_key",
+            b"IndexError": "python_index",
+            b"NameError": "python_name",
+            b"UnboundLocalError": "python_name",
+            b"AssertionError": "python_assertion",
+            b"MemoryError": "python_memory",
+            b"RuntimeError": "python_runtime",
+        }
+        for line in reversed(output.splitlines()):
+            exception_type = line.partition(b":")[0]
+            if re.fullmatch(rb"[A-Za-z_][A-Za-z0-9_.]*", exception_type):
+                return exception_codes.get(exception_type, "python_runtime")
         return "python_runtime"
     if not output.strip():
         return "empty_output"
