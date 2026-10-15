@@ -343,6 +343,7 @@ async def _process_job(job_id: str) -> None:
             }
             if isinstance(exc, _CommandError) and type(exc.returncode) is int:
                 diagnostic["returncode"] = exc.returncode
+            job["diagnostics"] = diagnostic.copy()
             logger.error(json.dumps(diagnostic, sort_keys=True))
             job["status"] = "failed"
             job["error"] = "The worker could not complete this face-swap job."
@@ -488,7 +489,7 @@ async def get_job(
     if not job:
         raise HTTPException(status_code=404, detail="Face-swap job not found.")
     _check_owner(job, organization_id, user_id)
-    return {
+    response = {
         key: job[key]
         for key in (
             "job_id",
@@ -507,6 +508,15 @@ async def get_job(
         )
         if key in job
     }
+    diagnostic = job.get("diagnostics")
+    if job.get("status") == "failed" and isinstance(diagnostic, dict):
+        response["diagnostics"] = {
+            key: value
+            for key, value in diagnostic.items()
+            if (key in {"stage", "exception_class"} and isinstance(value, str))
+            or (key == "returncode" and type(value) is int)
+        }
+    return response
 
 
 @app.get("/v1/jobs/{job_id}/download")

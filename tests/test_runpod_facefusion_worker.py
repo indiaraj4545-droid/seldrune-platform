@@ -153,6 +153,7 @@ def test_processing_failure_logs_only_safe_diagnostics_and_returns_generic_error
     if not arbitrary_exception:
         expected["returncode"] = 17
     assert json.loads(records[0].getMessage()) == expected
+    assert worker.JOBS[job_id]["diagnostics"] == expected
     assert records[0].exc_info is None
     assert records[0].stack_info is None
     serialized = repr(records[0].__dict__)
@@ -170,4 +171,82 @@ def test_processing_failure_logs_only_safe_diagnostics_and_returns_generic_error
         "job_id": job_id,
         "status": "failed",
         "error": "The worker could not complete this face-swap job.",
+        "diagnostics": expected,
     }
+    for forbidden in (secret, str(source), str(target), private_media.decode(),
+                      "facefusion.py", "--source-paths", "Bearer"):
+        assert forbidden not in response.text
+
+
+@pytest.mark.parametrize(
+    ("scenario", "expected_status"),
+    [
+        ("owner", 200),
+        ("wrong_org", 404),
+        ("wrong_user", 404),
+        ("missing", 404),
+        ("unauthenticated", 401),
+        ("completed", 200),
+        ("queued", 200),
+        ("processing", 200),
+    ],
+)
+def test_status_diagnostics_require_auth_owner_and_failed_job(
+    monkeypatch, scenario, expected_status
+):
+    org_id = "00000000-0000-0000-0000-000000000001"
+    user_id = "00000000-0000-0000-0000-000000000002"
+    other_id = "00000000-0000-0000-0000-000000000003"
+    job_id = "a" * 32
+    safe = {"stage": "face_swap", "exception_class": "_CommandError", "returncode": 17}
+    raw_detail = "private exception stderr command credentials media"
+    job = {
+        "job_id": job_id,
+        "organization_id": org_id,
+        "user_id": user_id,
+        "status": scenario if scenario in {"completed", "queued", "processing"} else "failed",
+        "diagnostics": {**safe, "stderr": raw_detail, "exception_text": raw_detail},
+    }
+    monkeypatch.setattr(worker, "JOBS", {} if scenario == "missing" else {job_id: job})
+    monkeypatch.setenv("SELDRUNE_FACESWAP_WORKER_TOKEN", "test-only-token")
+    response = TestClient(app).get(
+        f"/v1/jobs/{job_id}",
+        params={
+            "organization_id": other_id if scenario == "wrong_org" else org_id,
+            "user_id": other_id if scenario == "wrong_user" else user_id,
+        },
+        headers={} if scenario == "unauthenticated" else {
+            "Authorization": "Bearer test-only-token"
+        },
+    )
+    assert response.status_code == expected_status
+    assert raw_detail not in response.text
+    if scenario == "owner":
+        assert response.json()["diagnostics"] == safe
+    else:
+        assert "diagnostics" not in response.json()
+        assert "face_swap" not in response.text
+    if expected_status == 404:
+        assert response.json() == {"detail": "Face-swap job not found."}
+
+
+@pytest.mark.parametrize("returncode", [None, "17", True])
+def test_status_diagnostics_omit_non_integer_returncodes(monkeypatch, returncode):
+    org_id = "00000000-0000-0000-0000-000000000001"
+    user_id = "00000000-0000-0000-0000-000000000002"
+    job_id = "a" * 32
+    monkeypatch.setenv("SELDRUNE_FACESWAP_WORKER_TOKEN", "test-only-token")
+    monkeypatch.setattr(worker, "JOBS", {job_id: {
+        "organization_id": org_id,
+        "user_id": user_id,
+        "status": "failed",
+        "diagnostics": {"stage": "face_swap", "exception_class": "ValueError",
+                        "returncode": returncode},
+    }})
+    response = TestClient(app).get(
+        f"/v1/jobs/{job_id}",
+        params={"organization_id": org_id, "user_id": user_id},
+        headers={"Authorization": "Bearer test-only-token"},
+    )
+    assert response.status_code == 200
+    assert response.json()["diagnostics"] == {"stage": "face_swap", "exception_class": "ValueError"}
