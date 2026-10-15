@@ -10,6 +10,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import shutil
 import sys
 import time
@@ -35,14 +36,47 @@ FACEFUSION_ROOT = Path(os.getenv("FACEFUSION_ROOT", "/opt/facefusion"))
 JOBS: dict[str, dict[str, object]] = {}
 GPU_SLOT = asyncio.Semaphore(1)
 logger = logging.getLogger(__name__)
+FAILURE_CODES = frozenset({
+    "model_download", "model_load", "invalid_arguments", "no_source_face",
+    "cuda_runtime", "input_decode", "output_encode", "unknown",
+})
+
+
+def _classify_command_failure(output: bytes) -> str:
+    """Classify transient output; retain no text, paths, or captures.
+
+    Messages come from pinned FaceFusion locales/download/inference code,
+    argparse and ONNX Runtime. A category is evidence of a message, not proof
+    of its underlying cause. Unrecognized failures remain unknown.
+    """
+    patterns = (
+        ("invalid_arguments",
+         rb"error: (?:unrecognized arguments:|argument [^\r\n]*invalid choice:)"),
+        ("no_source_face", rb"no source face detected"),
+        ("cuda_runtime", rb"(?:cuda failure|cuda error|failed to create cudaexecutionprovider|"
+                         rb"failed to load library [^\r\n]*libonnxruntime_providers_cuda)"),
+        ("model_download", rb"validating (?:hash|source) for [^\r\n]+ failed"),
+        ("model_load", rb"loading model [^\r\n]+ failed"),
+        ("input_decode", rb"(?:choose an image for the source|"
+                         rb"choose an image or video for the target|"
+                         rb"extracting frames failed|temporary frames not found)"),
+        ("output_encode", rb"(?:merging video failed|processing to video failed)"),
+    )
+    for code, pattern in patterns:
+        if re.search(pattern, output, re.IGNORECASE):
+            return code
+    return "unknown"
 
 
 class _CommandError(RuntimeError):
     """Preserve only the exit code, never the command or captured output."""
 
-    def __init__(self, message: str, returncode: int | None) -> None:
+    def __init__(
+        self, message: str, returncode: int | None, failure_code: str = "unknown"
+    ) -> None:
         super().__init__(message)
         self.returncode = returncode
+        self.failure_code = failure_code if failure_code in FAILURE_CODES else "unknown"
 
 
 async def _cleanup_expired_jobs() -> None:
@@ -197,7 +231,9 @@ async def _run_command(command: list[str], *, cwd: Path, timeout: float) -> byte
             "Media processing exceeded its time limit.", process.returncode
         ) from None
     if process.returncode != 0:
-        raise _CommandError("Media processing failed.", process.returncode)
+        raise _CommandError(
+            "Media processing failed.", process.returncode, _classify_command_failure(output)
+        )
     return output
 
 
@@ -344,6 +380,10 @@ async def _process_job(job_id: str) -> None:
             if isinstance(exc, _CommandError) and type(exc.returncode) is int:
                 diagnostic["returncode"] = exc.returncode
             job["diagnostics"] = diagnostic.copy()
+            if isinstance(exc, _CommandError):
+                # Classification is available only via the authenticated owner status,
+                # not the public error or internal log event.
+                job["diagnostics"]["failure_code"] = exc.failure_code
             logger.error(json.dumps(diagnostic, sort_keys=True))
             job["status"] = "failed"
             job["error"] = "The worker could not complete this face-swap job."
@@ -515,6 +555,7 @@ async def get_job(
             for key, value in diagnostic.items()
             if (key in {"stage", "exception_class"} and isinstance(value, str))
             or (key == "returncode" and type(value) is int)
+            or (key == "failure_code" and isinstance(value, str) and value in FAILURE_CODES)
         }
     return response
 

@@ -153,7 +153,8 @@ def test_processing_failure_logs_only_safe_diagnostics_and_returns_generic_error
     if not arbitrary_exception:
         expected["returncode"] = 17
     assert json.loads(records[0].getMessage()) == expected
-    assert worker.JOBS[job_id]["diagnostics"] == expected
+    owner_diagnostic = expected if arbitrary_exception else {**expected, "failure_code": "unknown"}
+    assert worker.JOBS[job_id]["diagnostics"] == owner_diagnostic
     assert records[0].exc_info is None
     assert records[0].stack_info is None
     serialized = repr(records[0].__dict__)
@@ -171,7 +172,7 @@ def test_processing_failure_logs_only_safe_diagnostics_and_returns_generic_error
         "job_id": job_id,
         "status": "failed",
         "error": "The worker could not complete this face-swap job.",
-        "diagnostics": expected,
+        "diagnostics": owner_diagnostic,
     }
     for forbidden in (secret, str(source), str(target), private_media.decode(),
                       "facefusion.py", "--source-paths", "Bearer"):
@@ -198,7 +199,8 @@ def test_status_diagnostics_require_auth_owner_and_failed_job(
     user_id = "00000000-0000-0000-0000-000000000002"
     other_id = "00000000-0000-0000-0000-000000000003"
     job_id = "a" * 32
-    safe = {"stage": "face_swap", "exception_class": "_CommandError", "returncode": 17}
+    safe = {"stage": "face_swap", "exception_class": "_CommandError", "returncode": 17,
+            "failure_code": "model_download"}
     raw_detail = "private exception stderr command credentials media"
     job = {
         "job_id": job_id,
@@ -226,6 +228,7 @@ def test_status_diagnostics_require_auth_owner_and_failed_job(
     else:
         assert "diagnostics" not in response.json()
         assert "face_swap" not in response.text
+        assert "model_download" not in response.text
     if expected_status == 404:
         assert response.json() == {"detail": "Face-swap job not found."}
 
@@ -250,3 +253,53 @@ def test_status_diagnostics_omit_non_integer_returncodes(monkeypatch, returncode
     )
     assert response.status_code == 200
     assert response.json()["diagnostics"] == {"stage": "face_swap", "exception_class": "ValueError"}
+
+
+@pytest.mark.parametrize(
+    ("message", "code"),
+    [
+        (b"[FACEFUSION.DOWNLOAD] validating hash for private failed", "model_download"),
+        (b"[FACEFUSION.DOWNLOAD] validating source for private failed", "model_download"),
+        (b"[FACEFUSION.INFERENCE_MANAGER] loading model private failed", "model_load"),
+        (b"error: argument --private: invalid choice: private", "invalid_arguments"),
+        (b"error: unrecognized arguments: private", "invalid_arguments"),
+        (b"[FACEFUSION.CORE] no source face detected!", "no_source_face"),
+        (b"CUDA failure 999: private", "cuda_runtime"),
+        (b"Failed to load library /private/libonnxruntime_providers_cuda.so", "cuda_runtime"),
+        (b"[FACEFUSION.TO_VIDEO] extracting frames failed", "input_decode"),
+        (b"[FACEFUSION.TO_VIDEO] merging video failed", "output_encode"),
+        (b"[FACEFUSION.TO_VIDEO] processing to video failed", "output_encode"),
+        (b"private arbitrary failure", "unknown"),
+    ],
+)
+def test_subprocess_failure_classifies_real_upstream_messages_without_retaining_output(
+    monkeypatch, tmp_path, caplog, message, code
+):
+    private = b"Bearer private-token /private/media secret arbitrary-exception-text"
+    process = SimpleNamespace(
+        returncode=1, communicate=AsyncMock(return_value=(message + b"\n" + private, None))
+    )
+    monkeypatch.setattr(worker.asyncio, "create_subprocess_exec", AsyncMock(return_value=process))
+    with pytest.raises(worker._CommandError) as caught:
+        asyncio.run(worker._run_command(["private-command"], cwd=tmp_path, timeout=1))
+    error = caught.value
+    assert error.failure_code == code
+    assert error.returncode == 1
+    assert str(error) == "Media processing failed."
+    assert error.__dict__ == {"returncode": 1, "failure_code": code}
+    assert not caplog.records
+
+
+def test_owner_status_drops_unapproved_failure_code(monkeypatch):
+    monkeypatch.setenv("SELDRUNE_FACESWAP_WORKER_TOKEN", "test-only-token")
+    owner = "00000000-0000-0000-0000-000000000001"
+    monkeypatch.setattr(worker, "JOBS", {"test": {
+        "organization_id": owner, "user_id": owner, "status": "failed",
+        "diagnostics": {"stage": "face_swap", "failure_code": "private arbitrary details"},
+    }})
+    response = TestClient(app).get(
+        "/v1/jobs/test", params={"organization_id": owner, "user_id": owner},
+        headers={"Authorization": "Bearer test-only-token"},
+    )
+    assert response.status_code == 200
+    assert response.json()["diagnostics"] == {"stage": "face_swap"}
