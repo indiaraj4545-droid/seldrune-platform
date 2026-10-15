@@ -1,9 +1,15 @@
+import asyncio
+import json
+import logging
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+from services.live_media import runpod_facefusion_worker as worker
 from services.live_media.runpod_facefusion_worker import (
     _authorize,
     _check_owner,
@@ -75,3 +81,93 @@ def test_worker_accepts_portrait_1080p_and_rejects_larger_video():
     assert supports_video_dimensions(1920, 1080)
     assert not supports_video_dimensions(1080, 2160)
     assert not supports_video_dimensions(3840, 2160)
+
+
+@pytest.mark.parametrize(
+    ("failing_call", "stage", "arbitrary_exception"),
+    [
+        (1, "face_swap", False),
+        (2, "synthetic_label", False),
+        (3, "output_probe", False),
+        (1, "face_swap", True),
+    ],
+)
+def test_processing_failure_logs_only_safe_diagnostics_and_returns_generic_error(
+    monkeypatch, tmp_path, caplog, failing_call, stage, arbitrary_exception
+):
+    org_id = "00000000-0000-0000-0000-000000000001"
+    user_id = "00000000-0000-0000-0000-000000000002"
+    job_id = "a" * 32
+    secret = "test-only-private-token"
+    source = tmp_path / "private-source.png"
+    target = tmp_path / "private-target.mp4"
+    private_media = b"private-media-bytes"
+    source.write_bytes(private_media)
+    target.write_bytes(private_media)
+    unsafe = f"Bearer {secret} {org_id} {user_id} {source} {target} {private_media!r}"
+    monkeypatch.setenv("SELDRUNE_FACESWAP_WORKER_TOKEN", secret)
+    monkeypatch.setattr(worker, "FACEFUSION_ROOT", tmp_path)
+    monkeypatch.setattr(worker, "GPU_SLOT", asyncio.Semaphore(1))
+    monkeypatch.setattr(
+        worker,
+        "JOBS",
+        {
+            job_id: {
+                "job_id": job_id,
+                "work_dir": str(tmp_path),
+                "source_path": str(source),
+                "target_path": str(target),
+                "organization_id": org_id,
+                "user_id": user_id,
+            }
+        },
+    )
+    calls = 0
+
+    async def subprocess(*command, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == failing_call:
+            if arbitrary_exception:
+                raise ValueError(unsafe)
+            return SimpleNamespace(returncode=17, communicate=AsyncMock(return_value=(
+                unsafe.encode(), None
+            )))
+        output_path = (
+            command[command.index("--output-path") + 1]
+            if "--output-path" in command else command[-1]
+        )
+        Path(output_path).write_bytes(private_media)
+        return SimpleNamespace(returncode=0, communicate=AsyncMock(return_value=(b"", None)))
+
+    monkeypatch.setattr(worker.asyncio, "create_subprocess_exec", subprocess)
+    with caplog.at_level(logging.ERROR, logger=worker.__name__):
+        asyncio.run(worker._process_job(job_id))
+
+    records = [r for r in caplog.records if r.name == worker.__name__]
+    assert len(records) == 1
+    expected = {
+        "stage": stage,
+        "exception_class": "ValueError" if arbitrary_exception else "_CommandError",
+    }
+    if not arbitrary_exception:
+        expected["returncode"] = 17
+    assert json.loads(records[0].getMessage()) == expected
+    assert records[0].exc_info is None
+    assert records[0].stack_info is None
+    serialized = repr(records[0].__dict__)
+    for forbidden in (secret, org_id, user_id, job_id, str(source), str(target),
+                      private_media.decode(), "facefusion.py", "--source-paths", "Bearer"):
+        assert forbidden not in serialized
+
+    response = TestClient(app).get(
+        f"/v1/jobs/{job_id}",
+        params={"organization_id": org_id, "user_id": user_id},
+        headers={"Authorization": f"Bearer {secret}"},
+    )
+    assert response.status_code == 200
+    assert response.json() == {
+        "job_id": job_id,
+        "status": "failed",
+        "error": "The worker could not complete this face-swap job.",
+    }

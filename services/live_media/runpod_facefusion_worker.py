@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import json
+import logging
 import os
 import shutil
 import sys
@@ -33,6 +34,15 @@ DATA_ROOT = Path(os.getenv("SELDRUNE_RUNPOD_JOB_DIR", "/workspace/seldrune-faces
 FACEFUSION_ROOT = Path(os.getenv("FACEFUSION_ROOT", "/opt/facefusion"))
 JOBS: dict[str, dict[str, object]] = {}
 GPU_SLOT = asyncio.Semaphore(1)
+logger = logging.getLogger(__name__)
+
+
+class _CommandError(RuntimeError):
+    """Preserve only the exit code, never the command or captured output."""
+
+    def __init__(self, message: str, returncode: int | None) -> None:
+        super().__init__(message)
+        self.returncode = returncode
 
 
 async def _cleanup_expired_jobs() -> None:
@@ -183,9 +193,11 @@ async def _run_command(command: list[str], *, cwd: Path, timeout: float) -> byte
     except TimeoutError:
         process.kill()
         await process.wait()
-        raise RuntimeError("Media processing exceeded its time limit.") from None
+        raise _CommandError(
+            "Media processing exceeded its time limit.", process.returncode
+        ) from None
     if process.returncode != 0:
-        raise RuntimeError("Media processing failed.")
+        raise _CommandError("Media processing failed.", process.returncode)
     return output
 
 
@@ -266,9 +278,11 @@ async def _process_job(job_id: str) -> None:
         target = Path(str(job["target_path"]))
         raw_output = work_dir / "faceswapped.mp4"
         labeled_output = work_dir / "seldrune-synthetic-output.mp4"
+        stage = "runtime_check"
         try:
             if not FACEFUSION_ROOT.is_dir():
                 raise RuntimeError("The FaceFusion runtime is not installed.")
+            stage = "face_swap"
             await _run_command(
                 build_facefusion_command(source, target, raw_output),
                 cwd=FACEFUSION_ROOT,
@@ -276,6 +290,7 @@ async def _process_job(job_id: str) -> None:
             )
             if not raw_output.is_file() or raw_output.stat().st_size == 0:
                 raise RuntimeError("FaceFusion produced no output video.")
+            stage = "synthetic_label"
             await _run_command(
                 _synthetic_output_command(raw_output, labeled_output),
                 cwd=work_dir,
@@ -283,7 +298,9 @@ async def _process_job(job_id: str) -> None:
             )
             if not labeled_output.is_file() or labeled_output.stat().st_size == 0:
                 raise RuntimeError("The labeled output video was not created.")
+            stage = "output_probe"
             metadata = await _probe_video(labeled_output)
+            stage = "output_metadata"
             streams = metadata.get("streams", [])
             video_stream = next(
                 (item for item in streams if item.get("codec_type") == "video"), None
@@ -318,7 +335,15 @@ async def _process_job(job_id: str) -> None:
             job["actual_accelerator_profile"] = actual_accelerator
             job["audio_action"] = "original audio re-encoded to AAC at 48 kHz; no voice conversion"
             job["status"] = "completed"
-        except (OSError, RuntimeError, ValueError, KeyError, TypeError):
+        except (OSError, RuntimeError, ValueError, KeyError, TypeError) as exc:
+            # Deliberately omit exception text, traceback, job context and media paths.
+            diagnostic: dict[str, str | int] = {
+                "stage": stage,
+                "exception_class": type(exc).__name__,
+            }
+            if isinstance(exc, _CommandError) and type(exc.returncode) is int:
+                diagnostic["returncode"] = exc.returncode
+            logger.error(json.dumps(diagnostic, sort_keys=True))
             job["status"] = "failed"
             job["error"] = "The worker could not complete this face-swap job."
         finally:
