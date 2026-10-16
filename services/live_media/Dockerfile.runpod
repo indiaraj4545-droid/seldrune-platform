@@ -16,6 +16,13 @@ RUN git clone https://github.com/facefusion/facefusion.git /opt/facefusion \
     && python install.py cuda@12 --skip-conda \
     && python -c "import onnxruntime as ort; assert 'CUDAExecutionProvider' in ort.get_available_providers()"
 
+# RunPod GPU telemetry can contain nonnumeric values such as N/A. The pinned
+# FaceFusion parser previously passed those values to int() and aborted CUDA
+# provider setup; treat unavailable telemetry as absent and verify the patch.
+RUN cd /opt/facefusion \
+    && python -c 'from pathlib import Path; p = Path("facefusion/execution.py"); source = p.read_text(); start = source.index("def create_value_and_unit("); end = source.find("\ndef ", start + 1); end = len(source) if end < 0 else end; old = source[start:end].rstrip(); tab = chr(9); replacement = "\n".join(["def create_value_and_unit(text : str) -> Optional[ValueAndUnit]:", tab + "if not isinstance(text, str):", tab + tab + "return None", tab + "parts = text.split(maxsplit=1)", tab + "if len(parts) != 2:", tab + tab + "return None", tab + "try:", tab + tab + "value = int(parts[0])", tab + "except ValueError:", tab + tab + "return None", tab + "return {\"value\": value, \"unit\": parts[1]}"]); assert old.count("int(value)") == 1; patched = source[:start] + replacement + (source[end:] if end < len(source) else "\n"); compile(patched, str(p), "exec"); p.write_text(patched)' \
+    && python -c 'from facefusion.execution import create_value_and_unit; assert create_value_and_unit("N/A %") is None; assert create_value_and_unit(None) is None; assert create_value_and_unit("4096 MiB") == {"value": 4096, "unit": "MiB"}'
+
 # Fetch only the configured swap model and the common modules required by its
 # pinned pre_check API. Hash validation and a bounded command fail the build on
 # unavailable/corrupt assets; no GPU or user media is needed.
