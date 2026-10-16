@@ -22,6 +22,26 @@ The `.github/workflows/runpod-worker-image.yml` workflow publishes a private Git
 
 Configure the Pod to run this image, set a random `SELDRUNE_FACESWAP_WORKER_TOKEN` environment value, and expose internal port `8000` as HTTP. The Pod proxy is internet-accessible, so keep the bearer token enabled and store its matching value only in the Seldrune server environment. Never place it in browser JavaScript.
 
+The reusable port-update payload is
+[`deploy/live-media/runpod-faceswap-ports.json`](../../deploy/live-media/runpod-faceswap-ports.json):
+
+```json
+{"ports": ["8000/http", "22/tcp"]}
+```
+
+Apply this payload with `PATCH https://rest.runpod.io/v1/pods/{pod_id}` to the
+intended stopped worker pod. The port list replaces the pod's exposed ports;
+retain any additional ports required by other services when adapting it. For the
+FaceSwap validation pod, replace `8888/http` with `8000/http` and preserve
+`22/tcp`. Updating ports does not require starting or creating a pod. Port 8888
+is not the FaceSwap listener: this image starts Uvicorn on `0.0.0.0:8000`.
+
+The worker base URL is `https://{pod_id}-8000.proxy.runpod.net`. After a separately
+authorized start, check `GET /health` and require JSON `status: ready` before
+submitting an authenticated multipart request to `POST /v1/jobs`. An HTTP 200
+health response alone does not establish GPU readiness. A 502 on port 8888 does
+not diagnose the worker listening on port 8000.
+
 ## Seldrune settings
 
 Set these server-side values on the Seldrune web service:

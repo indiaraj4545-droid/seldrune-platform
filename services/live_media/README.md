@@ -65,6 +65,14 @@ camera and microphone capture when the connection does not return.
 
 ## RunPod Pod deployment settings
 
+For the separate uploaded-video FaceSwap worker built with `Dockerfile.runpod`,
+use exposed ports `8000/http` and `22/tcp`, as specified in
+[`runpod-faceswap-ports.json`](../../deploy/live-media/runpod-faceswap-ports.json).
+Its listener is `0.0.0.0:8000`; check `/health` on the port-8000 HTTPS proxy and
+submit jobs at `/v1/jobs`. Port 8888 is not its HTTP listener. See the
+[uploaded-video deployment guide](../../docs/live-ai-media-engine/RUNPOD_4090_MOBILE_JOBS.md)
+for the stopped-pod port update and authentication requirements.
+
 The live worker is a long-running Pod service on TCP port 8765. Use a RunPod API key
 only from the operator or deployment environment for creating/managing the Pod; the
 key is not a Pod runtime variable and must not be placed in the image or worker secrets.
