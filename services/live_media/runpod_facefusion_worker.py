@@ -60,7 +60,9 @@ FAILURE_CODES = frozenset({
     "python_value_facefusion_app_context", "python_value_facefusion_benchmarker",
     "python_value_facefusion_common_helper", "python_value_facefusion_conda",
     "python_value_facefusion_config", "python_value_facefusion_curl_builder",
-    "python_value_facefusion_execution", "python_value_facefusion_exit_helper",
+    "python_value_facefusion_execution", "python_value_facefusion_gpu_metrics",
+    "python_value_facefusion_execution_providers",
+    "python_value_facefusion_ort_version", "python_value_facefusion_exit_helper",
     "python_value_facefusion_json", "python_value_facefusion_logger",
     "python_value_facefusion_metadata", "python_value_facefusion_normalizer",
     "python_value_facefusion_sanitizer", "python_value_facefusion_state_manager",
@@ -78,8 +80,10 @@ def _classify_value_error_origin(output: bytes) -> str:
     """
     traceback_start = output.rfind(b"Traceback (most recent call last):")
     terminal_traceback = output[traceback_start:] if traceback_start >= 0 else output
-    source_paths = re.findall(
-        rb'^\s*File "([^"\r\n]+)", line [0-9]+', terminal_traceback, re.MULTILINE
+    traceback_frames = re.findall(
+        rb'^\s*File "([^"\r\n]+)", line [0-9]+(?:, in ([A-Za-z_][A-Za-z0-9_]*))?',
+        terminal_traceback,
+        re.MULTILINE,
     )
     facefusion_components = (
         (
@@ -158,7 +162,15 @@ def _classify_value_error_origin(output: bytes) -> str:
         ),
         (rb"(?:^|/)facefusion/face_tracker\.py$", "python_value_facefusion_tracker"),
     )
-    for source_path in reversed(source_paths):
+    for source_path, function_name in reversed(traceback_frames):
+        if re.search(rb"(?:^|/)facefusion/execution\.py$", source_path):
+            execution_value_codes = {
+                b"create_value_and_unit": "python_value_facefusion_gpu_metrics",
+                b"get_available_execution_providers": "python_value_facefusion_execution_providers",
+                b"get_onnxruntime_version": "python_value_facefusion_ort_version",
+            }
+            if function_name in execution_value_codes:
+                return execution_value_codes[function_name]
         for pattern, code in facefusion_components:
             if re.search(pattern, source_path):
                 return code

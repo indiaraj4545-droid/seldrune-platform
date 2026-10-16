@@ -533,6 +533,44 @@ def test_python_value_origin_uses_fixed_codes_without_retaining_paths_or_text(
     assert not caplog.records
 
 
+@pytest.mark.parametrize(
+    ("line_number", "function_name", "code"),
+    [
+        (201, b"create_value_and_unit", "python_value_facefusion_gpu_metrics"),
+        (
+            37,
+            b"get_available_execution_providers",
+            "python_value_facefusion_execution_providers",
+        ),
+        (23, b"get_onnxruntime_version", "python_value_facefusion_ort_version"),
+    ],
+)
+def test_facefusion_execution_value_errors_use_fixed_control_flow_codes(
+    monkeypatch, tmp_path, caplog, line_number, function_name, code
+):
+    private = b"/private/media bearer-token arbitrary-value-error"
+    trace = (
+        b'Traceback (most recent call last):\n  File '
+        b'"/opt/facefusion/facefusion/execution.py", line '
+        + str(line_number).encode()
+        + b", in "
+        + function_name
+        + b"\nValueError: "
+        + private
+        + b"\n"
+    )
+    process = SimpleNamespace(returncode=1, communicate=AsyncMock(return_value=(trace, None)))
+    monkeypatch.setattr(worker.asyncio, "create_subprocess_exec", AsyncMock(return_value=process))
+
+    with pytest.raises(worker._CommandError) as caught:
+        asyncio.run(worker._run_command(["private-command"], cwd=tmp_path, timeout=1))
+
+    assert caught.value.__dict__ == {"returncode": 1, "failure_code": code}
+    assert str(caught.value) == "Media processing failed."
+    assert not caplog.records
+    assert private.decode() not in repr(caught.value.__dict__)
+
+
 def test_python_value_origin_uses_only_the_terminal_chained_traceback():
     trace = (
         b'Traceback (most recent call last):\n  File "/site-packages/numpy/core.py", line 1\n'
