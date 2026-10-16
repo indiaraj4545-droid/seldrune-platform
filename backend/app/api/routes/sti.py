@@ -58,7 +58,7 @@ def sti_telemetry() -> dict[str, object]:
             "cuda_runtime": live_media.gpu.cuda_available,
             "onnx_runtime": live_media.gpu.onnx_available,
             "tensorrt_runtime": live_media.gpu.tensorrt_available,
-            "runtime_ready": live_media.production_ready,
+            "runtime_ready": live_media.runtime_ready,
             # Runtime package detection is not evidence that a trained model
             # loaded or that a transformed frame traversed a live WebRTC call.
             "face_model_loaded": False,

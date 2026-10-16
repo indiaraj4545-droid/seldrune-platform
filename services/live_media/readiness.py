@@ -1,4 +1,4 @@
-"""Deployment readiness report for the live media data plane."""
+"""Runtime availability report for the live media data plane."""
 from dataclasses import dataclass
 
 from .gpu_backend_runtime import GPUBackendStatus, detect_gpu_backends
@@ -11,11 +11,10 @@ class LiveMediaReadiness:
     gpu: GPUBackendStatus
 
     @property
-    def production_ready(self) -> bool:
+    def runtime_ready(self) -> bool:
+        """Installed WebRTC and an actually available GPU inference backend."""
         return self.webrtc.available and (
-            self.gpu.cuda_available
-            or self.gpu.onnx_available
-            or self.gpu.tensorrt_available
+            self.gpu.cuda_available or self.gpu.onnx_available or self.gpu.tensorrt_available
         )
 
 

@@ -4,9 +4,13 @@ The Live AI Media Engine core remains dependency-light. Real deployments add
 optional media/GPU packages in the dedicated media image rather than forcing
 them into the Seldrune control-plane environment.
 
-Runtime detection now reports whether a supported WebRTC implementation and
-GPU inference runtime are actually installed. Production readiness requires
-both.
+Runtime detection reports whether a supported WebRTC implementation and a GPU
+inference backend are available. PyTorch must report CUDA available, or ONNX
+Runtime must expose its CUDA/TensorRT execution provider; an installed CPU-only
+package does not count. The STI `runtime_ready` value is only this dependency
+capability signal. It does not prove a reachable GPU worker, loaded production
+models, profile authorization, TURN service, transformed output, or a successful
+phone call. Those require retained deployment and session evidence.
 
 The intended next deployment image will provide:
 
