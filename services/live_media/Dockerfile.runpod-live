@@ -23,6 +23,7 @@ WORKDIR /app
 RUN python -m pip install --no-cache-dir 'Pillow>=10,<13'
 
 COPY services/live_media /app/services/live_media
+RUN timeout 1800s python -m services.live_media.prefetch_facefusion_models
 
 RUN mkdir -p /opt/seldrune/adapters /opt/seldrune/models /workspace/seldrune-live-profiles \
     && python -c "import numpy; import torch; import services.live_media.voice_style_adapter; import services.live_media.runpod_live_worker; print(torch.__version__)"
