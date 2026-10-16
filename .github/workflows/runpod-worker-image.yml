@@ -7,6 +7,7 @@ on:
     paths:
       - services/live_media/Dockerfile.runpod
       - services/live_media/runpod_facefusion_worker.py
+      - services/live_media/prefetch_facefusion_models.py
       - .github/workflows/runpod-worker-image.yml
   workflow_dispatch:
 

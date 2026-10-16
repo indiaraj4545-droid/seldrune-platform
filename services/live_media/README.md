@@ -161,3 +161,21 @@ rejected, so the worker cannot start with an empty or misleading label. There is
 no disable setting. Session consent and profile authorization remain separate
 required checks. Verify changes with
 `pytest -q tests/test_synthetic_video_disclosure.py`.
+
+## Batch FaceFusion worker model assets
+
+`Dockerfile.runpod` includes the configured `face_swapper` / `ghost_1_256`
+assets at image build time. Its prefetch script uses the pinned FaceFusion
+processor's `pre_check()` and its required common modules: content analyser,
+face classifier, detector, landmarker, masker, recognizer, and voice extractor.
+The common model selections match that revision's headless-run defaults.
+Other processors and alternative swap models are not downloaded. The upstream
+broad `force-download` command is not used.
+
+The build has a 30-minute prefetch limit and fails if prefetch fails or required
+model assets are missing or fail upstream hash validation. Weights remain in
+the container image, outside the repository; the build uses no user media and
+does not run inference. Model inclusion removes required first-job downloads
+for this configuration, but does not warm GPU inference sessions. Batch
+`GET /health` continues to check runtime/CUDA availability; it does not prove a
+transformation has completed or that inference sessions are warmed.

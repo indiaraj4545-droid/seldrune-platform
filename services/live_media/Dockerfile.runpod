@@ -16,6 +16,12 @@ RUN git clone https://github.com/facefusion/facefusion.git /opt/facefusion \
     && python install.py cuda@12 --skip-conda \
     && python -c "import onnxruntime as ort; assert 'CUDAExecutionProvider' in ort.get_available_providers()"
 
+# Fetch only the configured swap model and the common modules required by its
+# pinned pre_check API. Hash validation and a bounded command fail the build on
+# unavailable/corrupt assets; no GPU or user media is needed.
+COPY services/live_media/prefetch_facefusion_models.py /opt/facefusion/prefetch_facefusion_models.py
+RUN cd /opt/facefusion && timeout 1800s python prefetch_facefusion_models.py
+
 RUN python -m pip install --no-cache-dir \
       'fastapi>=0.115,<1.0' \
       'uvicorn[standard]>=0.32,<1.0' \
