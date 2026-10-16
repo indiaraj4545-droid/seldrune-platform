@@ -47,6 +47,12 @@ FAILURE_CODES = frozenset({
     "python_value_facefusion_detector", "python_value_facefusion_landmarker",
     "python_value_facefusion_geometry", "python_value_facefusion_vision",
     "python_value_facefusion_swapper", "python_value_facefusion_processor_loader",
+    "python_value_facefusion_core", "python_value_facefusion_creator",
+    "python_value_facefusion_selector", "python_value_facefusion_store",
+    "python_value_facefusion_masker", "python_value_facefusion_recognizer",
+    "python_value_facefusion_classifier", "python_value_facefusion_content",
+    "python_value_facefusion_process_manager", "python_value_facefusion_video_manager",
+    "python_value_facefusion_video_workflow",
 })
 
 
@@ -66,6 +72,26 @@ def _classify_value_error_origin(output: bytes) -> str:
         (
             rb"(?:^|/)facefusion/processors/modules/face_swapper/core\.py$",
             "python_value_facefusion_swapper",
+        ),
+        (rb"(?:^|/)facefusion/core\.py$", "python_value_facefusion_core"),
+        (rb"(?:^|/)facefusion/face_creator\.py$", "python_value_facefusion_creator"),
+        (rb"(?:^|/)facefusion/face_selector\.py$", "python_value_facefusion_selector"),
+        (rb"(?:^|/)facefusion/face_store\.py$", "python_value_facefusion_store"),
+        (rb"(?:^|/)facefusion/face_masker\.py$", "python_value_facefusion_masker"),
+        (rb"(?:^|/)facefusion/face_recognizer\.py$", "python_value_facefusion_recognizer"),
+        (rb"(?:^|/)facefusion/face_classifier\.py$", "python_value_facefusion_classifier"),
+        (rb"(?:^|/)facefusion/content_analyser\.py$", "python_value_facefusion_content"),
+        (
+            rb"(?:^|/)facefusion/process_manager\.py$",
+            "python_value_facefusion_process_manager",
+        ),
+        (
+            rb"(?:^|/)facefusion/video_manager\.py$",
+            "python_value_facefusion_video_manager",
+        ),
+        (
+            rb"(?:^|/)facefusion/workflows/(?:image_to_video|to_video)\.py$",
+            "python_value_facefusion_video_workflow",
         ),
         (rb"(?:^|/)facefusion/inference_manager\.py$", "python_value_facefusion_inference"),
         (rb"(?:^|/)facefusion/face_detector\.py$", "python_value_facefusion_detector"),

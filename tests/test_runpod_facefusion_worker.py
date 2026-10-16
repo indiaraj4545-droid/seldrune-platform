@@ -370,7 +370,35 @@ def test_python_exception_classification_uses_last_terminal_type_only():
 @pytest.mark.parametrize(
     ("frame_path", "code"),
     [
-        (b"/opt/facefusion/facefusion/core.py", "python_value_facefusion"),
+        (b"/opt/facefusion/facefusion/core.py", "python_value_facefusion_core"),
+        (b"/opt/facefusion/facefusion/face_creator.py", "python_value_facefusion_creator"),
+        (b"/opt/facefusion/facefusion/face_selector.py", "python_value_facefusion_selector"),
+        (b"/opt/facefusion/facefusion/face_store.py", "python_value_facefusion_store"),
+        (b"/opt/facefusion/facefusion/face_masker.py", "python_value_facefusion_masker"),
+        (
+            b"/opt/facefusion/facefusion/face_recognizer.py",
+            "python_value_facefusion_recognizer",
+        ),
+        (
+            b"/opt/facefusion/facefusion/face_classifier.py",
+            "python_value_facefusion_classifier",
+        ),
+        (
+            b"/opt/facefusion/facefusion/content_analyser.py",
+            "python_value_facefusion_content",
+        ),
+        (
+            b"/opt/facefusion/facefusion/process_manager.py",
+            "python_value_facefusion_process_manager",
+        ),
+        (
+            b"/opt/facefusion/facefusion/video_manager.py",
+            "python_value_facefusion_video_manager",
+        ),
+        (
+            b"/opt/facefusion/facefusion/workflows/to_video.py",
+            "python_value_facefusion_video_workflow",
+        ),
         (
             b"/opt/facefusion/facefusion/processors/modules/face_swapper/core.py",
             "python_value_facefusion_swapper",
