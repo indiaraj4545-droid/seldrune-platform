@@ -39,7 +39,8 @@ logger = logging.getLogger(__name__)
 FAILURE_CODES = frozenset({
     "model_download", "model_load", "invalid_arguments", "no_source_face",
     "cuda_runtime", "input_decode", "output_encode", "unknown",
-    "dependency_runtime", "filesystem", "processor_load", "python_runtime", "empty_output",
+    "dependency_runtime", "filesystem", "filesystem_not_found",
+    "filesystem_permission", "processor_load", "python_runtime", "empty_output",
     "python_attribute", "python_type", "python_value", "python_key", "python_index",
     "python_name", "python_assertion", "python_memory",
     "python_value_facefusion", "python_value_numpy", "python_value_opencv",
@@ -195,8 +196,9 @@ def _classify_command_failure(output: bytes) -> str:
     patterns = (
         ("dependency_runtime", rb"(?:modulenotfounderror:|importerror:|"
                                rb"error while loading shared libraries:)"),
-        ("filesystem", rb"(?:permissionerror:|filenotfounderror:|"
-                       rb"can't open file [^\r\n]*\[errno [^\r\n]+)"),
+        ("filesystem_not_found", rb"(?m)^\s*FileNotFoundError:"),
+        ("filesystem_permission", rb"(?m)^\s*PermissionError:"),
+        ("filesystem", rb"can't open file [^\r\n]*\[errno [^\r\n]+"),
         ("processor_load",
          rb"processor [^\r\n]+ (?:could not be loaded|not implemented correctly)"),
         ("invalid_arguments",
