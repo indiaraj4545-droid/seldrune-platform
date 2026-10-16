@@ -400,6 +400,10 @@ def test_python_exception_classification_uses_last_terminal_type_only():
             "python_value_facefusion_video_workflow",
         ),
         (
+            b"/opt/facefusion/facefusion/workflows/core.py",
+            "python_value_facefusion_workflow_core",
+        ),
+        (
             b"/opt/facefusion/facefusion/processors/modules/face_swapper/core.py",
             "python_value_facefusion_swapper",
         ),

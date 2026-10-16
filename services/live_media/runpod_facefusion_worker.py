@@ -52,7 +52,7 @@ FAILURE_CODES = frozenset({
     "python_value_facefusion_masker", "python_value_facefusion_recognizer",
     "python_value_facefusion_classifier", "python_value_facefusion_content",
     "python_value_facefusion_process_manager", "python_value_facefusion_video_manager",
-    "python_value_facefusion_video_workflow",
+    "python_value_facefusion_video_workflow", "python_value_facefusion_workflow_core",
 })
 
 
@@ -92,6 +92,10 @@ def _classify_value_error_origin(output: bytes) -> str:
         (
             rb"(?:^|/)facefusion/workflows/(?:image_to_video|to_video)\.py$",
             "python_value_facefusion_video_workflow",
+        ),
+        (
+            rb"(?:^|/)facefusion/workflows/core\.py$",
+            "python_value_facefusion_workflow_core",
         ),
         (rb"(?:^|/)facefusion/inference_manager\.py$", "python_value_facefusion_inference"),
         (rb"(?:^|/)facefusion/face_detector\.py$", "python_value_facefusion_detector"),
