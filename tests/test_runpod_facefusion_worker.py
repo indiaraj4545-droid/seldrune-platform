@@ -583,3 +583,38 @@ def test_python_value_origin_uses_only_the_terminal_chained_traceback():
     )
 
     assert worker._classify_command_failure(trace) == "python_value"
+
+
+@pytest.mark.parametrize(
+    ("frame_path", "code"),
+    [
+        (b"/opt/facefusion/facefusion/jobs/job_manager.py", "filesystem_permission_jobs"),
+        (b"/opt/facefusion/facefusion/temp_helper.py", "filesystem_permission_temp"),
+        (b"/opt/facefusion/facefusion/download.py", "filesystem_permission_model"),
+        (b"/opt/facefusion/facefusion/execution.py", "filesystem_permission_cache"),
+        (b"/opt/facefusion/facefusion/vision.py", "filesystem_permission_input"),
+        (b"/opt/facefusion/facefusion/ffmpeg.py", "filesystem_permission_output"),
+        (b"/private/unmapped_runtime.py", "filesystem_permission"),
+    ],
+)
+def test_permission_error_traceback_maps_only_to_fixed_facefusion_subsystem(
+    monkeypatch, tmp_path, caplog, frame_path, code
+):
+    private = b"Bearer private-token /private/media arbitrary-secret-detail"
+    trace = (
+        b'Traceback (most recent call last):\n  File "'
+        + frame_path
+        + b'", line 42, in private_frame\nPermissionError: '
+        + private
+        + b"\n"
+    )
+    process = SimpleNamespace(returncode=1, communicate=AsyncMock(return_value=(trace, None)))
+    monkeypatch.setattr(worker.asyncio, "create_subprocess_exec", AsyncMock(return_value=process))
+
+    with pytest.raises(worker._CommandError) as caught:
+        asyncio.run(worker._run_command(["private-command"], cwd=tmp_path, timeout=1))
+
+    assert caught.value.__dict__ == {"returncode": 1, "failure_code": code}
+    assert str(caught.value) == "Media processing failed."
+    assert private.decode() not in repr(caught.value.__dict__)
+    assert not caplog.records

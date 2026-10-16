@@ -41,6 +41,9 @@ FAILURE_CODES = frozenset({
     "cuda_runtime", "input_decode", "output_encode", "unknown",
     "dependency_runtime", "filesystem", "filesystem_not_found",
     "filesystem_permission", "processor_load", "python_runtime", "empty_output",
+    "filesystem_permission_jobs", "filesystem_permission_temp",
+    "filesystem_permission_model", "filesystem_permission_cache",
+    "filesystem_permission_input", "filesystem_permission_output",
     "python_attribute", "python_type", "python_value", "python_key", "python_index",
     "python_name", "python_assertion", "python_memory",
     "python_value_facefusion", "python_value_numpy", "python_value_opencv",
@@ -186,6 +189,32 @@ def _classify_value_error_origin(output: bytes) -> str:
     return "python_value"
 
 
+def _classify_filesystem_permission_origin(output: bytes) -> str:
+    """Narrow permission failures to fixed FaceFusion subsystems when traced."""
+    traceback_start = output.rfind(b"Traceback (most recent call last):")
+    if traceback_start < 0:
+        return "filesystem_permission"
+    terminal_traceback = output[traceback_start:]
+    traceback_frames = re.findall(
+        rb'^\s*File "([^"\r\n]+)", line [0-9]+(?:, in ([A-Za-z_][A-Za-z0-9_]*))?',
+        terminal_traceback,
+        re.MULTILINE,
+    )
+    facefusion_components = (
+        (rb"(?:^|/)facefusion/jobs/", "filesystem_permission_jobs"),
+        (rb"(?:^|/)facefusion/temp_helper\.py$", "filesystem_permission_temp"),
+        (rb"(?:^|/)facefusion/download\.py$", "filesystem_permission_model"),
+        (rb"(?:^|/)facefusion/execution\.py$", "filesystem_permission_cache"),
+        (rb"(?:^|/)facefusion/vision\.py$", "filesystem_permission_input"),
+        (rb"(?:^|/)facefusion/ffmpeg\.py$", "filesystem_permission_output"),
+    )
+    for source_path, _function_name in reversed(traceback_frames):
+        for pattern, code in facefusion_components:
+            if re.search(pattern, source_path):
+                return code
+    return "filesystem_permission"
+
+
 def _classify_command_failure(output: bytes) -> str:
     """Classify transient output; retain no text, paths, or captures.
 
@@ -197,7 +226,6 @@ def _classify_command_failure(output: bytes) -> str:
         ("dependency_runtime", rb"(?:modulenotfounderror:|importerror:|"
                                rb"error while loading shared libraries:)"),
         ("filesystem_not_found", rb"(?m)^\s*FileNotFoundError:"),
-        ("filesystem_permission", rb"(?m)^\s*PermissionError:"),
         ("filesystem", rb"can't open file [^\r\n]*\[errno [^\r\n]+"),
         ("processor_load",
          rb"processor [^\r\n]+ (?:could not be loaded|not implemented correctly)"),
@@ -216,6 +244,8 @@ def _classify_command_failure(output: bytes) -> str:
     for code, pattern in patterns:
         if re.search(pattern, output, re.IGNORECASE):
             return code
+    if re.search(rb"(?m)^\s*PermissionError:", output):
+        return _classify_filesystem_permission_origin(output)
     if b"Traceback (most recent call last):" in output:
         # Match Python's terminal exception lines, not arbitrary words in frames
         # or messages. Chained tracebacks use the final terminal exception;
