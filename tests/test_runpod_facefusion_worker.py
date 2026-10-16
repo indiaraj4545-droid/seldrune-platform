@@ -443,6 +443,10 @@ def test_python_exception_classification_uses_last_terminal_type_only():
             b"/opt/facefusion/facefusion/workflows/image_to_image.py",
             "python_value_facefusion_workflows",
         ),
+        (
+            b"/opt/facefusion/facefusion/jobs/job_runner.py",
+            "python_value_facefusion_jobs",
+        ),
         (b"/opt/facefusion/facefusion/program.py", "python_value_facefusion_cli"),
         (b"/opt/facefusion/facefusion.py", "python_value_facefusion_cli"),
         (b"/opt/facefusion/facefusion/audio.py", "python_value_facefusion_audio"),

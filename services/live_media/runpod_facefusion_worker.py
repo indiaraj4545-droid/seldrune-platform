@@ -56,7 +56,7 @@ FAILURE_CODES = frozenset({
     "python_value_facefusion_cli", "python_value_facefusion_audio",
     "python_value_facefusion_model_assets", "python_value_facefusion_media",
     "python_value_facefusion_tracker", "python_value_facefusion_processors",
-    "python_value_facefusion_workflows",
+    "python_value_facefusion_workflows", "python_value_facefusion_jobs",
 })
 
 
@@ -113,6 +113,7 @@ def _classify_value_error_origin(output: bytes) -> str:
         ),
         (rb"(?:^|/)facefusion/processors/", "python_value_facefusion_processors"),
         (rb"(?:^|/)facefusion/workflows/", "python_value_facefusion_workflows"),
+        (rb"(?:^|/)facefusion/jobs/", "python_value_facefusion_jobs"),
         (
             rb"(?:^|/)facefusion/(?:args|choices|cli_helper|program|program_helper)\.py$",
             "python_value_facefusion_cli",
