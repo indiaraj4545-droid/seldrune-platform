@@ -53,6 +53,10 @@ FAILURE_CODES = frozenset({
     "python_value_facefusion_classifier", "python_value_facefusion_content",
     "python_value_facefusion_process_manager", "python_value_facefusion_video_manager",
     "python_value_facefusion_video_workflow", "python_value_facefusion_workflow_core",
+    "python_value_facefusion_cli", "python_value_facefusion_audio",
+    "python_value_facefusion_model_assets", "python_value_facefusion_media",
+    "python_value_facefusion_tracker", "python_value_facefusion_processors",
+    "python_value_facefusion_workflows",
 })
 
 
@@ -103,6 +107,28 @@ def _classify_value_error_origin(output: bytes) -> str:
         (rb"(?:^|/)facefusion/face_helper\.py$", "python_value_facefusion_geometry"),
         (rb"(?:^|/)facefusion/vision\.py$", "python_value_facefusion_vision"),
         (rb"(?:^|/)facefusion/processors/core\.py$", "python_value_facefusion_processor_loader"),
+        (
+            rb"(?:^|/)facefusion/processors/modules/face_swapper/",
+            "python_value_facefusion_swapper",
+        ),
+        (rb"(?:^|/)facefusion/processors/", "python_value_facefusion_processors"),
+        (rb"(?:^|/)facefusion/workflows/", "python_value_facefusion_workflows"),
+        (
+            rb"(?:^|/)facefusion/(?:args|choices|cli_helper|program|program_helper)\.py$",
+            "python_value_facefusion_cli",
+        ),
+        (rb"(?:^|/)facefusion\.py$", "python_value_facefusion_cli"),
+        (rb"(?:^|/)facefusion/(?:audio|voice_extractor)\.py$", "python_value_facefusion_audio"),
+        (
+            rb"(?:^|/)facefusion/(?:download|hash_helper|model_helper)\.py$",
+            "python_value_facefusion_model_assets",
+        ),
+        (
+            rb"(?:^|/)facefusion/(?:ffmpeg|ffmpeg_builder|ffprobe|ffprobe_builder|"
+            rb"frame_store|filesystem|temp_helper)\.py$",
+            "python_value_facefusion_media",
+        ),
+        (rb"(?:^|/)facefusion/face_tracker\.py$", "python_value_facefusion_tracker"),
     )
     for source_path in reversed(source_paths):
         for pattern, code in facefusion_components:

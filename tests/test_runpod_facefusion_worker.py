@@ -432,6 +432,34 @@ def test_python_exception_classification_uses_last_terminal_type_only():
             "python_value_facefusion_processor_loader",
         ),
         (
+            b"/opt/facefusion/facefusion/processors/modules/face_swapper/choices.py",
+            "python_value_facefusion_swapper",
+        ),
+        (
+            b"/opt/facefusion/facefusion/processors/modules/face_detector/core.py",
+            "python_value_facefusion_processors",
+        ),
+        (
+            b"/opt/facefusion/facefusion/workflows/image_to_image.py",
+            "python_value_facefusion_workflows",
+        ),
+        (b"/opt/facefusion/facefusion/program.py", "python_value_facefusion_cli"),
+        (b"/opt/facefusion/facefusion.py", "python_value_facefusion_cli"),
+        (b"/opt/facefusion/facefusion/audio.py", "python_value_facefusion_audio"),
+        (
+            b"/opt/facefusion/facefusion/model_helper.py",
+            "python_value_facefusion_model_assets",
+        ),
+        (b"/opt/facefusion/facefusion/ffmpeg.py", "python_value_facefusion_media"),
+        (
+            b"/opt/facefusion/facefusion/frame_store.py",
+            "python_value_facefusion_media",
+        ),
+        (
+            b"/opt/facefusion/facefusion/face_tracker.py",
+            "python_value_facefusion_tracker",
+        ),
+        (
             b"/usr/local/lib/python3.12/site-packages/numpy/_core/fromnumeric.py",
             "python_value_numpy",
         ),
