@@ -43,7 +43,10 @@ FAILURE_CODES = frozenset({
     "python_attribute", "python_type", "python_value", "python_key", "python_index",
     "python_name", "python_assertion", "python_memory",
     "python_value_facefusion", "python_value_numpy", "python_value_opencv",
-    "python_value_onnxruntime",
+    "python_value_onnxruntime", "python_value_facefusion_inference",
+    "python_value_facefusion_detector", "python_value_facefusion_landmarker",
+    "python_value_facefusion_geometry", "python_value_facefusion_vision",
+    "python_value_facefusion_swapper", "python_value_facefusion_processor_loader",
 })
 
 
@@ -59,7 +62,22 @@ def _classify_value_error_origin(output: bytes) -> str:
     source_paths = re.findall(
         rb'^\s*File "([^"\r\n]+)", line [0-9]+', terminal_traceback, re.MULTILINE
     )
+    facefusion_components = (
+        (
+            rb"(?:^|/)facefusion/processors/modules/face_swapper/core\.py$",
+            "python_value_facefusion_swapper",
+        ),
+        (rb"(?:^|/)facefusion/inference_manager\.py$", "python_value_facefusion_inference"),
+        (rb"(?:^|/)facefusion/face_detector\.py$", "python_value_facefusion_detector"),
+        (rb"(?:^|/)facefusion/face_landmarker\.py$", "python_value_facefusion_landmarker"),
+        (rb"(?:^|/)facefusion/face_helper\.py$", "python_value_facefusion_geometry"),
+        (rb"(?:^|/)facefusion/vision\.py$", "python_value_facefusion_vision"),
+        (rb"(?:^|/)facefusion/processors/core\.py$", "python_value_facefusion_processor_loader"),
+    )
     for source_path in reversed(source_paths):
+        for pattern, code in facefusion_components:
+            if re.search(pattern, source_path):
+                return code
         if re.search(rb"(?:^|/)facefusion/", source_path):
             return "python_value_facefusion"
         if re.search(rb"(?:^|/)numpy/", source_path):

@@ -370,7 +370,35 @@ def test_python_exception_classification_uses_last_terminal_type_only():
 @pytest.mark.parametrize(
     ("frame_path", "code"),
     [
-        (b"/opt/facefusion/facefusion/processors/core.py", "python_value_facefusion"),
+        (b"/opt/facefusion/facefusion/core.py", "python_value_facefusion"),
+        (
+            b"/opt/facefusion/facefusion/processors/modules/face_swapper/core.py",
+            "python_value_facefusion_swapper",
+        ),
+        (
+            b"/opt/facefusion/facefusion/inference_manager.py",
+            "python_value_facefusion_inference",
+        ),
+        (
+            b"/opt/facefusion/facefusion/face_detector.py",
+            "python_value_facefusion_detector",
+        ),
+        (
+            b"/opt/facefusion/facefusion/face_landmarker.py",
+            "python_value_facefusion_landmarker",
+        ),
+        (
+            b"/opt/facefusion/facefusion/face_helper.py",
+            "python_value_facefusion_geometry",
+        ),
+        (
+            b"/opt/facefusion/facefusion/vision.py",
+            "python_value_facefusion_vision",
+        ),
+        (
+            b"/opt/facefusion/facefusion/processors/core.py",
+            "python_value_facefusion_processor_loader",
+        ),
         (
             b"/usr/local/lib/python3.12/site-packages/numpy/_core/fromnumeric.py",
             "python_value_numpy",
