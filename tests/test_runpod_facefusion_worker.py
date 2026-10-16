@@ -365,3 +365,50 @@ def test_python_exception_classification_uses_last_terminal_type_only():
         b"Traceback (most recent call last):\nValueError: private\n"
         b"Traceback (most recent call last):\nCustomError: private"
     ) == "python_runtime"
+
+
+@pytest.mark.parametrize(
+    ("frame_path", "code"),
+    [
+        (b"/opt/facefusion/facefusion/processors/core.py", "python_value_facefusion"),
+        (
+            b"/usr/local/lib/python3.12/site-packages/numpy/_core/fromnumeric.py",
+            "python_value_numpy",
+        ),
+        (b"/usr/local/lib/python3.12/site-packages/cv2/__init__.py", "python_value_opencv"),
+        (
+            b"/usr/local/lib/python3.12/site-packages/onnxruntime/capi/collection.py",
+            "python_value_onnxruntime",
+        ),
+        (b"/private/runtime/library.py", "python_value"),
+    ],
+)
+def test_python_value_origin_uses_fixed_codes_without_retaining_paths_or_text(
+    monkeypatch, tmp_path, caplog, frame_path, code
+):
+    trace = (
+        b'Traceback (most recent call last):\n  File "'
+        + frame_path
+        + b'", line 42, in private_frame\nValueError: private media path and token\n'
+    )
+    process = SimpleNamespace(returncode=1, communicate=AsyncMock(return_value=(trace, None)))
+    monkeypatch.setattr(worker.asyncio, "create_subprocess_exec", AsyncMock(return_value=process))
+
+    with pytest.raises(worker._CommandError) as caught:
+        asyncio.run(worker._run_command(["private-command"], cwd=tmp_path, timeout=1))
+
+    assert caught.value.__dict__ == {"returncode": 1, "failure_code": code}
+    assert str(caught.value) == "Media processing failed."
+    assert not caplog.records
+
+
+def test_python_value_origin_uses_only_the_terminal_chained_traceback():
+    trace = (
+        b'Traceback (most recent call last):\n  File "/site-packages/numpy/core.py", line 1\n'
+        b"ValueError: private inner detail\n"
+        b"During handling of the above exception, another exception occurred:\n"
+        b'Traceback (most recent call last):\n  File "/private/other/runtime.py", line 2\n'
+        b"ValueError: private outer detail\n"
+    )
+
+    assert worker._classify_command_failure(trace) == "python_value"

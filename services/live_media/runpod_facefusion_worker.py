@@ -42,7 +42,33 @@ FAILURE_CODES = frozenset({
     "dependency_runtime", "filesystem", "processor_load", "python_runtime", "empty_output",
     "python_attribute", "python_type", "python_value", "python_key", "python_index",
     "python_name", "python_assertion", "python_memory",
+    "python_value_facefusion", "python_value_numpy", "python_value_opencv",
+    "python_value_onnxruntime",
 })
+
+
+def _classify_value_error_origin(output: bytes) -> str:
+    """Map only the innermost recognized Python module to a fixed code.
+
+    Traceback paths are inspected transiently. They are never retained, logged,
+    or returned. The category narrows the failing runtime layer; it does not
+    claim a root cause.
+    """
+    traceback_start = output.rfind(b"Traceback (most recent call last):")
+    terminal_traceback = output[traceback_start:] if traceback_start >= 0 else output
+    source_paths = re.findall(
+        rb'^\s*File "([^"\r\n]+)", line [0-9]+', terminal_traceback, re.MULTILINE
+    )
+    for source_path in reversed(source_paths):
+        if re.search(rb"(?:^|/)facefusion/", source_path):
+            return "python_value_facefusion"
+        if re.search(rb"(?:^|/)numpy/", source_path):
+            return "python_value_numpy"
+        if re.search(rb"(?:^|/)cv2(?:/|_)", source_path):
+            return "python_value_opencv"
+        if re.search(rb"(?:^|/)onnxruntime(?:/|_)", source_path):
+            return "python_value_onnxruntime"
+    return "python_value"
 
 
 def _classify_command_failure(output: bytes) -> str:
@@ -94,7 +120,10 @@ def _classify_command_failure(output: bytes) -> str:
         for line in reversed(output.splitlines()):
             exception_type = line.partition(b":")[0]
             if re.fullmatch(rb"[A-Za-z_][A-Za-z0-9_.]*", exception_type):
-                return exception_codes.get(exception_type, "python_runtime")
+                code = exception_codes.get(exception_type, "python_runtime")
+                if code == "python_value":
+                    return _classify_value_error_origin(output)
+                return code
         return "python_runtime"
     if not output.strip():
         return "empty_output"
