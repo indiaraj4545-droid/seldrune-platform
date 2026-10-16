@@ -59,16 +59,21 @@ def sti_telemetry() -> dict[str, object]:
             "onnx_runtime": live_media.gpu.onnx_available,
             "tensorrt_runtime": live_media.gpu.tensorrt_available,
             "runtime_ready": live_media.production_ready,
-            "face_model_loaded": True,
-            "first_frame_transformed": True,
-            "live_stream_returned": True,
-            "webrtc_return_verified": True,
-            "cuda_webrtc_return_verified": True,
+            # Runtime package detection is not evidence that a trained model
+            # loaded or that a transformed frame traversed a live WebRTC call.
+            "face_model_loaded": False,
+            "first_frame_transformed": False,
+            "live_stream_returned": False,
+            "webrtc_return_verified": False,
+            "cuda_webrtc_return_verified": False,
             "virtual_camera_connected": False,
             "accelerator_profile": accelerator.key,
             "accelerator_name": accelerator.display_name,
             "preferred_vram_gb": accelerator.preferred_vram_gb,
-            "note": "Runtime detection only; GPU hardware presence is not asserted by this API.",
+            "note": (
+                "Runtime package detection only; model loading, transformed frames, "
+                "live WebRTC delivery, and GPU hardware require retained run evidence."
+            ),
         },
         "face_v01": {
             "model_version": "seldrune-face-v0.1",
@@ -95,23 +100,25 @@ def sti_telemetry() -> dict[str, object]:
             "production_evidence_recorder": "implemented",
             "session_evidence_integration": "implemented",
             "production_evidence_verifier": "implemented",
-            "gpu_training_completed": True,
-            "checkpoint_verified": True,
-            "onnx_export_verified": True,
-            "cuda_onnx_inference_verified": True,
-            "real_image_inference_verified": True,
-            "webrtc_cuda_return_verified": True,
+            # These milestones require retained artifacts and runtime receipts;
+            # source code and unit tests alone do not establish completion.
+            "gpu_training_completed": False,
+            "checkpoint_verified": False,
+            "onnx_export_verified": False,
+            "cuda_onnx_inference_verified": False,
+            "real_image_inference_verified": False,
+            "webrtc_cuda_return_verified": False,
             "production_live_session_verified": production_gates.live_session_verified,
             "mobile_hd_output_verified": production_gates.mobile_hd_output_verified,
             "voice_hd_output_verified": production_gates.voice_hd_output_verified,
             "production_evidence_status": production_evidence_status,
-            "training_accelerator": "rtx-pro-6000-blackwell",
-            "training_final_step": 100,
+            "training_accelerator": None,
+            "training_final_step": None,
             "note": (
-                "Face v0.1 GPU training/checkpoint, reference-conditioned ONNX "
-                "export, CUDA inference, real-image inference, and WebRTC CUDA "
-                "return-frame delivery have runtime evidence. Virtual-camera "
-                "delivery remains unverified."
+                "Face v0.1 training, checkpoint, ONNX, CUDA inference, real-image, "
+                "and WebRTC return milestones remain pending until their retained "
+                "artifacts and runtime receipts are configured and verified. "
+                "Virtual-camera delivery is also unverified."
             ),
         },
         "forge": {
