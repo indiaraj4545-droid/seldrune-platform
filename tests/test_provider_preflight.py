@@ -211,6 +211,7 @@ def test_provider_preflight_reports_invalid_remote_credential(
     monkeypatch.setenv("SELDRUNE_GITHUB_TOOL_TOKEN", "bad-github-token")
     monkeypatch.delenv("SELDRUNE_RENDER_API_KEY", raising=False)
     monkeypatch.delenv("SELDRUNE_CI_RECEIPT_HMAC_KEY", raising=False)
+    monkeypatch.delenv("RUNPOD_API_KEY", raising=False)
 
     def fake_get(url, *, headers, timeout):
         assert url == "https://api.github.com/user"
@@ -248,6 +249,7 @@ def test_provider_preflight_handles_network_failure_without_leaking_secret(
     monkeypatch.delenv("SELDRUNE_GITHUB_TOOL_TOKEN", raising=False)
     monkeypatch.setenv("SELDRUNE_RENDER_API_KEY", "render-network-secret")
     monkeypatch.delenv("SELDRUNE_CI_RECEIPT_HMAC_KEY", raising=False)
+    monkeypatch.delenv("RUNPOD_API_KEY", raising=False)
 
     def failing_get(url, *, headers, timeout):
         raise httpx.ConnectError(

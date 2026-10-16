@@ -35,7 +35,7 @@ def test_media_creation_is_separate_from_text_chat():
     gpt = (web / "seldrune-gpt.js").read_text()
 
     assert "Seldrune AI · text chat" in html
-    assert "Create image, narration, or video" in html
+    assert "Create image and spoken-audio files" in html
     assert 'data-creation-mode="image"' in html
     assert 'data-creation-mode="speech"' in html
     assert 'data-creation-mode="song"' not in html

@@ -58,8 +58,12 @@ def test_creation_forge_routes_typed_projects_through_the_cognitive_operator():
     for mode in ("app", "game", "visual"):
         assert f"    {mode}: {{" in script
     assert 'id="seldrune-gpt-creation-status"' in html
-    assert "Create downloadable image and spoken-audio files" in html
-    assert "Video rendering is unavailable" in html
+    assert (
+        "Create image and spoken-audio files, or turn a Seldrune answer into a multi-page PDF"
+        in html
+    )
+    assert 'data-creation-mode="video"' in html
+    assert "Video · unavailable" in html
     assert "buildCreativeOrder(request)" in script
     assert "api('/gpt/media'" in script
     assert "No downloadable file was returned." in script
