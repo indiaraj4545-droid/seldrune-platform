@@ -25,10 +25,22 @@ _WARMUP_FRAMES = 5
 _REQUIRED_WIDTH = 1920
 _REQUIRED_HEIGHT = 1080
 _REQUIRED_FPS = 30.0
+_CURRENT_STAGE = "runtime_import"
 
 
 class BenchmarkInputError(ValueError):
     """An input did not meet the synthetic benchmark contract."""
+
+
+def _profile_face_filename(source_bytes: bytes) -> str:
+    """Preserve the encoded image type so FaceFusion's extension filter agrees."""
+    if source_bytes.startswith(b"\xff\xd8\xff"):
+        return "face.jpg"
+    if source_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "face.png"
+    if source_bytes.startswith(b"RIFF") and source_bytes[8:12] == b"WEBP":
+        return "face.webp"
+    raise BenchmarkInputError("source image type is unsupported")
 
 
 def require_synthetic_authorization(environment: dict[str, str]) -> None:
@@ -110,12 +122,15 @@ def _read_video_frames(video_bytes: bytes):
 
 
 async def _run_benchmark() -> dict[str, object]:
+    global _CURRENT_STAGE
+    _CURRENT_STAGE = "runtime_import"
     import numpy as np
     import torch
     from PIL import Image
 
     from . import facefusion_live_adapter
 
+    _CURRENT_STAGE = "input_validation"
     environment = os.environ
     require_synthetic_authorization(environment)
     source_bytes = _decode_environment_payload(
@@ -132,15 +147,17 @@ async def _run_benchmark() -> dict[str, object]:
     except (OSError, ValueError) as exc:
         raise BenchmarkInputError("source image is invalid") from exc
 
+    _CURRENT_STAGE = "video_decode"
     width, height, input_fps, frames = _read_video_frames(video_bytes)
     with tempfile.TemporaryDirectory(prefix="seldrune-live-benchmark-") as root:
         root_path = Path(root)
         profile_id = uuid4().hex
         profile_directory = root_path / profile_id
         profile_directory.mkdir()
-        (profile_directory / "face.png").write_bytes(source_bytes)
+        (profile_directory / _profile_face_filename(source_bytes)).write_bytes(source_bytes)
         environment["SELDRUNE_LIVE_PROFILE_ROOT"] = str(root_path)
 
+        _CURRENT_STAGE = "profile_warmup"
         warmup_started = time.perf_counter()
         await facefusion_live_adapter.prepare_profile(profile_id)
         metadata = {"width": width, "height": height, "pixel_format": "jpeg"}
@@ -150,6 +167,7 @@ async def _run_benchmark() -> dict[str, object]:
             )
         warmup_seconds = time.perf_counter() - warmup_started
 
+        _CURRENT_STAGE = "face_transform"
         latencies_ms: list[float] = []
         changed_frames = 0
         measured_started = time.perf_counter()
@@ -172,6 +190,7 @@ async def _run_benchmark() -> dict[str, object]:
                 changed_frames += 1
         measured_seconds = time.perf_counter() - measured_started
 
+        _CURRENT_STAGE = "result_aggregation"
         gpu_name = torch.cuda.get_device_name(0)
         memory_gib = torch.cuda.get_device_properties(0).total_memory / (1024**3)
         result: dict[str, object] = {
@@ -207,8 +226,13 @@ def main() -> None:
             except BenchmarkInputError:
                 result = {"status": "failed", "failure_code": "invalid_benchmark_input"}
                 exit_code = 2
-            except Exception:
-                result = {"status": "failed", "failure_code": "live_adapter_error"}
+            except Exception as exc:
+                result = {
+                    "status": "failed",
+                    "failure_code": "live_adapter_error",
+                    "stage": _CURRENT_STAGE,
+                    "exception_class": type(exc).__name__,
+                }
                 exit_code = 1
         finally:
             os.dup2(stdout_fd, 1)

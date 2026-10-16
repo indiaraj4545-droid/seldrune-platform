@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import base64
+import os
 
 import pytest
 
 from services.live_media.runpod_live_gpu_benchmark import (
     BenchmarkInputError,
     _decode_environment_payload,
+    _profile_face_filename,
     require_synthetic_authorization,
     summarize_latencies,
 )
@@ -52,7 +54,7 @@ def test_media_payload_is_removed_from_environment_after_bounded_decode(
     monkeypatch.setenv("BENCH_MEDIA", encoded)
 
     assert _decode_environment_payload("BENCH_MEDIA", 64) == b"synthetic-payload"
-    assert "BENCH_MEDIA" not in __import__("os").environ
+    assert "BENCH_MEDIA" not in os.environ
 
 
 def test_media_payload_rejects_oversize_input_without_disclosing_content(
@@ -62,3 +64,17 @@ def test_media_payload_rejects_oversize_input_without_disclosing_content(
 
     with pytest.raises(BenchmarkInputError):
         _decode_environment_payload("BENCH_MEDIA", 2)
+
+
+@pytest.mark.parametrize(
+    ("image_header", "expected_filename"),
+    [
+        (b"\xff\xd8\xff", "face.jpg"),
+        (b"\x89PNG\r\n\x1a\n", "face.png"),
+        (b"RIFF\x00\x00\x00\x00WEBP", "face.webp"),
+    ],
+)
+def test_profile_reference_extension_matches_encoded_image_format(
+    image_header: bytes, expected_filename: str
+) -> None:
+    assert _profile_face_filename(image_header) == expected_filename
