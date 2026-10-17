@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#000000">
+  <title>Seldrune Camera Output</title>
+  <link rel="stylesheet" href="/console-assets/face-camera.css">
+  <script src="/console-assets/face-camera-console.js" defer></script>
+  <script src="/console-assets/face-camera-output.js" defer></script>
+</head>
+<body class="output-page">
+  <main class="projection-screen" aria-label="Labeled transformed meeting camera">
+    <video id="camera-output" autoplay muted playsinline hidden aria-label="Transformed live video"></video>
+    <div id="output-status" class="output-status" role="status">Waiting for transformed video</div>
+    <div id="output-disclosure" class="disclosure">AI MODIFIED</div>
+  </main>
+</body>
+</html>

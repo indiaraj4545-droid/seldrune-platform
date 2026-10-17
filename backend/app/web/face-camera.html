@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0a0d15">
+  <title>Seldrune Call Camera</title>
+  <link rel="stylesheet" href="/console-assets/face-camera.css">
+  <script src="/console-assets/face-camera-console.js" defer></script>
+</head>
+<body>
+  <header class="camera-header">
+    <a class="brand" href="/console"><span class="brand-mark">S</span> SELDRUNE <span class="brand-divider">/</span> <span>CALL CAMERA</span></a>
+    <nav aria-label="Camera navigation"><a href="/media">Media studio</a><a href="/liveshell/profiles">Approved profiles</a></nav>
+  </header>
+  <main class="camera-shell">
+    <section class="camera-intro">
+      <div><p class="eyebrow">YOUR LIVE CAMERA WORKSPACE</p><h1>One console.<br>Your call camera.</h1><p class="intro-copy">Connect your approved cloud face profile, preview the returned video, and send it to a supported meeting app through OBS Virtual Camera.</p></div>
+      <div class="support-note"><span class="support-dot"></span><strong>Desktop calling · OBS required</strong><p>On Android and iPhone, use this console for preview or screen sharing. Mobile apps cannot select this page as a system camera.</p></div>
+    </section>
+
+    <section class="workspace-grid" aria-label="Meeting camera workspace">
+      <article class="camera-panel preview-panel">
+        <div class="panel-header"><div><p class="eyebrow">TRANSFORMED RETURN</p><h2>Your call camera</h2></div><span id="feed-state" class="feed-state" role="status" aria-live="polite">Waiting for live video</span></div>
+        <div id="camera-stage" class="camera-screen">
+          <video id="camera-output" autoplay muted playsinline hidden aria-label="Transformed video only"></video>
+          <div class="idle-preview" aria-hidden="true"><span class="camera-icon"></span><p>Connect your live session below</p><small>The original camera is never projected here.</small></div>
+          <span class="disclosure">AI MODIFIED</span>
+        </div>
+        <div class="metrics-row"><div><span>DECODED RESOLUTION</span><strong id="measured-resolution">—</strong></div><div><span>DECODED PREVIEW FPS</span><strong id="measured-fps">—</strong></div><div><span>MEETING AUDIO</span><strong>Your normal microphone</strong></div></div>
+        <div class="camera-actions"><button id="open-output" class="button primary" type="button">Open clean output</button><button id="fullscreen-output" class="button secondary" type="button">Fullscreen output</button><button id="stop-output" class="button danger" type="button">Stop live session</button></div>
+        <p id="console-status" class="console-status" role="status" aria-live="polite">Start an authorized live session below. Output stays blank until the browser decodes returned video.</p>
+        <p class="measurement-note">Resolution and FPS describe video decoded by this browser. They do not establish cloud inference speed, latency, or meeting-app quality.</p>
+      </article>
+
+      <aside class="camera-panel meeting-guide">
+        <p class="eyebrow">CONNECT TO YOUR CALL</p><h2>Three steps to go live</h2>
+        <ol class="setup-steps">
+          <li><strong>Connect your live profile</strong><p>Use the authenticated session studio below. Keep the visible AI-modified indicator enabled.</p></li>
+          <li><strong>Start OBS Virtual Camera</strong><p>Open clean output. In OBS, add a Window Capture of that window, fit it to the canvas, then start Virtual Camera. Capture the output window only.</p></li>
+          <li><strong>Select your meeting camera</strong><p>Choose <b>OBS Virtual Camera</b> in the meeting app. Keep your usual microphone selected.</p></li>
+        </ol>
+        <dl class="app-settings"><div><dt>Zoom</dt><dd>Settings → Video → Camera</dd></div><div><dt>Teams</dt><dd>Settings → Devices → Camera</dd></div><div><dt>Google Meet</dt><dd>Settings → Video → Camera</dd></div></dl>
+        <p class="guide-note">Use desktop apps or desktop browsers that accept an installed virtual camera. OBS and camera permissions must be configured on the computer running the call.</p>
+        <a class="text-link" href="https://obsproject.com/download" target="_blank" rel="noopener noreferrer">Get OBS Studio ↗</a>
+      </aside>
+    </section>
+
+    <details class="camera-panel studio-panel" open>
+      <summary><span><span class="eyebrow">STEP 1 · LIVE SESSION</span><strong>Connect your approved profiles</strong></span><span class="summary-hint">Open / close studio</span></summary>
+      <div class="studio-notice"><strong>Current live-service requirement:</strong> the existing gateway requires both approved face and voice profiles and camera/microphone permission. This console sends only returned video to the meeting camera. Your meeting app keeps its normal microphone. An uploaded-video job is separate and cannot power this live view.</div>
+      <iframe id="live-studio" class="live-studio" src="/media" title="Authenticated Seldrune live profile and session controls" allow="camera 'self'; microphone 'self'" referrerpolicy="same-origin"></iframe>
+      <p class="studio-help">Sign in on this Seldrune origin first. If the studio reports an unavailable gateway, that live service must be connected before this console can return transformed video. <a href="/media">Open the session studio in this tab</a>.</p>
+    </details>
+    <footer class="camera-footer"><span>Camera output blanks when the source ends, is muted, or stops delivering frames.</span><span>No extra GPU session · no local recording</span></footer>
+  </main>
+</body>
+</html>
