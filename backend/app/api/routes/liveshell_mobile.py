@@ -35,6 +35,45 @@ def liveshell_mobile_page() -> FileResponse:
     )
 
 
+def _camera_page_headers(*, output_only: bool = False) -> dict[str, str]:
+    return {
+        "Cache-Control": "no-store",
+        "Referrer-Policy": "no-referrer",
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "SAMEORIGIN",
+        "Cross-Origin-Opener-Policy": "same-origin",
+        "Permissions-Policy": (
+            "camera=(), microphone=(), display-capture=()"
+            if output_only
+            else "camera=(self), microphone=(self), display-capture=(self)"
+        ),
+        "Content-Security-Policy": (
+            "default-src 'self'; script-src 'self'; style-src 'self'; "
+            "img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; "
+            "frame-src 'self'; frame-ancestors 'self'; object-src 'none'; "
+            "base-uri 'none'; form-action 'self'"
+        ),
+    }
+
+
+@page_router.get("/camera", include_in_schema=False)
+def face_camera_console_page() -> FileResponse:
+    """Separate meeting-camera console; live authorization stays in /media."""
+    return FileResponse(
+        WEB_ROOT / "face-camera.html",
+        headers=_camera_page_headers(),
+    )
+
+
+@page_router.get("/camera/output", include_in_schema=False)
+def face_camera_output_page() -> FileResponse:
+    """Video-only projection with no capture permission or token handling."""
+    return FileResponse(
+        WEB_ROOT / "face-camera-output.html",
+        headers=_camera_page_headers(output_only=True),
+    )
+
+
 class WebRTCOffer(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
