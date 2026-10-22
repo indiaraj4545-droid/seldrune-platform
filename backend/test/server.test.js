@@ -4,13 +4,14 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
+import jwt from 'jsonwebtoken';
 import { createApp, createLeaseStore, createRunpodClient, readConfig, IDLE_MS } from '../server.js';
 
 const password = 'test-only-password-123';
 const config = { username: 'admin', password, jwtSecret: 'test-only-jwt-signing-key-at-least-32-bytes',
   apiKey: 'test-key', podId: 'testpod123', origins: [], trustProxy: false };
 
-async function fixture(t, { health = 200 } = {}) {
+async function fixture(t, { health = 200, streamPort = 3000 } = {}) {
   let now = 1_000_000;
   let pod = { id: config.podId, desiredStatus: 'EXITED', runtime: null };
   let resumes = 0;
@@ -18,7 +19,7 @@ async function fixture(t, { health = 200 } = {}) {
   let failStop = false;
   let failResume = false;
   let lease = { epoch: 'initial', active: false, lastHeartbeat: now };
-  const { app, watchdog } = createApp(config, {
+  const { app, watchdog } = createApp({ ...config, streamPort }, {
     now: () => now,
     store: { get: () => ({ ...lease }), update: patch => { lease = { ...lease, ...patch }; } },
     client: {
@@ -57,6 +58,46 @@ test('configuration fails closed without secrets and rejects weak keys', () => {
   assert.throws(() => readConfig({}), /HOST_PASSWORD/);
   assert.throws(() => readConfig({ HOST_PASSWORD: password, JWT_SECRET: 'weak',
     RUNPOD_API_KEY: 'key', RUNPOD_POD_ID: 'testpod123' }), /32 bytes/);
+});
+
+test('stream port defaults to 3000 and rejects invalid configured ports', () => {
+  const env = { HOST_PASSWORD: password, JWT_SECRET: config.jwtSecret,
+    RUNPOD_API_KEY: 'key', RUNPOD_POD_ID: config.podId };
+  assert.equal(readConfig(env).streamPort, 3000);
+  assert.equal(readConfig({ ...env, STREAM_PORT: '6901' }).streamPort, 6901);
+  for (const value of ['0', '65536', '3000/path', '1.5']) {
+    assert.throws(() => readConfig({ ...env, STREAM_PORT: value }), /STREAM_PORT/);
+  }
+});
+
+test('Kasm login and status use the configured port on the fixed RunPod host', async t => {
+  const f = await fixture(t, { streamPort: 6901 });
+  const session = await f.login();
+  assert.equal(session.streamPort, 6901);
+  assert.equal(session.streamUrl, 'https://testpod123-6901.proxy.runpod.net');
+  const result = await f.call('/api/status', { token: session.token });
+  assert.equal(result.data.streamUrl, session.streamUrl);
+  assert.equal(result.data.streamPort, 6901);
+});
+
+test('port changes revoke previously signed sessions and their heartbeats', async t => {
+  const f = await fixture(t, { streamPort: 6901 });
+  const { token } = await f.login();
+  const claims = jwt.decode(token);
+  const oldToken = jwt.sign({ ...claims, streamPort: 3000 }, config.jwtSecret);
+  for (const [path, body] of [['/api/status', undefined], ['/api/heartbeat', {}], ['/api/shutdown', {}]]) {
+    assert.equal((await f.call(path, { token: oldToken, body })).status, 401);
+  }
+  assert.equal((await f.call('/api/status', { token })).status, 200);
+});
+
+test('legacy sessions without a port claim stay valid only on the default port', async t => {
+  const f = await fixture(t);
+  const { token } = await f.login();
+  const claims = jwt.decode(token);
+  delete claims.streamPort;
+  const legacyToken = jwt.sign(claims, config.jwtSecret);
+  assert.equal((await f.call('/api/status', { token: legacyToken })).status, 200);
 });
 
 test('invalid credentials and anonymous requests never operate a pod', async t => {

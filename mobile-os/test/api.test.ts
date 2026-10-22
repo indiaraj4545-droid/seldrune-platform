@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ApiError, canNavigate, request, shouldEndSession, validateApiUrl, validateStreamUrl } from '../src/api.ts';
+import { ApiError, canNavigate, request, shouldEndSession, streamMatchesSession, validateApiUrl, validateStreamUrl } from '../src/api.ts';
 
 test('failed resume leaves boot mode after a bounded observation grace period', () => {
   assert.equal(shouldEndSession('EXITED', 'booting', 0), false);
@@ -37,6 +37,26 @@ test('stream URL must match the exact RunPod pod and port', () => {
   assert.equal(canNavigate('javascript:alert(1)', url), false);
   assert.equal(canNavigate('file:///etc/passwd', url), false);
   assert.equal(canNavigate('about:blank', url), true);
+});
+
+test('configured stream ports preserve exact pod and origin validation', () => {
+  const url = 'https://testpod123-6901.proxy.runpod.net';
+  assert.equal(validateStreamUrl(url, 'testpod123', 6901), url);
+  assert.throws(() => validateStreamUrl(url, 'testpod123'));
+  assert.throws(() => validateStreamUrl(url, 'differentpod', 6901));
+  for (const port of [0, -1, 65536, 3.5, NaN]) {
+    assert.throws(() => validateStreamUrl(`https://testpod123-${port}.proxy.runpod.net`, 'testpod123', port));
+  }
+});
+
+test('a changed or invalid stream ends a stale session instead of renewing it', () => {
+  const session = { token: 'token', podId: 'testpod123', streamUrl: 'https://testpod123-3000.proxy.runpod.net' };
+  assert.equal(streamMatchesSession({ streamUrl: session.streamUrl }, session), true);
+  assert.equal(streamMatchesSession({ streamUrl: 'https://testpod123-6901.proxy.runpod.net', streamPort: 6901 }, session), false);
+  assert.equal(streamMatchesSession({ streamUrl: 'https://evil.example', streamPort: 3000 }, session), false);
+  assert.equal(streamMatchesSession({ streamUrl: 'https://otherpod-3000.proxy.runpod.net', streamPort: 3000 }, session), false);
+  assert.equal(streamMatchesSession({ streamUrl: 'https://testpod123-6901.proxy.runpod.net', streamPort: 6901 },
+    { ...session, streamPort: 6901 }), true);
 });
 test('API sends bearer credentials only to control plane and propagates session expiry', async t => {
   const original = globalThis.fetch;
